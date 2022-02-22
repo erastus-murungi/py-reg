@@ -659,7 +659,7 @@ class NFA:
     @staticmethod
     def find_indistinguishable_pairs(states: set[State]) -> list[tuple[State, State]]:
         state_pairs = combinations(states, 2)
-        return list(filter(lambda pair: dfa.states_eq(*pair), state_pairs))
+        return list(filter(lambda pair: DFA.states_eq(*pair), state_pairs))
 
 
 def subset_construction(nfa: NFA):
@@ -844,4 +844,3 @@ class DFA(NFA):
             starting_state,
             accepting_states,
         )
-
