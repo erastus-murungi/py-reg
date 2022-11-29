@@ -1,20 +1,40 @@
 from pprint import pprint
 
-from pyreg import DFA, NFA, handle_character_classes
+from nfa import NFA
+from dfa import DFA
+from simplify import simplify_character_classes, simplify_lua
+
 
 # print(handle_lua("(ab)?cde?(abc)?d"))
 # print(handle_kleene_sum("(ab)+a(abcd)+ed"))
-# NFA("ab*").draw_with_graphviz()
+nfa = NFA.from_regexp("ab*")
+minimized = DFA.from_nfa(nfa).minimize()
+print(minimized)
 # NFA("ab+").draw_with_graphviz()
 # NFA("(ab|c)+").draw_with_graphviz()
 
 
 def test_handling_character_classes_works_case_1():
-    expanded = handle_character_classes(r"ABC[a-x]\d")
+    expanded = simplify_character_classes(r"ABC[a-x]\d")
     assert (
         expanded
         == "ABC(a|b|c|d|e|f|g|h|i|j|k|l|m|n|o|p|q|r|s|t|u|v|w|x)(0|1|2|3|4|5|6|7|8|9)"
     )
+
+
+def test_handling_lua_works_case_1():
+    expanded = simplify_lua(r"a?")
+    assert expanded == "(a|ε)"
+
+
+def test_handling_lua_works_case_2():
+    expanded = simplify_lua(r"(ab)?")
+    assert expanded == "((ab)|ε)"
+
+
+def test_handling_lua_works_case_3():
+    expanded = simplify_lua(r"(a*)?")
+    assert expanded == "((a*)|ε)"
 
 
 # nfa = NFA.from_regexp(r"((a|b*)+)?")
