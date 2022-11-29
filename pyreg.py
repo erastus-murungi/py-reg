@@ -1,12 +1,12 @@
-from dataclasses import dataclass, field
-from pprint import pprint
-from typing import ClassVar, Final, NoReturn, Optional, Sized, Callable
-from itertools import count, chain, product, combinations
-import graphviz
-from string import ascii_uppercase, ascii_lowercase, digits
 from collections import defaultdict
+from dataclasses import dataclass, field
 from functools import reduce
+from itertools import chain, combinations, count, product
 from operator import add
+from string import ascii_lowercase, ascii_uppercase, digits
+from typing import Callable, ClassVar, Final, Optional, Iterable
+
+import graphviz
 
 LEFT_PAREN = "("
 RIGHT_PAREN = ")"
@@ -335,10 +335,10 @@ class NFA:
         self,
         states: set[State],
         symbols: set[Symbol],
-        transition_table: dict[State, dict[Symbol, Sized]]
+        transition_table: dict[State, dict[Symbol, Iterable]]
         | Callable[[State, Symbol], State]
         | dict[State, dict[Symbol, State]]
-        | Callable[[State, Symbol], Sized],
+        | Callable[[State, Symbol], Iterable],
         start_state: State,
         accepting_states: set[State] | frozenset[State],
     ):
@@ -409,7 +409,7 @@ class NFA:
         start_states_stack: list[State],
         accept_states_stack: list[State],
         transition_table: dict[State, dict[Symbol, list[State]]],
-    ) -> NoReturn:
+    ) -> None:
         new_start, new_accept = NFA.get_states_pair()
 
         transition_table[new_start][EPSILON].append(lower_start)
@@ -426,7 +426,7 @@ class NFA:
         accept_state: State,
         accept_states_stack: list[State],
         transition_table: dict[State, dict[Symbol, list[State]]],
-    ) -> NoReturn:
+    ) -> None:
         transition_table[start_state][EPSILON].append(accept_state)
         accept_states_stack.append(NFA.save_final)
         NFA.save_final = None
@@ -439,7 +439,7 @@ class NFA:
         start_states_stack: list[State],
         accept_states_stack: list[State],
         transition_table: dict[State, dict[Symbol, list[State]]],
-    ) -> NoReturn:
+    ) -> None:
         new_start, new_accept = NFA.get_states_pair()
 
         transition_table[accept_state][EPSILON].append(start_state)
@@ -597,12 +597,12 @@ class NFA:
     def _one_epsilon_closure(self, s0: State) -> list[State]:
         return self._one_epsilon_closure_helper(s0, set())
 
-    def epsilon_closure(self, states: Sized):
+    def epsilon_closure(self, states: Iterable):
         return frozenset(
             reduce(add, (self._one_epsilon_closure(state) for state in states), [])
         )
 
-    def move(self, states: Sized, symbol: Symbol) -> frozenset[State]:
+    def move(self, states: Iterable, symbol: Symbol) -> frozenset[State]:
         return frozenset(
             reduce(add, (self.transition_table[state][symbol] for state in states), [])
         )

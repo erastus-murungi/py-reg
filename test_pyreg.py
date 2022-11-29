@@ -1,23 +1,33 @@
-from main import NFA, DFA
+from pprint import pprint
+
+from pyreg import DFA, NFA, handle_character_classes
 
 # print(handle_lua("(ab)?cde?(abc)?d"))
 # print(handle_kleene_sum("(ab)+a(abcd)+ed"))
 # NFA("ab*").draw_with_graphviz()
 # NFA("ab+").draw_with_graphviz()
 # NFA("(ab|c)+").draw_with_graphviz()
-# ret = handle_character_classes(r"ABC[a-x]\d")
-# pprint(ret)
+
+
+def test_handling_character_classes_works_case_1():
+    expanded = handle_character_classes(r"ABC[a-x]\d")
+    assert (
+        expanded
+        == "ABC(a|b|c|d|e|f|g|h|i|j|k|l|m|n|o|p|q|r|s|t|u|v|w|x)(0|1|2|3|4|5|6|7|8|9)"
+    )
+
+
 # nfa = NFA.from_regexp(r"((a|b*)+)?")
 # nfa = NFA.from_regexp(r"(a|b)*abb(a|b)*")
-nfa = NFA.from_regexp(r"(a|b)*")
-
-nfa.draw_with_graphviz()
-
-dfa = DFA.from_nfa(nfa)
-dfa.draw_with_graphviz()
-
-dfa2 = dfa.minimize()
-dfa2.draw_with_graphviz()
+# nfa = NFA.from_regexp(r"(a|b)*")
+#
+# nfa.draw_with_graphviz()
+#
+# dfa = DFA.from_nfa(nfa)
+# dfa.draw_with_graphviz()
+#
+# dfa2 = dfa.minimize()
+# dfa2.draw_with_graphviz()
 
 # pprint(nf.epsilon_closure({nf.find_state(3), nf.find_state(13)}))
 # pprint(nf.move({nf.find_state(3), nf.find_state(13)}, EPSILON))
@@ -44,8 +54,3 @@ dfa2.draw_with_graphviz()
 # s = frozenset()
 #
 # dfa2.draw_with_graphviz()
-
-
-def test_main():
-    assert 2 + 2 == 4
-
