@@ -27,6 +27,10 @@ class State:
     def get_id(self):
         return next(self.state_ids)
 
+    @staticmethod
+    def get_pair():
+        return State(), State()
+
     def __repr__(self):
         return f"{self.id}"
 

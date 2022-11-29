@@ -1,9 +1,13 @@
 from collections import defaultdict
 from itertools import combinations
-from typing import Callable
+from typing import Callable, Iterable, Set
 
 from core import State, Symbol, DFAState
 from nfa import NFA
+
+DFATransitionTable = (
+    dict[State, dict[Symbol, Iterable[State]]] | Callable[[State, Symbol], State]
+)
 
 
 def subset_construction(nfa: NFA):
@@ -34,19 +38,13 @@ class DFA(NFA):
         self,
         states: set[State],
         symbols: set[Symbol],
-        transition_table: Callable[[State, Symbol], State]
-        | dict[State, dict[Symbol, State]],
+        transition_table: DFATransitionTable,
         start_state: State,
-        accepting_states: frozenset[State],
+        accepting_states: Set[State],
     ):
         super().__init__(
             states, symbols, transition_table, start_state, accepting_states
         )
-        self.states = states
-        self.symbols = symbols
-        self.transition_table = transition_table
-        self.start_state = start_state
-        self.accept_states = accepting_states
 
     @staticmethod
     def from_regexp(regexp: str) -> "NFA":
@@ -64,6 +62,13 @@ class DFA(NFA):
         return {
             states_pair: distinguish_function(*states_pair) for states_pair in states
         }
+
+    @property
+    def transitions(self):
+        for state1, table in self.transition_table.items():
+            for symbol, state2s in table.items():
+                for state2 in state2s:
+                    yield (symbol, state1, state2)
 
     @staticmethod
     def collapse(ds: list[frozenset[State]]) -> set[State]:

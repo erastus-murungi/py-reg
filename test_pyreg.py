@@ -2,19 +2,24 @@ from pprint import pprint
 
 from nfa import NFA
 from dfa import DFA
-from simplify import simplify_character_classes, simplify_lua
+from simplify import (
+    simplify_character_classes,
+    simplify_lua,
+    simplify_kleene_plus,
+    simplify,
+)
 
 
 # print(handle_lua("(ab)?cde?(abc)?d"))
-# print(handle_kleene_sum("(ab)+a(abcd)+ed"))
+print(simplify_kleene_plus("(ab)+a(abcd)+ed"))
 nfa = NFA.from_regexp("ab*")
 minimized = DFA.from_nfa(nfa).minimize()
 print(minimized)
-# NFA("ab+").draw_with_graphviz()
-# NFA("(ab|c)+").draw_with_graphviz()
+# NFA.from_regexp("ab+").draw_with_graphviz()
+NFA.from_regexp("(ab|c)+").draw_with_graphviz()
 
 
-def test_handling_character_classes_works_case_1():
+def test_simplify_character_classes_case_1():
     expanded = simplify_character_classes(r"ABC[a-x]\d")
     assert (
         expanded
@@ -22,19 +27,38 @@ def test_handling_character_classes_works_case_1():
     )
 
 
-def test_handling_lua_works_case_1():
+def test_simplify_lua_case_1():
     expanded = simplify_lua(r"a?")
     assert expanded == "(a|ε)"
 
 
-def test_handling_lua_works_case_2():
+def test_simplify_lua_case_2():
     expanded = simplify_lua(r"(ab)?")
     assert expanded == "((ab)|ε)"
 
 
-def test_handling_lua_works_case_3():
+def test_simplify_lua_case_3():
     expanded = simplify_lua(r"(a*)?")
     assert expanded == "((a*)|ε)"
+
+
+def test_simplify_kleene_plus_case_1():
+    expanded = simplify_lua(r"(ab)+a(abcd)+ed")
+    assert expanded == "(ab)(ab)*a(abcd)(abcd)*ed"
+
+
+def test_simply_maintains_simple_constructs():
+    cases = [
+        ("a", "a"),
+        ("ab", "ab"),
+        ("ab|cd", "ab|cd"),
+        ("(ab)*", "(ab)*"),
+        (".", "."),
+        ("^", "^"),
+        ("$", "$"),
+    ]
+    for test_input, expected in cases:
+        assert simplify(test_input) == expected, (test_input, expected)
 
 
 # nfa = NFA.from_regexp(r"((a|b*)+)?")

@@ -148,6 +148,35 @@ def substitute_character_classes(regexp: str):
     )
 
 
+def simplify_redundant_quantifiers(regexp: str):
+    reduced = (
+        regexp.replace("**", "*")
+        .replace("*?", "*")
+        .replace("+*", "*")
+        .replace("+?", "*")
+        .replace("?*", "*")
+        .replace("?+", "*")
+        .replace("*+", "*")
+        .replace("++", "+")
+        .replace("??", "?")
+    )
+    while reduced != regexp:
+        regexp = reduced
+        reduced = (
+            regexp.replace("**", "*")
+            .replace("*?", "*")
+            .replace("+*", "*")
+            .replace("+?", "*")
+            .replace("?*", "*")
+            .replace("?+", "*")
+            .replace("*+", "*")
+            .replace("++", "+")
+            .replace("??", "?")
+        )
+
+    return reduced
+
+
 def simplify_character_classes(regexp: str):
     regexp = substitute_character_classes(regexp)
     subs = []
@@ -177,5 +206,7 @@ def simplify_character_classes(regexp: str):
     return "".join(subs)
 
 
-def simplify_extensions(regexp: str) -> str:
-    return simplify_lua(simplify_kleene_plus(simplify_character_classes(regexp)))
+def simplify(regexp: str) -> str:
+    return simplify_redundant_quantifiers(
+        simplify_lua(simplify_kleene_plus(simplify_character_classes(regexp)))
+    )
