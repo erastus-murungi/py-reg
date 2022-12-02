@@ -38,7 +38,8 @@ class Matcher:
     def __init__(self, pattern: str, regexp: str):
         self.text = pattern
         self.regexp = regexp
-        self.nfa = NFA.from_regexp(regexp)
+        self.nfa = NFA(regexp=regexp)
+        self.nfa.draw_with_graphviz()
 
     def __iter__(self):
         """times specifies the order in which the dfs was finished"""
@@ -47,9 +48,9 @@ class Matcher:
         while True:
 
             def explore_node(cursor: Cursor, state: State, symbol: Symbol):
-                nodes = self.nfa.make_transition(state, symbol)
+                nodes = self.nfa.transition(state, symbol)
                 for node in nodes:
-                    if not node.is_empty():
+                    if not node.is_null():
                         yield from match(
                             cursor if symbol == EPSILON else cursor.increment(), node
                         )
@@ -75,8 +76,8 @@ class Matcher:
 
 
 if __name__ == "__main__":
-    regex = "(ab*)*"
-    t = "abaabb"  # nfa.draw_with_graphviz()
+    regex = "(ab)?b+"
+    t = "aa"  # nfa.draw_with_graphviz()
     matcher = Matcher(t, regex)
 
     print(matcher)

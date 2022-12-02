@@ -1,5 +1,6 @@
 from pprint import pprint
 
+from core import DFAState
 from nfa import NFA
 from dfa import DFA
 from simplify import (
@@ -11,12 +12,11 @@ from simplify import (
 
 
 # print(handle_lua("(ab)?cde?(abc)?d"))
-print(simplify_kleene_plus("(ab)+a(abcd)+ed"))
-nfa = NFA.from_regexp("ab*")
-minimized = DFA.from_nfa(nfa).minimize()
-print(minimized)
-# NFA.from_regexp("ab+").draw_with_graphviz()
-NFA.from_regexp("(ab|c)+").draw_with_graphviz()
+# print(simplify_kleene_plus("(ab)+a(abcd)+ed"))
+# nfa = NFA.from_regexp("ab*")
+# minimized = DFA.from_nfa(nfa).minimize()
+# print(minimized)
+# NFA.from_regexp("(ab|c)+").draw_with_graphviz()
 
 
 def test_simplify_character_classes_case_1():
@@ -75,26 +75,3 @@ def test_simply_maintains_simple_constructs():
 
 # pprint(nf.epsilon_closure({nf.find_state(3), nf.find_state(13)}))
 # pprint(nf.move({nf.find_state(3), nf.find_state(13)}, EPSILON))
-
-# A = DFAState(state_id="A", is_start=True)
-# B = DFAState(state_id="B")
-# C = DFAState(state_id="C", is_accepting=True)
-# D = DFAState(state_id="D")
-# E = DFAState(state_id="E", is_accepting=True)
-#
-# transitions = {
-#     A: {"a": B, "b": D},
-#     B: {"a": C, "b": E},
-#     C: {"a": B, "b": E},
-#     D: {"a": C, "b": E},
-#     E: {"a": E, "b": E},
-# }
-#
-# dfa1 = DFA({A, B, C, D, E}, {"a", "b"}, transitions, A, {C, E})
-# dfa1.draw_with_graphviz()
-# dfa2 = dfa1.minimize()
-# pprint(dfa2)
-#
-# s = frozenset()
-#
-# dfa2.draw_with_graphviz()

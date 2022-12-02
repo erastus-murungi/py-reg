@@ -1,188 +1,203 @@
 from collections import defaultdict
 from itertools import combinations
-from typing import Callable, Iterable, Set
+from typing import Optional, Iterator
 
-from core import State, Symbol, DFAState
+from more_itertools import minmax
+
+from core import State, Symbol, DFAState, FiniteStateAutomaton, NullDfaState
 from nfa import NFA
-
-DFATransitionTable = (
-    dict[State, dict[Symbol, Iterable[State]]] | Callable[[State, Symbol], State]
-)
+from utils import UnionFind
 
 
-def subset_construction(nfa: NFA):
-    transitions_table: dict[DFAState, dict[Symbol, DFAState]] = defaultdict(dict)
-    s0 = DFAState(from_states=frozenset({nfa.start_state}))
-    accept_states: set[State] = set()
-    seen = set()
-    stack = [s0]
-
-    to_explore = stack.pop()
-    initial_state = nfa.compute_transitions_for_dfa_state(
-        to_explore, transitions_table, seen, stack, accept_states
-    )
-    initial_state.is_start = True
-
-    while stack:
-        to_explore = stack.pop()
-        nfa.compute_transitions_for_dfa_state(
-            to_explore, transitions_table, seen, stack, accept_states
-        )
-    transitions_table = nfa.clean_up_empty_sets(transitions_table)
-    states = NFA.compute_states_set(transitions_table)
-    return states, nfa.symbols, transitions_table, initial_state, accept_states
-
-
-class DFA(NFA):
+class DFA(FiniteStateAutomaton):
     def __init__(
         self,
-        states: set[State],
-        symbols: set[Symbol],
-        transition_table: DFATransitionTable,
-        start_state: State,
-        accepting_states: Set[State],
+        transitions: Optional[dict[DFAState, dict[Symbol, DFAState]]] = None,
+        states: Optional[set[DFAState]] = None,
+        symbols: Optional[set[Symbol]] = None,
+        start_state: Optional[DFAState] = None,
+        accept: Optional[set[DFAState]] = None,
+        *,
+        regexp: Optional[str] = None
     ):
-        super().__init__(
-            states, symbols, transition_table, start_state, accepting_states
-        )
+        super(FiniteStateAutomaton, self).__init__(dict)
 
-    @staticmethod
-    def from_regexp(regexp: str) -> "NFA":
-        return DFA(*subset_construction(NFA.from_regexp(regexp)))
+        if regexp is not None:
+            self.states: set[DFAState] = set()
+            self.symbols: set[Symbol] = set()
+            self.accept: set[DFAState] = set()
+            self.init_from_regexp(regexp)
+        else:
+            assert transitions is not None
+            self.update(transitions)
+            assert symbols is not None
+            self.symbols = symbols
+            assert states is not None
+            self.states = states
+            assert start_state is not None
+            self.set_start(start_state)
+            assert accept is not None
+            self.accept = accept
 
-    @staticmethod
-    def from_nfa(nfa):
-        return DFA(*subset_construction(nfa))
+    def transition(self, state: State, symbol: Symbol) -> State:
+        return self[state].get(symbol, NullDfaState)
 
-    @staticmethod
-    def distinguish(
-        states: tuple[tuple[State, State]],
-        distinguish_function: Callable[[State, State], bool],
-    ) -> dict[tuple[State, State], bool]:
-        return {
-            states_pair: distinguish_function(*states_pair) for states_pair in states
-        }
+    def init_from_regexp(self, regexp: str):
+        nfa = NFA(regexp=regexp)
 
-    @property
-    def transitions(self):
-        for state1, table in self.transition_table.items():
-            for symbol, state2s in table.items():
-                for state2 in state2s:
-                    yield (symbol, state1, state2)
+        s0 = DFAState(from_states=frozenset({nfa.start_state}))
+        seen, stack = set(), []
+        self.set_start(nfa.compute_transitions_for_dfa_state(self, s0, seen, stack))
 
-    @staticmethod
-    def collapse(ds: list[frozenset[State]]) -> set[State]:
-        collapsed = set()
-        for d in ds:
-            for state in d:
-                collapsed.add(state)
-        return collapsed
+        while stack:
+            to_explore = stack.pop()
+            nfa.compute_transitions_for_dfa_state(self, to_explore, seen, stack)
 
-    @staticmethod
-    def reversed_transition_table(
-        transition_table: dict[State, dict[Symbol, State]]
-    ) -> dict[State, dict[Symbol, list[State]]]:
-        ret = defaultdict(lambda: defaultdict(list))
-        for start_state, table in transition_table.items():
+        self.clean_up_empty_sets()
+        self.update_states_set()
+        self.symbols = nfa.symbols
+
+    def clean_up_empty_sets(self):
+        pruned_transition_table = defaultdict(dict)
+        for start_state, table in self.items():
             for symbol, end_state in table.items():
-                ret[end_state][symbol].append(start_state)
-        return ret
+                if end_state.sources:
+                    pruned_transition_table[start_state][symbol] = end_state
+        self.clear()
+        self.update(pruned_transition_table)
 
-    @staticmethod
-    def equivalence_partition(iterable, relation):
-        """Partitions a set of objects into equivalence classes
+    def all_transitions(self):
+        for state1, table in self.items():
+            for symbol, state2 in table.items():
+                yield symbol, state1, state2
 
-        Args:
-            iterable: collection of objects to be partitioned
-            relation: equivalence relation. I.e. relation(o1, o2) evaluates to True
-                if and only if o1 and o2 are equivalent
+    def _dict(self) -> defaultdict[DFAState, dict[Symbol, DFAState]]:
+        d = defaultdict(dict)
+        for symbol, s1, s2 in self.all_transitions():
+            d[s1][symbol] = s2
+        return d
 
-        Returns: classes, partitions
-            classes: A sequence of sets. Each one is an equivalence class
-            partitions: A dictionary mapping objects to equivalence classes
+    def gen_equivalence_states(self) -> Iterator[set[State]]:
+        """
+        Myhill-Nerode Theorem
+        https://www.cs.scranton.edu/~mccloske/courses/cmps364/dfa_minimize.html
         """
 
-        classes = []
-        for o in iterable:  # for each object
-            # find the class it is in
-            found = False
-            for c in classes:
-                if relation(next(iter(c)), o):  # is it equivalent to this class?
-                    c.add(o)
-                    found = True
-                    break
-            if not found:  # it is in a new class
-                classes.append({o})
-        return set(map(frozenset, classes))
+        # a state is indistinguishable from itself
+        indistinguishable = {(p, p) for p in self.states}
 
-    def populate_in_dist(self) -> dict[State, dict[State, bool]]:
-        in_dist = defaultdict(dict)
         for p, q in combinations(self.states, 2):
-            in_dist[min(p, q)][max(p, q)] = p.accepts ^ q.accepts
-        for p in self.states:
-            in_dist[p][p] = False
+            # a pair of states are maybe indistinguishable
+            # if they are both accepting or both non-accepting
+            # we use min max to provide an ordering based on the labels
+            p, q = minmax(p, q)
+            if p.accepts == q.accepts:
+                indistinguishable.add((p, q))
+
+        union_find = UnionFind(self.states)
 
         changed = True
         while changed:
             changed = False
-            for _p, _q in combinations(self.states, 2):
-                p, q = min(_p, _q), max(_p, _q)
-                if not in_dist[p][q]:
-                    for a in self.symbols:
-                        k, m = self.make_transition(p, a), self.make_transition(q, a)
-                        if k in in_dist and m in in_dist:
-                            if in_dist[min(k, m)][max(k, m)]:
-                                in_dist[p][q] = True  # distinguishable
-                                changed = True
+            removed = set()
+            for p, q in indistinguishable:
+                if p == q:
+                    continue
+                # if two states are maybe indistinguishable, then do some more work to prove they are actually
+                # indistinguishable
+                for a in self.symbols:
+                    km = minmax(self.transition(p, a), self.transition(q, a))
+                    if (
+                        km != (NullDfaState, NullDfaState)
+                        and km not in indistinguishable
+                    ):
+                        removed.add((p, q))
+                        changed = True
+            indistinguishable = indistinguishable - removed
 
-        return in_dist
+        for p, q in indistinguishable:
+            union_find.union(p, q)
 
-    def get_new_states(self, in_dist: dict[State, dict[State, bool]]) -> list[DFAState]:
-        def relation(p, q):
-            return not in_dist[min(p, q)][max(p, q)]
+        return union_find.to_sets()
 
-        equivalence_classes = self.equivalence_partition(self.states, relation)
-
-        new_states: list[DFAState] = list(
-            map(
-                self.get_dfa_state,
-                filter(
-                    lambda equivalence_class: len(equivalence_class) > 1,
-                    equivalence_classes,
-                ),
-            )
-        )
-        return new_states
+    def gen_dfa_state_set_flags(self, sources):
+        if len(sources) == 1:
+            return sources.pop()
+        state = DFAState(from_states=frozenset(sources))
+        if self.start_state in state.sources:
+            state.is_start = True
+        for accept_state in self.accept:
+            if accept_state in state.sources:
+                state.accepts = True
+                break
+        return state
 
     def minimize(self):
-        # if in_dist[p][q] == True, (p, q) are distinguishable
-        # https://www.cs.scranton.edu/~mccloske/courses/cmps364/dfa_minimize.html
-        in_dist = self.populate_in_dist()
-        new_states = self.get_new_states(in_dist)
-        rev_trans_table = self.reversed_transition_table(self.transition_table)
-        new_trans = self.transition_table.copy()
-
-        for new_state in new_states:
-            for from_state in new_state.from_states:
-                for symbol, source_states in rev_trans_table[from_state].items():
-                    for source_state in source_states:
-                        new_trans[source_state][symbol] = new_state
-
-            new_states_iterable = iter(new_state.from_states)
-            v = next(new_states_iterable)
-            new_trans[new_state] = new_trans[v]
-            new_trans.pop(v)
-
-            for v in new_states_iterable:
-                new_trans.pop(v)
-
-        (starting_state,) = tuple(filter(lambda s: s.is_start, new_trans))
-        accepting_states = frozenset(filter(lambda s: s.accepts, new_trans))
-
-        return DFA(
-            set(new_trans.keys()),
-            self.symbols.copy(),
-            new_trans,
-            starting_state,
-            accepting_states,
+        self.states = set(
+            map(self.gen_dfa_state_set_flags, self.gen_equivalence_states())
         )
+        lost = {
+            original: compound
+            for compound in self.states
+            for original in compound.sources
+            if len(compound.sources) > 1
+        }
+
+        for a in list(self.keys()):
+            if a in lost:
+                self[lost.get(a)] = self.pop(a)
+        for a in self:
+            for symbol, b in self[a].items():
+                if b in lost:
+                    self[a][symbol] = lost.get(b)
+
+        (self.start_state,) = tuple(filter(lambda s: s.is_start, self.states))
+        self.accept = set(filter(lambda s: s.accepts, self.accept))
+
+
+if __name__ == "__main__":
+    # df = DFA(regexp=r"(ab?)c*")
+    # df.draw_with_graphviz()
+    # df.minimize()
+    # df.draw_with_graphviz()
+
+    # A = DFAState(frozenset(range(1)), is_start=True)
+    # B = DFAState(frozenset(range(2)))
+    # C = DFAState(frozenset(range(3)), accepts=True)
+    # D = DFAState(
+    #     frozenset(range(4)),
+    # )
+    # E = DFAState(frozenset(range(5)), accepts=True)
+    #
+    # transitions = {
+    #     A: {"a": B, "b": D},
+    #     B: {"a": C, "b": E},
+    #     C: {"a": B, "b": E},
+    #     D: {"a": C, "b": E},
+    #     E: {"a": E, "b": E},
+    # }
+    #
+    # dfa1 = DFA(transitions, {A, B, C, D, E}, {"a", "b"}, A, {C, E})
+    # dfa1.draw_with_graphviz()
+    # dfa1.minimize()
+    # dfa1.draw_with_graphviz()
+
+    q0 = DFAState(frozenset([0]), is_start=True)
+    q1 = DFAState(frozenset([1]))
+    q2 = DFAState(frozenset([2]))
+    q3 = DFAState(frozenset([3]))
+    q4 = DFAState(frozenset([4]), accepts=True)
+
+    transitions = {
+        q0: {"a": q1, "b": q2},
+        q1: {"a": q1, "b": q3},
+        q2: {"b": q2, "a": q1},
+        q3: {"a": q1, "b": q4},
+        q4: {"a": q1, "b": q2},
+    }
+
+    dfa3 = DFA(transitions, {q0, q1, q2, q3, q4}, {"a", "b"}, q0, {q4})
+    dfa3.draw_with_graphviz()
+
+    dfa3.minimize()
+    dfa3.draw_with_graphviz()

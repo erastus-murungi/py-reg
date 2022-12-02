@@ -56,11 +56,11 @@ def simplify_lua(regexp: str) -> str:
         if regexp[i] == "?":
             # two cases can arise:
             # 1. ? is after a symbol, in which case ? affects only that symbol
-            # 2. ? is after a ')', in which case ? affects a whole expression inside '(' and ')'
+            # 2. ? is after a `)`, in which case ? affects a whole expression inside '(' and ')'
             if (symbol := regexp[i - 1]) != ")":
                 sub_exp = "(" + symbol + "|ε)"
                 regexp = regexp[: i - 1] + sub_exp + regexp[i + 1 :]
-                i += 3  # we replaced 1 character with 4 so we advance i by 3
+                i += 3  # we replaced 1 character with 4, so we advance i by 3
             else:
                 assert regexp[i - 1] == ")"
                 for j in reversed(range(i)):
@@ -207,6 +207,4 @@ def simplify_character_classes(regexp: str):
 
 
 def simplify(regexp: str) -> str:
-    return simplify_redundant_quantifiers(
-        simplify_lua(simplify_kleene_plus(simplify_character_classes(regexp)))
-    )
+    return simplify_redundant_quantifiers(simplify_character_classes(regexp))

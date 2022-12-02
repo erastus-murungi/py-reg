@@ -1,29 +1,19 @@
 import operator as op
 from collections import defaultdict
 from functools import reduce
-from itertools import combinations
-from typing import Optional, Iterable, Set
+from typing import Optional, Iterable
 
-import graphviz
-
-from core import State, Symbol, EMPTY_STATE, DFAState
+from core import State, Symbol, NullState, FiniteStateAutomaton, DFAState
 from simplify import simplify
 from utils import (
-    is_iterable,
     BIN_OPERATORS,
     ALL_OPERATORS,
     EPSILON,
     precedence,
-    PRECEDENCE,
-    UNION,
-    CONCATENATION,
-    KLEENE_CLOSURE,
+    gen_symbols_exclude_precedence_ops,
 )
 
-NFATransitionTable = (
-    dict[State, dict[Symbol, State]],
-    dict[State, dict[Symbol, Iterable[State]]],
-)
+StatePair = tuple[State, State]
 
 
 def format_regexp(regexp: str) -> str:
@@ -71,7 +61,7 @@ def shunting_yard(infix: str) -> str:
     return "".join(postfix)
 
 
-class NFA:
+class NFA(FiniteStateAutomaton):
     """Formally, an NFA is a 5-tuple (Q, Σ, q0, T, δ) where
         • Q is finite set of states;
         • Σ is alphabet of input symbols;
@@ -81,248 +71,197 @@ class NFA:
         • δ is the transition function.
     Now the transition function specifies a set of states rather than a state: it maps Q × Σ to { subsets of Q }."""
 
-    save_final: Optional[State]
+    def _dict(self) -> defaultdict[State, defaultdict[Symbol, list[State]]]:
+        d = defaultdict(lambda: defaultdict(list))
+        for symbol, s1, s2 in self.all_transitions():
+            d[s1][symbol].append(s2)
+        return d
 
     def __init__(
         self,
-        states: Set[State],
-        symbols: Set[Symbol],
-        transition_table: NFATransitionTable,
-        start_state: State,
-        accepting_states: Set[State],
+        transitions: Optional[dict[State, dict[Symbol, list[State]]]] = None,
+        states: Optional[set[State]] = None,
+        symbols: Optional[set[Symbol]] = None,
+        start_state: Optional[State] = None,
+        accept: Optional[State] = None,
+        *,
+        regexp: Optional[str] = None,
     ):
-        self.states = states
-        self.symbols = symbols
-        self.transition_table = transition_table
-        self.start_state = start_state
-        self.accepting_states = accepting_states
+        super(FiniteStateAutomaton, self).__init__(lambda: defaultdict(list))
 
-    @staticmethod
-    def from_regexp(regexp: str) -> "NFA":
+        if regexp is not None:
+            self.states: set[State] = set()
+            self.symbols: set[Symbol] = set()
+            self.init_from_regexp(regexp)
+        else:
+            assert transitions is not None
+            self.update(transitions)
+            assert symbols is not None
+            self.symbols = symbols
+            assert states is not None
+            self.states = states
+            assert start_state is not None
+            self.start_state = start_state
+            assert accept is not None
+            self.accept = accept
+
+    def subexpression(self, sub_expr, start_states, accept_states):
+        frm, to = State.get_pair()
+        self[frm][sub_expr].append(to)
+        start_states.append(frm)
+        accept_states.append(to)
+
+    def init_from_regexp(self, regexp: str):
         postfix_regexp: str = shunting_yard(simplify(regexp))
 
         start_states: list[State] = []
         accept_states: list[State] = []
-        transition_table: dict[State, dict[Symbol, list[State]]] = defaultdict(
-            lambda: defaultdict(list)
-        )
-        symbols: set[Symbol] = NFA.compute_symbol_set(postfix_regexp)
-        final_state: State = EMPTY_STATE
+        symbols = gen_symbols_exclude_precedence_ops(postfix_regexp)
 
-        for char_index, char in enumerate(postfix_regexp):
-            if char in symbols:
-                frm, to = State.get_pair()
-                transition_table[frm][char].append(to)
-                start_states.append(frm)
-                accept_states.append(to)
+        for char in postfix_regexp:
+            match char:
+                case "|":
+                    self.alternation(start_states, accept_states)
+                case ".":
+                    self.concatenate(start_states, accept_states)
+                case "*":
+                    self.zero_or_more(start_states, accept_states)
+                case "+":
+                    self.one_or_more(start_states, accept_states)
+                case "?":
+                    self.zero_or_one(start_states, accept_states)
+                case _:
+                    if char in symbols:
+                        self.subexpression(char, start_states, accept_states)
+                    else:
+                        raise ValueError(f"{char} not understood")
 
-            elif char == UNION:
-                lower_start, upper_start = (
-                    start_states.pop(),
-                    start_states.pop(),
-                )
-                lower_accept, upper_accept = (
-                    accept_states.pop(),
-                    accept_states.pop(),
-                )
-                NFA.union(
-                    lower_start,
-                    upper_start,
-                    lower_accept,
-                    upper_accept,
-                    start_states,
-                    accept_states,
-                    transition_table,
-                )
+        self.update_start_and_final_states(start_states, accept_states)
+        self.update_states_set()
+        self.symbols.update(symbols - {EPSILON})
 
-            elif char == CONCATENATION:
-                NFA.save_final = accept_states.pop()
-                NFA.concatenate(
-                    accept_states.pop(),
-                    start_states.pop(),
-                    accept_states,
-                    transition_table,
-                )
+    def update_start_and_final_states(
+        self, start_states: list[State], accept_states: list[State]
+    ):
+        final_state: State = accept_states.pop()
+        final_state.accepts = True
+        assert not accept_states
 
-            elif char == KLEENE_CLOSURE:
-                NFA.kleene(
-                    start_states.pop(),
-                    accept_states.pop(),
-                    start_states,
-                    accept_states,
-                    transition_table,
-                )
-            if char_index == (len(postfix_regexp) - 1):
-                final_state: State = accept_states.pop()
-                final_state.accepts = True
-                if EPSILON in symbols:
-                    symbols.remove(EPSILON)
+        start_state: State = start_states.pop()
+        start_state.is_start = True
+        assert not start_states
 
-        initial_state = NFA.get_initial_state(start_states)
-        states = NFA.compute_states_set(transition_table)
-        return NFA(states, symbols, transition_table, initial_state, {final_state})
+        self.start_state = start_state
+        self.accept = final_state
 
-    @property
-    def transitions(self):
-        for state1, table in self.transition_table.items():
+    def all_transitions(self):
+        for state1, table in self.items():
             for symbol, state2s in table.items():
                 for state2 in state2s:
-                    yield (symbol, state1, state2)
+                    yield symbol, state1, state2
 
-    def make_transition(self, state, symbol):
-        try:
-            return self.transition_table[state][symbol]
-        except KeyError:
-            return EMPTY_STATE
+    def transition(self, state: State, symbol: Symbol) -> list[State]:
+        return self[state].get(symbol, [NullState])
 
-    def states_eq(self, state1: State, state2: State):
+    def states_eq(self, state_pair: StatePair) -> bool:
+        state1, state2 = state_pair
         # both states should be accepting or both non_accepting
         if state1.accepts ^ state2.accepts:
             return False
         for symbol in self.symbols:
-            if self.make_transition(state1, symbol) != self.make_transition(
-                state2, symbol
-            ):
+            if self.transition(state1, symbol) != self.transition(state2, symbol):
                 return False
         return True
 
     # noinspection DuplicatedCode
-    @staticmethod
-    def union(
-        lower_start: State,
-        upper_start: State,
-        lower_accept: State,
-        upper_accept: State,
-        start_states_stack: list[State],
-        accept_states_stack: list[State],
-        transition_table: dict[State, dict[Symbol, list[State]]],
+    def alternation(
+        self,
+        start_states: list[State],
+        accept_states: list[State],
     ) -> None:
+
+        lower_start, upper_start = (
+            start_states.pop(),
+            start_states.pop(),
+        )
+        lower_accept, upper_accept = (
+            accept_states.pop(),
+            accept_states.pop(),
+        )
+
         new_start, new_accept = State.get_pair()
 
-        transition_table[new_start][EPSILON].append(lower_start)
-        transition_table[new_start][EPSILON].append(upper_start)
-        transition_table[lower_accept][EPSILON].append(new_accept)
-        transition_table[upper_accept][EPSILON].append(new_accept)
+        self[new_start][EPSILON].append(lower_start)
+        self[new_start][EPSILON].append(upper_start)
+        self[lower_accept][EPSILON].append(new_accept)
+        self[upper_accept][EPSILON].append(new_accept)
 
-        start_states_stack.append(new_start)
-        accept_states_stack.append(new_accept)
+        start_states.append(new_start)
+        accept_states.append(new_accept)
 
-    @staticmethod
     def concatenate(
-        start_state: State,
-        accept_state: State,
-        accept_states_stack: list[State],
-        transition_table: dict[State, dict[Symbol, list[State]]],
+        self,
+        start_states: list[State],
+        accept_states: list[State],
     ) -> None:
-        transition_table[start_state][EPSILON].append(accept_state)
-        accept_states_stack.append(NFA.save_final)
-        NFA.save_final = None
+        self[accept_states.pop(-2)][EPSILON].append(start_states.pop())
 
     # noinspection DuplicatedCode
-    @staticmethod
-    def kleene(
-        start_state: State,
-        accept_state: State,
-        start_states_stack: list[State],
-        accept_states_stack: list[State],
-        transition_table: dict[State, dict[Symbol, list[State]]],
+    def zero_or_more(
+        self,
+        start_states: list[State],
+        accept_states: list[State],
     ) -> None:
         new_start, new_accept = State.get_pair()
 
-        transition_table[accept_state][EPSILON].append(start_state)
-        transition_table[new_start][EPSILON].append(new_accept)
-        transition_table[new_start][EPSILON].append(start_state)
-        transition_table[accept_state][EPSILON].append(new_accept)
+        self[accept_states[-1]][EPSILON].append(start_states[-1])
+        self[new_start][EPSILON].append(start_states.pop())
+        self[accept_states.pop()][EPSILON].append(new_accept)
+        self[new_start][EPSILON].append(new_accept)
 
-        start_states_stack.append(new_start)
-        accept_states_stack.append(new_accept)
+        start_states.append(new_start)
+        accept_states.append(new_accept)
 
-    @staticmethod
-    def compute_symbol_set(postfix_regexp) -> set[Symbol]:
-        return set(postfix_regexp) - set(PRECEDENCE.keys())
+    def one_or_more(self, start_states: list[State], accept_states):
+        self[accept_states[-1]][EPSILON].append(start_states[-1])
 
-    @staticmethod
-    def compute_states_set(transition_table) -> set[State]:
-        states = set()
-        for s1, table in transition_table.items():
-            states.add(s1)
-            for s2s in table.values():
-                if is_iterable(s2s):
-                    for s2 in s2s:
-                        states.add(s2)
-                else:
-                    states.add(s2s)
-        return states
+    def zero_or_one(self, start_states: list[State], accept_states):
+        self[start_states[-1]][EPSILON].append(accept_states[-1])
 
     def __repr__(self):
         return (
             f"FSM(states={self.states}, "
             f"symbols={self.symbols}, "
             f"start_state={self.start_state}, "
-            f"accept_states={self.accepting_states}) "
+            f"accept_states={self.accept}) "
         )
-
-    @staticmethod
-    def get_initial_state(start_states_stack: list[State]):
-        # after processing, start_states_stack should only have one item
-        assert len(start_states_stack) == 1
-        start_state: State = start_states_stack.pop()
-        start_state.is_start = True
-        return start_state
-
-    def draw_with_graphviz(self):
-        dot = graphviz.Digraph(
-            self.__class__.__name__ + "WHP",
-            format="pdf",
-            engine="circo",
-        )
-        dot.attr("node", shape="circle")
-
-        for symbol, s1, s2 in self.transitions:
-            if s1.is_start:
-                dot.node(
-                    str(s1.id),
-                    color="green",
-                    shape="doublecircle" if s1.accepts else "circle",
-                )
-                dot.node("start", shape="none")
-                dot.edge("start", f"{s1.id}", arrowhead="vee")
-            else:
-                dot.node(
-                    f"{s1.id}",
-                    shape="doublecircle" if s1.accepts else "circle",
-                )
-
-            dot.node(f"{s2.id}", shape="doublecircle" if s2.accepts else "circle")
-            dot.edge(str(s1.id), str(s2.id), label=symbol)
-
-        dot.render(view=True)
-
-    def _one_epsilon_closure_helper(self, s0: State, seen: set):
-        seen.add(s0)
-        closure = self.transition_table[s0][EPSILON][:]  # need to do a copy
-        subs = []
-        for s in closure:
-            if (
-                s not in seen
-            ):  # to prevent infinite recursion when we encounter cycles in the NFA
-                subs.append(self._one_epsilon_closure_helper(s, seen))
-        return [s0] + closure + reduce(op.add, subs, [])
-
-    def _one_epsilon_closure(self, s0: State) -> list[State]:
-        return self._one_epsilon_closure_helper(s0, set())
 
     def epsilon_closure(self, states: Iterable):
-        return frozenset(
-            reduce(op.add, (self._one_epsilon_closure(state) for state in states), [])
-        )
+        """
+        This is the set of all the nodes which can be reached by following epsilon labeled edges
+        This is done here using a depth first search
+
+        https://castle.eiu.edu/~mathcs/mat4885/index/Webview/examples/epsilon-closure.pdf
+        """
+
+        seen = set()
+
+        stack = list(states)
+        closure = set()
+
+        while stack:
+            u = stack.pop()
+            if u in seen:
+                continue
+            seen.add(u)
+
+            stack.extend(self[u][EPSILON])
+            closure.add(u)
+
+        return closure
 
     def move(self, states: Iterable, symbol: Symbol) -> frozenset[State]:
-        return frozenset(
-            reduce(
-                op.add, (self.transition_table[state][symbol] for state in states), []
-            )
-        )
+        return frozenset(reduce(op.add, (self[state][symbol] for state in states), []))
 
     def find_state(self, state_id: int) -> Optional[State]:
         for state in self.states:
@@ -330,53 +269,39 @@ class NFA:
                 return state
         return None
 
-    def get_dfa_state(self, from_states):
-        dfa_from = DFAState(from_states=from_states)
-        if self.start_state in dfa_from.from_states:
-            dfa_from.is_start = True
-        for accept_state in self.accepting_states:
-            if accept_state in dfa_from.from_states:
-                dfa_from.accepts = True
-                break
-        return dfa_from
+    def gen_dfa_state_set_flags(self, sources) -> DFAState:
+        state = DFAState(from_states=sources)
+        if self.start_state in state.sources:
+            state.is_start = True
+        if self.accept in state.sources:
+            state.accepts = True
+        return state
 
     def compute_transitions_for_dfa_state(
         self,
+        dfa,
         dfa_from: DFAState,
-        transition_table: dict[DFAState, dict[Symbol, DFAState]],
         seen: set[frozenset],
         stack: list[DFAState],
-        accept_states: set[State],
     ):
         # what is the epsilon closure of the dfa_states
-        eps = self.epsilon_closure(dfa_from.from_states)
-        d = self.get_dfa_state(eps)
+        eps = self.epsilon_closure(dfa_from.sources)
+        d = self.gen_dfa_state_set_flags(eps)
         if d.accepts:
-            accept_states.add(d)
+            dfa.accept.add(d)
         # next we want to see which states are reachable from each of the states in the epsilon closure
         for symbol in self.symbols:
             next_states_set = self.epsilon_closure(self.move(eps, symbol))
             # new DFAState
-            df = self.get_dfa_state(next_states_set)
-            transition_table[d][symbol] = df
+            df = self.gen_dfa_state_set_flags(next_states_set)
+            dfa[d][symbol] = df
             if next_states_set not in seen:
                 seen.add(next_states_set)
                 stack.append(df)
         return d
 
-    @staticmethod
-    def clean_up_empty_sets(transition_table: dict[DFAState, dict[Symbol, DFAState]]):
-        pruned_transition_table = defaultdict(dict)
-        for start_state, table in transition_table.items():
-            for symbol, end_state in table.items():
-                if end_state.from_states:
-                    pruned_transition_table[start_state][symbol] = end_state
-        return pruned_transition_table
 
-    @staticmethod
-    def find_indistinguishable_pairs(states: set[State]) -> list[tuple[State, State]]:
-        state_pairs = combinations(states, 2)
-        return list(filter(lambda pair: NFA.states_eq(*pair), state_pairs))
-
-    def to_dfa(self):
-        pass
+if __name__ == "__main__":
+    nf = NFA(regexp="ab")
+    nf.draw_with_graphviz()
+    print(nf)
