@@ -3,7 +3,7 @@ from dataclasses import dataclass
 
 from core import State, Symbol
 from nfa import NFA
-from utils import EPSILON
+from symbol import EPSILON
 
 
 class Cursor:
@@ -39,7 +39,6 @@ class Matcher:
         self.text = pattern
         self.regexp = regexp
         self.nfa = NFA(regexp=regexp)
-        self.nfa.draw_with_graphviz()
 
     def __iter__(self):
         """times specifies the order in which the dfs was finished"""
@@ -47,7 +46,7 @@ class Matcher:
 
         while True:
 
-            def explore_node(cursor: Cursor, state: State, symbol: Symbol):
+            def explore_node(cursor: Cursor, state: State, symbol: Symbol | str):
                 nodes = self.nfa.transition(state, symbol)
                 for node in nodes:
                     if not node.is_null():
@@ -76,8 +75,8 @@ class Matcher:
 
 
 if __name__ == "__main__":
-    regex = "(ab)?b+"
-    t = "aa"  # nfa.draw_with_graphviz()
+    regex = "[^A-Za-z_](ab)?b+"
+    t = "5abb"  # nfa.draw_with_graphviz()
     matcher = Matcher(t, regex)
 
     print(matcher)

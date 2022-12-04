@@ -1,49 +1,53 @@
 import operator as op
 from collections import defaultdict
 from functools import reduce
-from typing import Optional, Iterable
+from typing import Iterable, Optional
 
-from core import State, Symbol, NullState, FiniteStateAutomaton, DFAState
+from core import DFAState, FiniteStateAutomaton, NullState, State
+from data_structures import SymbolDispatchedMapping
 from simplify import simplify
-from utils import (
-    BIN_OPERATORS,
-    ALL_OPERATORS,
+from symbol import (
+    AllOps,
+    BinOps,
     EPSILON,
-    precedence,
     gen_symbols_exclude_precedence_ops,
+    precedence,
+    OpeningParen,
+    ClosingParen,
+    Concatenate,
 )
+from symbol import Symbol, Operator
 
 StatePair = tuple[State, State]
 
 
-def format_regexp(regexp: str) -> str:
+def splice_concatenate_operator(regexp: list[Symbol]) -> list[Symbol]:
     """
     Insert . between atoms
     """
-    if len(regexp) == 0:
+    if not regexp:
         return EPSILON
     fmt_regexp = []
     for c1, c2 in zip(regexp, regexp[1:]):
         fmt_regexp.append(c1)
         if (
-            (c1 != "(" and c2 != ")")
-            and c2 not in ALL_OPERATORS
-            and c1 not in BIN_OPERATORS
+            (not c1.match(OpeningParen) and not c2.match(ClosingParen))
+            and c2 not in AllOps - {OpeningParen}
+            and c1 not in BinOps
         ):
-            fmt_regexp.append(".")
+            fmt_regexp.append(Concatenate)
     fmt_regexp.append(regexp[-1])
-    return "".join(fmt_regexp)
+    return fmt_regexp
 
 
-def shunting_yard(infix: str) -> str:
-    stack = []
-    postfix = []
-    fmt_infix = format_regexp(infix)
+def shunting_yard(infix: list[Symbol]) -> list[Symbol]:
+    stack, postfix = [], []
+    fmt_infix = splice_concatenate_operator(infix)
     for c in fmt_infix:
-        if c == "(":
+        if c.match(OpeningParen):
             stack.append(c)
-        elif c == ")":
-            while stack[-1] != "(":
+        elif c.match(ClosingParen):
+            while not stack[-1].match(OpeningParen):
                 postfix.append(stack.pop())
             stack.pop()
         else:
@@ -58,7 +62,7 @@ def shunting_yard(infix: str) -> str:
             stack.append(c)
     while stack:
         postfix.append(stack.pop())
-    return "".join(postfix)
+    return postfix
 
 
 class NFA(FiniteStateAutomaton):
@@ -72,7 +76,9 @@ class NFA(FiniteStateAutomaton):
     Now the transition function specifies a set of states rather than a state: it maps Q × Σ to { subsets of Q }."""
 
     def _dict(self) -> defaultdict[State, defaultdict[Symbol, list[State]]]:
-        d = defaultdict(lambda: defaultdict(list))
+        d: defaultdict[State, defaultdict[Symbol, list[State]]] = defaultdict(
+            lambda: defaultdict(list)
+        )
         for symbol, s1, s2 in self.all_transitions():
             d[s1][symbol].append(s2)
         return d
@@ -87,8 +93,9 @@ class NFA(FiniteStateAutomaton):
         *,
         regexp: Optional[str] = None,
     ):
-        super(FiniteStateAutomaton, self).__init__(lambda: defaultdict(list))
-
+        super(FiniteStateAutomaton, self).__init__(
+            lambda: SymbolDispatchedMapping(list)
+        )
         if regexp is not None:
             self.states: set[State] = set()
             self.symbols: set[Symbol] = set()
@@ -106,35 +113,38 @@ class NFA(FiniteStateAutomaton):
             self.accept = accept
 
     def subexpression(self, sub_expr, start_states, accept_states):
-        frm, to = State.get_pair()
+        frm, to = State.pair()
         self[frm][sub_expr].append(to)
         start_states.append(frm)
         accept_states.append(to)
 
     def init_from_regexp(self, regexp: str):
-        postfix_regexp: str = shunting_yard(simplify(regexp))
+        postfix_regexp: list[Symbol] = shunting_yard(simplify(regexp))
 
         start_states: list[State] = []
         accept_states: list[State] = []
         symbols = gen_symbols_exclude_precedence_ops(postfix_regexp)
 
         for char in postfix_regexp:
-            match char:
-                case "|":
-                    self.alternation(start_states, accept_states)
-                case ".":
-                    self.concatenate(start_states, accept_states)
-                case "*":
-                    self.zero_or_more(start_states, accept_states)
-                case "+":
-                    self.one_or_more(start_states, accept_states)
-                case "?":
-                    self.zero_or_one(start_states, accept_states)
-                case _:
-                    if char in symbols:
-                        self.subexpression(char, start_states, accept_states)
-                    else:
+            if isinstance(char, Operator):
+                match char:
+                    case "|":
+                        self.alternation(start_states, accept_states)
+                    case ".":
+                        self.concatenate(start_states, accept_states)
+                    case "*":
+                        self.zero_or_more(start_states, accept_states)
+                    case "+":
+                        self.one_or_more(start_states, accept_states)
+                    case "?":
+                        self.zero_or_one(start_states, accept_states)
+                    case _:
                         raise ValueError(f"{char} not understood")
+            else:
+                if char in symbols:
+                    self.subexpression(char, start_states, accept_states)
+                else:
+                    raise ValueError(f"{char} not understood")
 
         self.update_start_and_final_states(start_states, accept_states)
         self.update_states_set()
@@ -161,7 +171,7 @@ class NFA(FiniteStateAutomaton):
                     yield symbol, state1, state2
 
     def transition(self, state: State, symbol: Symbol) -> list[State]:
-        return self[state].get(symbol, [NullState])
+        return self[state].match_atom(symbol, [NullState])
 
     def states_eq(self, state_pair: StatePair) -> bool:
         state1, state2 = state_pair
@@ -173,7 +183,6 @@ class NFA(FiniteStateAutomaton):
                 return False
         return True
 
-    # noinspection DuplicatedCode
     def alternation(
         self,
         start_states: list[State],
@@ -189,7 +198,7 @@ class NFA(FiniteStateAutomaton):
             accept_states.pop(),
         )
 
-        new_start, new_accept = State.get_pair()
+        new_start, new_accept = State.pair()
 
         self[new_start][EPSILON].append(lower_start)
         self[new_start][EPSILON].append(upper_start)
@@ -212,7 +221,7 @@ class NFA(FiniteStateAutomaton):
         start_states: list[State],
         accept_states: list[State],
     ) -> None:
-        new_start, new_accept = State.get_pair()
+        new_start, new_accept = State.pair()
 
         self[accept_states[-1]][EPSILON].append(start_states[-1])
         self[new_start][EPSILON].append(start_states.pop())
@@ -236,7 +245,7 @@ class NFA(FiniteStateAutomaton):
             f"accept_states={self.accept}) "
         )
 
-    def epsilon_closure(self, states: Iterable):
+    def epsilon_closure(self, states: Iterable) -> frozenset:
         """
         This is the set of all the nodes which can be reached by following epsilon labeled edges
         This is done here using a depth first search
@@ -258,7 +267,7 @@ class NFA(FiniteStateAutomaton):
             stack.extend(self[u][EPSILON])
             closure.add(u)
 
-        return closure
+        return frozenset(closure)
 
     def move(self, states: Iterable, symbol: Symbol) -> frozenset[State]:
         return frozenset(reduce(op.add, (self[state][symbol] for state in states), []))
@@ -289,6 +298,7 @@ class NFA(FiniteStateAutomaton):
         d = self.gen_dfa_state_set_flags(eps)
         if d.accepts:
             dfa.accept.add(d)
+
         # next we want to see which states are reachable from each of the states in the epsilon closure
         for symbol in self.symbols:
             next_states_set = self.epsilon_closure(self.move(eps, symbol))

@@ -1,78 +1,7 @@
-from string import ascii_uppercase, ascii_lowercase, digits
+from string import ascii_lowercase, ascii_uppercase, digits
+from symbol import Character, MetaSequence, OneOf, Operator, Symbol, Caret
 
-from utils import ALL_OPERATORS, LEFT_PAREN, UNION, RIGHT_PAREN
-
-
-def simplify_kleene_plus(regexp: str) -> str:
-    """A+ -> AA*"""
-    len_regexp = len(regexp)
-    i = 0
-    while i < len_regexp:
-        if regexp[i] == "+":
-            # two cases can arise:
-            # 1. + is after a symbol, in which case + affects only that symbol
-            # 2. + is after a ')', in which case + affects a whole expression inside '(' and ')'
-
-            if (symbol := regexp[i - 1]) != ")":
-                assert regexp[i - 1] not in ALL_OPERATORS and regexp[i - 1] not in (
-                    "(",
-                    ")",
-                )
-                sub_exp = symbol + symbol + "*"
-                regexp = regexp[: i - 1] + sub_exp + regexp[i + 1 :]
-                i += 2  # we added two extra characters
-            else:
-                # first find lower bound
-                bracket_counter = 0
-                for j in reversed(range(i)):
-                    if j != i - 1 and regexp[j] == ")":
-                        bracket_counter += 1
-                    # stop
-                    if regexp[j] == "(":
-                        if bracket_counter != 0:
-                            bracket_counter -= 1
-                        else:
-                            symbol_sequence_with_brackets = regexp[j:i]
-                            sub_exp = (
-                                symbol_sequence_with_brackets
-                                + symbol_sequence_with_brackets
-                                + "*"
-                            )
-
-                            left = regexp[:j]
-                            right = regexp[i + 1 :]
-                            regexp = left + sub_exp + right
-                            i += len(symbol_sequence_with_brackets)
-            len_regexp = len(regexp)
-        i += 1
-    return regexp
-
-
-def simplify_lua(regexp: str) -> str:
-    """A? represents A|ε"""
-    len_regexp = len(regexp)
-    i = 0
-    while i < len_regexp:
-        if regexp[i] == "?":
-            # two cases can arise:
-            # 1. ? is after a symbol, in which case ? affects only that symbol
-            # 2. ? is after a `)`, in which case ? affects a whole expression inside '(' and ')'
-            if (symbol := regexp[i - 1]) != ")":
-                sub_exp = "(" + symbol + "|ε)"
-                regexp = regexp[: i - 1] + sub_exp + regexp[i + 1 :]
-                i += 3  # we replaced 1 character with 4, so we advance i by 3
-            else:
-                assert regexp[i - 1] == ")"
-                for j in reversed(range(i)):
-                    if regexp[j] == "(":
-                        symbol_sequence_with_brackets = regexp[j:i]
-                        sub_exp = "(" + symbol_sequence_with_brackets + "|ε)"
-                        regexp = regexp[:j] + sub_exp + regexp[i + 1 :]
-                        i += 3
-                        break
-            len_regexp = len(regexp)
-        i += 1
-    return regexp
+from symbol import AllOps, ESCAPED
 
 
 def handle_alpha(char_start, chart_end):
@@ -111,13 +40,18 @@ def parse_character_class(regexp: str):
         raise ValueError(f"invalid character class{regexp}")
     assert regexp[0] == "[" and regexp[-1] == "]"
     assert all(
-        special_char not in regexp for special_char in ALL_OPERATORS + ("(", ")")
+        special_char not in regexp for special_char in ("|", "?", "+", "*", "(", ")")
     )
+    negated = False
+    if regexp[1] == Caret:
+        negated = True
+    original_regexp = regexp
+    regexp = regexp[:1] + regexp[2:]
     if "-" in regexp:
-        regexp = simplify_ranges(regexp)
+        simplified = simplify_ranges(regexp)
     else:
-        regexp = regexp[1:-1]
-    return LEFT_PAREN + UNION.join(regexp) + RIGHT_PAREN
+        simplified = regexp[1:-1]
+    return OneOf(set(simplified), original_regexp, negated=negated)
 
 
 def simplify_ranges(regexp: str):
@@ -127,7 +61,7 @@ def simplify_ranges(regexp: str):
 
     len_regexp = len(regexp)
     i = 1
-    subs = []
+    subs: list[str] = []
     while i < len_regexp - 1:
         if regexp[i] == "-":
             sub_regexp = handle_range(regexp[i - 1], regexp[i + 1])
@@ -177,34 +111,54 @@ def simplify_redundant_quantifiers(regexp: str):
     return reduced
 
 
-def simplify_character_classes(regexp: str):
-    regexp = substitute_character_classes(regexp)
-    subs = []
-    s = None
-    for i in range(len(regexp)):
-        if regexp[i] == "]":
-            if s is not None:
-                sub_regexp = parse_character_class(regexp[s : i + 1])
-                subs.append(sub_regexp)
-                s = None
+def parse_repetition_range(symbols: list[Symbol], regexp: str) -> list[Symbol]:
+    print(symbols, regexp)
+    pass
+
+
+def to_symbols(regexp: str) -> list[Symbol]:
+    symbols: list[Symbol] = []
+    index = 0
+    while index < len(regexp):
+        char = regexp[index]
+        if char in AllOps:
+            symbols.append(Operator(char))
+        elif char == "\\":
+            next_char = regexp[index + 1]  # index out of bounds?
+            if next_char in ESCAPED:
+                symbols.append(Character(next_char))
             else:
-                raise ValueError(
-                    f"unescaped closing bracket found at regexp[{i}] before any opening bracket"
-                )
-        elif regexp[i] == "[":
-            if s is not None:
-                raise ValueError(
-                    f"found another opening bracket before the one at {s} was closed"
-                )
-            s = i
-        elif s is None:
-            subs.append(regexp[i])
-    if s is not None:
-        raise ValueError(
-            f"could not find closing square bracket to the one opened at regexp[{s}]"
-        )
-    return "".join(subs)
+                symbols.append(MetaSequence(next_char))
+                index += 1
+        elif char == "[":
+            start = index
+            index += 1
+            while index < len(regexp):
+                if regexp[index] == "[":
+                    raise ValueError(
+                        f"found another opening bracket before the one at {start} was closed"
+                    )
+                if regexp[index] == "]":
+                    symbols.append(parse_character_class(regexp[start : index + 1]))
+                    break
+                index += 1
+            if index >= len(regexp):
+                raise ValueError(f"bracket starting at {start}")
+        elif char == "{":
+            start = index
+            index += 1
+            while index < len(regexp) and regexp[index] != "}":
+                index += 1
+            if index >= len(regexp):
+                raise ValueError(f"unclosed brace starting at {start}")
+            symbols.extend(parse_repetition_range(symbols, regexp[start : index + 1]))
+
+        else:
+            symbols.append(Character(char))
+        index += 1
+
+    return symbols
 
 
-def simplify(regexp: str) -> str:
-    return simplify_redundant_quantifiers(simplify_character_classes(regexp))
+def simplify(regexp: str) -> list[Symbol]:
+    return to_symbols(simplify_redundant_quantifiers(regexp))

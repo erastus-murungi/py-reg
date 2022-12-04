@@ -1,12 +1,13 @@
 from collections import defaultdict
 from itertools import combinations
-from typing import Optional, Iterator
+from symbol import Symbol, Character
+from typing import Iterator, Optional
 
 from more_itertools import minmax
 
-from core import State, Symbol, DFAState, FiniteStateAutomaton, NullDfaState
+from core import DFAState, FiniteStateAutomaton, NullDfaState, State
 from nfa import NFA
-from utils import UnionFind
+from data_structures import UnionFind
 
 
 class DFA(FiniteStateAutomaton):
@@ -188,15 +189,19 @@ if __name__ == "__main__":
     q3 = DFAState(frozenset([3]))
     q4 = DFAState(frozenset([4]), accepts=True)
 
+    a = Character("a")
+    b = Character("b")
     transitions = {
-        q0: {"a": q1, "b": q2},
-        q1: {"a": q1, "b": q3},
-        q2: {"b": q2, "a": q1},
-        q3: {"a": q1, "b": q4},
-        q4: {"a": q1, "b": q2},
+        q0: {a: q1, b: q2},
+        q1: {a: q1, b: q3},
+        q2: {b: q2, a: q1},
+        q3: {a: q1, b: q4},
+        q4: {a: q1, b: q2},
     }
 
-    dfa3 = DFA(transitions, {q0, q1, q2, q3, q4}, {"a", "b"}, q0, {q4})
+    dfa3 = DFA(
+        transitions, {q0, q1, q2, q3, q4}, {Character("a"), Character("b")}, q0, {q4}
+    )
     dfa3.draw_with_graphviz()
 
     dfa3.minimize()

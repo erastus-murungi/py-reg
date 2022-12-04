@@ -1,15 +1,14 @@
 from pprint import pprint
 
 from core import DFAState
-from nfa import NFA
 from dfa import DFA
+from nfa import NFA
 from simplify import (
-    simplify_character_classes,
-    simplify_lua,
-    simplify_kleene_plus,
     simplify,
+    simplify_character_classes,
+    simplify_kleene_plus,
+    simplify_lua,
 )
-
 
 # print(handle_lua("(ab)?cde?(abc)?d"))
 # print(simplify_kleene_plus("(ab)+a(abcd)+ed"))

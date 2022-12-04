@@ -1,14 +1,16 @@
 from abc import ABC, abstractmethod
 from collections import defaultdict
 from functools import cache
-from itertools import product, chain, count
+from itertools import chain, count, product
 from string import ascii_uppercase
-from typing import ClassVar, Final, Collection, MutableMapping
-from utils import is_iterable
+
+from data_structures import SymbolDispatchedMapping
+from symbol import Symbol
+from typing import ClassVar, Collection, Final, MutableMapping
 
 import graphviz
 
-Symbol = str
+from utils import is_iterable
 
 
 def yield_letters():
@@ -21,18 +23,18 @@ def yield_letters():
 
 
 class State:
-    state_ids: ClassVar = count(-1)
+    ids: ClassVar = count(-1)
 
     def __init__(self, *, is_start=False, accepts=False):
         self.is_start = is_start
         self.accepts = accepts
-        self.id = self.get_id()
+        self.id = self._gen_id()
 
-    def get_id(self):
-        return next(self.state_ids)
+    def _gen_id(self):
+        return next(self.ids)
 
     @staticmethod
-    def get_pair():
+    def pair():
         return State(), State()
 
     def __repr__(self):
@@ -55,19 +57,19 @@ NullState: Final[State] = State(is_start=False, accepts=False)
 
 
 class DFAState(State):
-    labels_gen = yield_letters()
+    _labels_gen = yield_letters()
 
     def __init__(self, from_states, *, is_start=False, accepts=False):
         self.sources = from_states
         super().__init__(is_start=is_start, accepts=accepts)
 
-    def get_id(self):
+    def _gen_id(self):
         return self.get_label(self.sources)
 
     @staticmethod
     @cache
     def get_label(_frozen):
-        return next(DFAState.labels_gen)
+        return next(DFAState._labels_gen)
 
     def is_null(self):
         return self is NullDfaState
@@ -77,7 +79,8 @@ NullDfaState: Final[State] = DFAState(from_states=None)
 
 
 class FiniteStateAutomaton(
-    defaultdict[State, MutableMapping[Symbol, DFAState | list[State]]], ABC
+    defaultdict[State, SymbolDispatchedMapping],
+    ABC,
 ):
     states: set[State] | set[DFAState]
     start_state: State | DFAState
@@ -120,7 +123,7 @@ class FiniteStateAutomaton(
                 )
 
             dot.node(f"{s2.id}", shape="doublecircle" if s2.accepts else "circle")
-            dot.edge(str(s1.id), str(s2.id), label=symbol)
+            dot.edge(str(s1.id), str(s2.id), label=str(symbol))
 
         dot.node("start", shape="none")
         dot.edge("start", f"{self.start_state.id}", arrowhead="vee")
