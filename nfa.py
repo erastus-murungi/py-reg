@@ -1,22 +1,23 @@
 import operator as op
 from collections import defaultdict
 from functools import reduce
+from symbol import (
+    EPSILON,
+    AllOps,
+    BinOps,
+    ClosingParen,
+    Concatenate,
+    OpeningParen,
+    Operator,
+    Symbol,
+    gen_symbols_exclude_precedence_ops,
+    precedence,
+)
 from typing import Iterable, Optional
 
 from core import DFAState, FiniteStateAutomaton, NullState, State
 from data_structures import SymbolDispatchedMapping
 from simplify import simplify
-from symbol import (
-    AllOps,
-    BinOps,
-    EPSILON,
-    gen_symbols_exclude_precedence_ops,
-    precedence,
-    OpeningParen,
-    ClosingParen,
-    Concatenate,
-)
-from symbol import Symbol, Operator
 
 StatePair = tuple[State, State]
 
@@ -172,6 +173,9 @@ class NFA(FiniteStateAutomaton):
 
     def transition(self, state: State, symbol: Symbol) -> list[State]:
         return self[state].match_atom(symbol, [NullState])
+
+    def transition_is_possible(self, state: State, symbol: Symbol) -> bool:
+        return self[state].match_atom(symbol, None)
 
     def states_eq(self, state_pair: StatePair) -> bool:
         state1, state2 = state_pair

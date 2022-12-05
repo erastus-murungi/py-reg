@@ -1,7 +1,6 @@
 from collections import defaultdict
-from typing import MutableMapping, Callable
-
-from symbol import Symbol, CompoundSymbol
+from symbol import CompoundSymbol, Symbol
+from typing import Callable, MutableMapping
 
 
 class UnionFind:

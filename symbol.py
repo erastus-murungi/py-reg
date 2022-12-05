@@ -1,6 +1,6 @@
 import reprlib
 from abc import ABC, abstractmethod
-from typing import Generic, TypeVar, Final
+from typing import Final, Generic, TypeVar
 
 from utils import Comparable
 

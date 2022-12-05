@@ -1,12 +1,11 @@
-from abc import ABC
+from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from pprint import pprint
-from typing import Optional
 from enum import Enum
-
+from pprint import pprint
 from symbol import ESCAPED
+from typing import Optional
 
-anchors = {"$"}
+anchors = {"$", "^"}
 
 character_classes = {"w", "W", "s", "S", "d", "D"}
 
@@ -73,8 +72,10 @@ class SubExpression(RegexNode):
 
 @dataclass
 class Expression:
-    sub_expr: list[SubExpression]
-    expr: Optional["Expression"]
+    # a sequence of concatenated expressions
+    seq: list[SubExpression]
+    # an alternative
+    alternate: Optional["Expression"]
 
 
 @dataclass
@@ -197,6 +198,7 @@ class Parser:
         sub_exprs = self.parse_sub_expression()
         expr = None
         if self.matches("|"):
+            self.consume("|")
             expr = self.parse_expression()
         return Expression(sub_exprs, expr)
 
@@ -312,9 +314,9 @@ class Parser:
         return CharacterGroup(group_pos, items, negated)
 
     def parse_char(self):
-        assert self.can_parse_char()
         if self.can_parse_escaped():
             return self.parse_escaped()
+        assert self.can_parse_char()
         return Char(self.pos, self.consume_and_return())
 
     def can_parse_escaped(self):
@@ -354,5 +356,6 @@ class Parser:
 
 
 if __name__ == "__main__":
-    p = Parser(r"(ab){3, 4}[^A-Za0-9_]+(\w)*")
+    # p = Parser(r"(ab){3, 4}[^A-Za0-9_]+(\w)*")
+    p = Parser(r"(ab)|(df)")
     pprint(p.root)

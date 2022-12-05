@@ -1,37 +1,20 @@
 import re
 from dataclasses import dataclass
+from symbol import EPSILON, Character
 
-from core import State, Symbol
+from core import State
 from nfa import NFA
-from symbol import EPSILON
-
-
-class Cursor:
-    def __init__(self, start, end=None):
-        self.start = start
-        self.end = end or start
-
-    def to_match(self, text):
-        return Match(self.start, text[self.start : self.end])
-
-    def increment(self):
-        return Cursor(self.start, self.end + 1)
-
-    def __repr__(self):
-        return f"[{self.start}, {self.end})"
 
 
 @dataclass(frozen=True)
 class Match:
     start: int
+    end: int
     substr: str
 
     @property
     def span(self):
-        return self.start, self.end()
-
-    def end(self):
-        return self.start + len(self.substr)
+        return self.start, self.end
 
 
 class Matcher:
@@ -41,42 +24,51 @@ class Matcher:
         self.nfa = NFA(regexp=regexp)
 
     def __iter__(self):
-        """times specifies the order in which the dfs was finished"""
+        def add_next_states(
+            state: State, next_states: list[State], visited: set[State]
+        ):
+            if self.nfa.transition_is_possible(state, EPSILON):
+                for eps_state in self.nfa.transition(state, EPSILON):
+                    if eps_state not in visited:
+                        visited.add(eps_state)
+                        add_next_states(eps_state, next_states, visited)
+            else:
+                next_states.append(state)
+
         start = 0
+        while start < len(self.text):
+            current = []
+            add_next_states(self.nfa.start_state, current, set())
+            char_index = start - 1
+            for i in range(start, len(self.text)):
+                char_index += 1
+                next_states = []
 
-        while True:
+                for source in current:
+                    for s in self.nfa.transition(source, Character(self.text[i])):
+                        if not s.is_null():
+                            add_next_states(s, next_states, set())
 
-            def explore_node(cursor: Cursor, state: State, symbol: Symbol | str):
-                nodes = self.nfa.transition(state, symbol)
-                for node in nodes:
-                    if not node.is_null():
-                        yield from match(
-                            cursor if symbol == EPSILON else cursor.increment(), node
-                        )
+                if not next_states:
+                    char_index -= 1
+                    break
+                current = next_states
 
-            def match(cursor: Cursor, state: State):
-                if state.accepts:
-                    yield cursor
-                if cursor.end < len(self.text):
-                    yield from explore_node(cursor, state, self.text[cursor.end])
-                yield from explore_node(cursor, state, EPSILON)
-
-            new_start = start
-            for c in match(Cursor(start), self.nfa.start_state):
-                new_start = max(c.end, new_start)
-                yield c.to_match(self.text)
-
-            if start == new_start:
-                break
-            start = new_start
+            if any(s.accepts for s in current):
+                yield Match(start, char_index + 1, self.text[start:char_index])
+                start = char_index + 1
+            else:
+                start = start + 1
 
     def __repr__(self):
         return f"{self.__class__.__name__}(regex={self.regexp!r}, text={self.text!r})"
 
 
 if __name__ == "__main__":
-    regex = "[^A-Za-z_](ab)?b+"
-    t = "5abb"  # nfa.draw_with_graphviz()
+    # regex = "[^A-Za-z_](ab)?b+"
+    # t = "5abb"  # nfa.draw_with_graphviz()
+    regex = r"a*b+aa*"
+    t = "aaabbaaabbbaa"
     matcher = Matcher(t, regex)
 
     print(matcher)

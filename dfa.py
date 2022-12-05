@@ -1,13 +1,13 @@
 from collections import defaultdict
 from itertools import combinations
-from symbol import Symbol, Character
+from symbol import Character, Symbol
 from typing import Iterator, Optional
 
 from more_itertools import minmax
 
 from core import DFAState, FiniteStateAutomaton, NullDfaState, State
-from nfa import NFA
 from data_structures import UnionFind
+from nfa import NFA
 
 
 class DFA(FiniteStateAutomaton):

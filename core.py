@@ -3,13 +3,12 @@ from collections import defaultdict
 from functools import cache
 from itertools import chain, count, product
 from string import ascii_uppercase
-
-from data_structures import SymbolDispatchedMapping
 from symbol import Symbol
 from typing import ClassVar, Collection, Final, MutableMapping
 
 import graphviz
 
+from data_structures import SymbolDispatchedMapping
 from utils import is_iterable
 
 

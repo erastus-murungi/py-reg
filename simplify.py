@@ -1,7 +1,14 @@
 from string import ascii_lowercase, ascii_uppercase, digits
-from symbol import Character, MetaSequence, OneOf, Operator, Symbol, Caret
-
-from symbol import AllOps, ESCAPED
+from symbol import (
+    ESCAPED,
+    AllOps,
+    Caret,
+    Character,
+    MetaSequence,
+    OneOf,
+    Operator,
+    Symbol,
+)
 
 
 def handle_alpha(char_start, chart_end):
