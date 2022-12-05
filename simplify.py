@@ -1,14 +1,6 @@
 from string import ascii_lowercase, ascii_uppercase, digits
-from symbol import (
-    ESCAPED,
-    AllOps,
-    Caret,
-    Character,
-    MetaSequence,
-    OneOf,
-    Operator,
-    Symbol,
-)
+from symbol import (ESCAPED, AllOps, AnyCharacter, Caret, Character,
+                    MetaSequence, OneOf, Operator, Symbol)
 
 
 def handle_alpha(char_start, chart_end):
@@ -51,9 +43,9 @@ def parse_character_class(regexp: str):
     )
     negated = False
     if regexp[1] == Caret:
+        regexp = regexp[:1] + regexp[2:]
         negated = True
     original_regexp = regexp
-    regexp = regexp[:1] + regexp[2:]
     if "-" in regexp:
         simplified = simplify_ranges(regexp)
     else:
@@ -128,7 +120,9 @@ def to_symbols(regexp: str) -> list[Symbol]:
     index = 0
     while index < len(regexp):
         char = regexp[index]
-        if char in AllOps:
+        if char == ".":
+            symbols.append(AnyCharacter())
+        elif char in AllOps:
             symbols.append(Operator(char))
         elif char == "\\":
             next_char = regexp[index + 1]  # index out of bounds?

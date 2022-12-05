@@ -1,5 +1,5 @@
 from collections import defaultdict
-from symbol import CompoundSymbol, Symbol
+from symbol import Epsilon, CompoundSymbol, Symbol
 from typing import Callable, MutableMapping
 
 
@@ -102,10 +102,13 @@ class UnionFind:
 
 
 class SymbolDispatchedMapping(MutableMapping):
-    def __init__(self, default: Callable):
+    def __init__(self, default=None):
         self.default_factory = default
         self.sorted_map: list[tuple[CompoundSymbol, Callable]] = []
-        self.hash_map: defaultdict[Symbol, Callable] = defaultdict(default)
+        if default is None:
+            self.hash_map = {}
+        else:
+            self.hash_map: defaultdict[Symbol, Callable] = defaultdict(default)
 
     def __setitem__(self, symbol, v) -> None:
         if isinstance(symbol, CompoundSymbol):
@@ -113,6 +116,8 @@ class SymbolDispatchedMapping(MutableMapping):
                 sym, value = self.sorted_map[i]
                 if sym.match(symbol):
                     self.sorted_map[i] = (symbol, v)
+                    return
+            self.sorted_map.append((symbol, v))
         else:
             self.hash_map[symbol] = v
 
@@ -124,9 +129,10 @@ class SymbolDispatchedMapping(MutableMapping):
             for sym, value in self.sorted_map:
                 if sym.match(symbol):
                     return value
-            value = self.default_factory()
-            self.sorted_map.append((symbol, value))
-            return value
+            if self.default_factory is not None:
+                value = self.default_factory()
+                self.sorted_map.append((symbol, value))
+                return value
         return self.hash_map.__getitem__(symbol)
 
     def __len__(self) -> int:
@@ -135,6 +141,26 @@ class SymbolDispatchedMapping(MutableMapping):
     def __iter__(self):
         yield from map(lambda tup: tup[0], self.sorted_map)
         yield from self.hash_map
+
+    def items(self):
+        yield from self.sorted_map
+        yield from self.hash_map.items()
+
+    def items_non_epsilon(self):
+        for symbol, val in self.items():
+            if not symbol.match(Epsilon):
+                yield symbol, val
+
+    def clear(self) -> None:
+        self.sorted_map = []
+        if self.default_factory is None:
+            self.hash_map = {}
+        else:
+            self.hash_map = defaultdict(self.default_factory)
+
+    def update(self, m, **kwargs) -> None:
+        for k, v in m.items():
+            self[k] = v
 
     def match_atom(self, char, default):
         for sym, value in self.sorted_map:

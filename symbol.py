@@ -84,7 +84,7 @@ class OneOf(CompoundSymbol):
 
 
 class AnyCharacter(CompoundSymbol):
-    def __init__(self, ignore=(None,)):
+    def __init__(self, ignore=("ε",)):
         self.ignore = ignore
 
     def __eq__(self, token):
@@ -94,7 +94,10 @@ class AnyCharacter(CompoundSymbol):
         return isinstance(other, AnyCharacter) and other.ignore == self.ignore
 
     def __repr__(self):
-        return "."
+        return "Any"
+
+    def __hash__(self):
+        return hash(".") ^ 12934
 
 
 ESCAPED = set(". \\ + * ? [ ^ ] $ ( ) { } = ! < > | : -".split())
@@ -122,7 +125,7 @@ AllOps = {
 
 BinOps = {Caret, Alternation}
 
-EPSILON = Character("ε")
+Epsilon = Character("ε")
 
 PRECEDENCE: Final[dict[Operator, int]] = {
     OpeningParen: 1,

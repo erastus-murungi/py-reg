@@ -1,19 +1,19 @@
 from collections import defaultdict
 from itertools import combinations
-from symbol import Character, Symbol
+from symbol import Symbol
 from typing import Iterator, Optional
 
 from more_itertools import minmax
 
 from core import DFAState, FiniteStateAutomaton, NullDfaState, State
-from data_structures import UnionFind
+from data_structures import SymbolDispatchedMapping, UnionFind
 from nfa import NFA
 
 
 class DFA(FiniteStateAutomaton):
     def __init__(
         self,
-        transitions: Optional[dict[DFAState, dict[Symbol, DFAState]]] = None,
+        transitions: Optional[dict[DFAState, SymbolDispatchedMapping]] = None,
         states: Optional[set[DFAState]] = None,
         symbols: Optional[set[Symbol]] = None,
         start_state: Optional[DFAState] = None,
@@ -21,7 +21,7 @@ class DFA(FiniteStateAutomaton):
         *,
         regexp: Optional[str] = None
     ):
-        super(FiniteStateAutomaton, self).__init__(dict)
+        super(FiniteStateAutomaton, self).__init__(SymbolDispatchedMapping)
 
         if regexp is not None:
             self.states: set[DFAState] = set()
@@ -51,21 +51,19 @@ class DFA(FiniteStateAutomaton):
         self.set_start(nfa.compute_transitions_for_dfa_state(self, s0, seen, stack))
 
         while stack:
-            to_explore = stack.pop()
-            nfa.compute_transitions_for_dfa_state(self, to_explore, seen, stack)
+            nfa.compute_transitions_for_dfa_state(self, stack.pop(), seen, stack)
 
         self.clean_up_empty_sets()
         self.update_states_set()
         self.symbols = nfa.symbols
 
     def clean_up_empty_sets(self):
-        pruned_transition_table = defaultdict(dict)
-        for start_state, table in self.items():
+        items = self._dict().items()
+        self.clear()
+        for start_state, table in items:
             for symbol, end_state in table.items():
                 if end_state.sources:
-                    pruned_transition_table[start_state][symbol] = end_state
-        self.clear()
-        self.update(pruned_transition_table)
+                    self[start_state][symbol] = end_state
 
     def all_transitions(self):
         for state1, table in self.items():
@@ -155,6 +153,9 @@ class DFA(FiniteStateAutomaton):
         (self.start_state,) = tuple(filter(lambda s: s.is_start, self.states))
         self.accept = set(filter(lambda s: s.accepts, self.accept))
 
+    def transition_is_possible(self, state: State, symbol: Symbol) -> Optional[State]:
+        return self[state].match_atom(symbol, None)
+
 
 if __name__ == "__main__":
     # df = DFA(regexp=r"(ab?)c*")
@@ -183,26 +184,30 @@ if __name__ == "__main__":
     # dfa1.minimize()
     # dfa1.draw_with_graphviz()
 
-    q0 = DFAState(frozenset([0]), is_start=True)
-    q1 = DFAState(frozenset([1]))
-    q2 = DFAState(frozenset([2]))
-    q3 = DFAState(frozenset([3]))
-    q4 = DFAState(frozenset([4]), accepts=True)
+    # q0 = DFAState(frozenset([0]), is_start=True)
+    # q1 = DFAState(frozenset([1]))
+    # q2 = DFAState(frozenset([2]))
+    # q3 = DFAState(frozenset([3]))
+    # q4 = DFAState(frozenset([4]), accepts=True)
+    #
+    # a = Character("a")
+    # b = Character("b")
+    # transitions = {
+    #     q0: {a: q1, b: q2},
+    #     q1: {a: q1, b: q3},
+    #     q2: {b: q2, a: q1},
+    #     q3: {a: q1, b: q4},
+    #     q4: {a: q1, b: q2},
+    # }
+    #
+    # dfa3 = DFA(
+    #     transitions, {q0, q1, q2, q3, q4}, {Character("a"), Character("b")}, q0, {q4}
+    # )
+    # dfa3.draw_with_graphviz()
+    #
+    # dfa3.minimize()
+    # dfa3.draw_with_graphviz()
 
-    a = Character("a")
-    b = Character("b")
-    transitions = {
-        q0: {a: q1, b: q2},
-        q1: {a: q1, b: q3},
-        q2: {b: q2, a: q1},
-        q3: {a: q1, b: q4},
-        q4: {a: q1, b: q2},
-    }
-
-    dfa3 = DFA(
-        transitions, {q0, q1, q2, q3, q4}, {Character("a"), Character("b")}, q0, {q4}
-    )
-    dfa3.draw_with_graphviz()
-
-    dfa3.minimize()
-    dfa3.draw_with_graphviz()
+    df = DFA(regexp=r"a*b+aa*c|d?")
+    df.minimize()
+    df.draw_with_graphviz()
