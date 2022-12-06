@@ -1,9 +1,7 @@
 import re
 from dataclasses import dataclass
-from symbol import Epsilon, Character
 
-from core import State
-from dfa import DFA
+from pyreg import compile_regex
 
 
 @dataclass(frozen=True)
@@ -21,55 +19,60 @@ class Matcher:
     def __init__(self, pattern: str, regexp: str):
         self.text = pattern
         self.regexp = regexp
-        self.dfa = DFA(regexp=regexp)
-        self.dfa.minimize()
+        self.compiled_regex = compile_regex(regexp)
+        self.compiled_regex.draw_with_graphviz()
+
+    def search_from(self, start_index) -> tuple[Match, int]:
+        current_state = self.compiled_regex.start_state
+        accepting_indices: list[int] = []
+
+        for current_index in range(start_index, len(self.text)):
+            if (
+                next_state := self.compiled_regex[current_state].match_atom(
+                    self.text, current_index, None
+                )
+            ) is None:
+                break
+
+            current_state = next_state
+            if current_state.accepts:
+                accepting_indices.append(current_index)
+
+        if accepting_indices:
+            index = accepting_indices[-1]
+            match = Match(start_index, index + 1, self.text[start_index : index + 1])
+            start_index = index + 1
+        else:
+            start_index = start_index + 1
+            match = None
+        return match, start_index
 
     def __iter__(self):
-        def add_next_states(
-            state: State, next_states: list[State], visited: set[State]
-        ):
-            if (
-                eps_state := self.dfa.transition_is_possible(state, Epsilon)
-            ) is not None:
-                if eps_state not in visited:
-                    visited.add(eps_state)
-                    add_next_states(eps_state, next_states, visited)
-            else:
-                next_states.append(state)
-
-        start = 0
-        while start < len(self.text):
-            current = []
-            add_next_states(self.dfa.start_state, current, set())
-            char_index = start - 1
-            for i in range(start, len(self.text)):
-                char_index += 1
-                next_states = []
-
-                for source in current:
-                    if (
-                        s := self.dfa[source].match_atom(Character(self.text[i]), None)
-                    ) is not None:
-                        add_next_states(s, next_states, set())
-
-                if not next_states:
-                    break
-                current = next_states
-
-            if any(s.accepts for s in current):
-                yield Match(start, char_index + 1, self.text[start : char_index + 1])
-                start = char_index + 1
-            else:
-                start = start + 1
+        start_index = 0
+        while start_index < len(self.text):
+            match, start_index = self.search_from(start_index)
+            if match:
+                yield match
 
     def __repr__(self):
         return f"{self.__class__.__name__}(regex={self.regexp!r}, text={self.text!r})"
 
 
 if __name__ == "__main__":
-    # regex = "[^A-Za-z_](ab)?b+"
+    # regex = c
     # t = "5abb"  # nfa.draw_with_graphviz()
-    # regex = r"a*b+a.a*b|d+[A-Z]?"
+    regex = r"^a*b+a.a*b|d+[A-Z]?(CD)+"
+    t = "aaabbaaabbbaadACDC"
+    matcher = Matcher(t, regex)
+
+    print(matcher)
+    for span in matcher:
+        print(span)
+
+    for span in re.finditer(regex, t):
+        print(span)
+
+    # regex = r".*"
     # t = "aaabbaaabbbaadA"
     # matcher = Matcher(t, regex)
     #
@@ -79,14 +82,3 @@ if __name__ == "__main__":
     #
     # for span in re.finditer(regex, t):
     #     print(span)
-
-    regex = r".*"
-    t = "aaabbaaabbbaadA"
-    matcher = Matcher(t, regex)
-
-    print(matcher)
-    for span in matcher:
-        print(span)
-
-    for span in re.finditer(regex, t):
-        print(span)

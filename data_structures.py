@@ -1,6 +1,7 @@
 from collections import defaultdict
-from symbol import Epsilon, CompoundSymbol, Symbol
 from typing import Callable, MutableMapping
+
+from core import CompoundMatchableMixin, MatchableMixin
 
 
 class UnionFind:
@@ -10,12 +11,15 @@ class UnionFind:
     all practical purposes.
     Operations:
         MAKE-SET(x) – creates a new set with one element {x}.
-        UNION(x, y) – merge into one set the set that contains element x and the set that contains element y (x and y are in different sets). The original sets will be destroyed.
+        UNION(x, y) – merge into one set the set that contains element x and the
+                        set that contains element y (x and y are in different sets).
+                         The original sets will be destroyed.
         FIND-SET(x) – returns the representative or a pointer to the representative of the set that contains element x.
     Applications of UnionFind include:
         1. Kruskal’s algorithm for MST.
         2. They are useful in applications like “Computing the shorelines of a terrain,”
-            “Classifying a set of atoms into molecules or fragments,” “Connected component labeling in image analysis,” and others.[1]
+            “Classifying a set of atoms into molecules or fragments,” “Connected component labeling in image analysis,”
+                and others.[1]
         3. Labeling connected components.
         4. Random maze generation and exploration.
         5. Alias analysis in compiler theory.
@@ -70,7 +74,7 @@ class UnionFind:
         # Find the heaviest root according to its weight.
         roots = iter(
             sorted(
-                {self[x] for x in objects}, key=lambda r: self.weights[r], reverse=True
+                {self[x] for x in objects}, key=lambda h: self.weights[h], reverse=True
             )
         )
         try:
@@ -99,74 +103,3 @@ class UnionFind:
 
     def __str__(self):
         return str(list(self.to_sets()))
-
-
-class SymbolDispatchedMapping(MutableMapping):
-    def __init__(self, default=None):
-        self.default_factory = default
-        self.sorted_map: list[tuple[CompoundSymbol, Callable]] = []
-        if default is None:
-            self.hash_map = {}
-        else:
-            self.hash_map: defaultdict[Symbol, Callable] = defaultdict(default)
-
-    def __setitem__(self, symbol, v) -> None:
-        if isinstance(symbol, CompoundSymbol):
-            for i in range(len(self.sorted_map)):
-                sym, value = self.sorted_map[i]
-                if sym.match(symbol):
-                    self.sorted_map[i] = (symbol, v)
-                    return
-            self.sorted_map.append((symbol, v))
-        else:
-            self.hash_map[symbol] = v
-
-    def __delitem__(self, __v) -> None:
-        raise NotImplementedError
-
-    def __getitem__(self, symbol: Symbol):
-        if isinstance(symbol, CompoundSymbol):
-            for sym, value in self.sorted_map:
-                if sym.match(symbol):
-                    return value
-            if self.default_factory is not None:
-                value = self.default_factory()
-                self.sorted_map.append((symbol, value))
-                return value
-        return self.hash_map.__getitem__(symbol)
-
-    def __len__(self) -> int:
-        return len(self.sorted_map) + len(self.hash_map)
-
-    def __iter__(self):
-        yield from map(lambda tup: tup[0], self.sorted_map)
-        yield from self.hash_map
-
-    def items(self):
-        yield from self.sorted_map
-        yield from self.hash_map.items()
-
-    def items_non_epsilon(self):
-        for symbol, val in self.items():
-            if not symbol.match(Epsilon):
-                yield symbol, val
-
-    def clear(self) -> None:
-        self.sorted_map = []
-        if self.default_factory is None:
-            self.hash_map = {}
-        else:
-            self.hash_map = defaultdict(self.default_factory)
-
-    def update(self, m, **kwargs) -> None:
-        for k, v in m.items():
-            self[k] = v
-
-    def match_atom(self, char, default):
-        for sym, value in self.sorted_map:
-            if sym == char:
-                return value
-        return self.hash_map.get(char, default)
-
-    def __repr__(self):
-        return f"{self.__class__.__name__}(compound={self.sorted_map}, simple={self.hash_map})"

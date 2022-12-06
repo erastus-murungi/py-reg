@@ -1,0 +1,44 @@
+from collections import defaultdict
+from parser import Epsilon, MetaData, RegexParser
+from pprint import pprint
+
+from core import SymbolDispatchedMapping
+from dfa import DFA
+from nfa import NFA
+from simplify import simplify
+
+
+class CompiledRegex(DFA):
+    def __init__(self, nfa: NFA, metadata: MetaData):
+        super().__init__(nfa=nfa)
+        self.minimize()
+        self.metadata = metadata
+
+    def options(self):
+        return self.metadata
+
+
+def compile_regex(regex: str) -> CompiledRegex:
+    simplified_regex = simplify(regex)
+    parser = RegexParser(simplified_regex)
+    transitions = defaultdict(lambda: SymbolDispatchedMapping(set))
+    start_state, final_state = parser.root.to_fsm(transitions)
+
+    symbols = set()
+    states = set()
+    for state in transitions:
+        states.add(state)
+        for sym, end_state in transitions[state].items():
+            states = states | end_state
+            symbols.add(sym)
+    symbols.discard(Epsilon)
+    compiled_regex = CompiledRegex(
+        NFA(transitions, states, symbols, start_state, final_state), parser.metadata
+    )
+    return compiled_regex
+
+
+if __name__ == "__main__":
+    r = r"a*b+a.a*b|d+[A-Z]?"
+    compiled = compile_regex(r)
+    pprint(compiled)

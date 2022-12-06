@@ -1,12 +1,12 @@
 from collections import defaultdict
 from itertools import combinations
-from symbol import Symbol
 from typing import Iterator, Optional
 
 from more_itertools import minmax
 
-from core import DFAState, FiniteStateAutomaton, NullDfaState, State
-from data_structures import SymbolDispatchedMapping, UnionFind
+from core import (DFAState, FiniteStateAutomaton, MatchableMixin, NullDfaState,
+                  State, SymbolDispatchedMapping)
+from data_structures import UnionFind
 from nfa import NFA
 
 
@@ -15,19 +15,19 @@ class DFA(FiniteStateAutomaton):
         self,
         transitions: Optional[dict[DFAState, SymbolDispatchedMapping]] = None,
         states: Optional[set[DFAState]] = None,
-        symbols: Optional[set[Symbol]] = None,
+        symbols: Optional[set[MatchableMixin]] = None,
         start_state: Optional[DFAState] = None,
         accept: Optional[set[DFAState]] = None,
         *,
-        regexp: Optional[str] = None
+        nfa: Optional[NFA] = None
     ):
         super(FiniteStateAutomaton, self).__init__(SymbolDispatchedMapping)
 
-        if regexp is not None:
+        if nfa is not None:
             self.states: set[DFAState] = set()
-            self.symbols: set[Symbol] = set()
+            self.symbols: set[MatchableMixin] = set()
             self.accept: set[DFAState] = set()
-            self.init_from_regexp(regexp)
+            self.subset_construction(nfa)
         else:
             assert transitions is not None
             self.update(transitions)
@@ -40,12 +40,10 @@ class DFA(FiniteStateAutomaton):
             assert accept is not None
             self.accept = accept
 
-    def transition(self, state: State, symbol: Symbol) -> State:
+    def transition(self, state: State, symbol: MatchableMixin) -> State:
         return self[state].get(symbol, NullDfaState)
 
-    def init_from_regexp(self, regexp: str):
-        nfa = NFA(regexp=regexp)
-
+    def subset_construction(self, nfa: NFA):
         s0 = DFAState(from_states=frozenset({nfa.start_state}))
         seen, stack = set(), []
         self.set_start(nfa.compute_transitions_for_dfa_state(self, s0, seen, stack))
@@ -70,7 +68,7 @@ class DFA(FiniteStateAutomaton):
             for symbol, state2 in table.items():
                 yield symbol, state1, state2
 
-    def _dict(self) -> defaultdict[DFAState, dict[Symbol, DFAState]]:
+    def _dict(self) -> defaultdict[DFAState, dict[MatchableMixin, DFAState]]:
         d = defaultdict(dict)
         for symbol, s1, s2 in self.all_transitions():
             d[s1][symbol] = s2
@@ -132,7 +130,7 @@ class DFA(FiniteStateAutomaton):
         return state
 
     def minimize(self):
-        self.states = set(
+        self.states: set[DFAState] = set(
             map(self.gen_dfa_state_set_flags, self.gen_equivalence_states())
         )
         lost = {
@@ -153,8 +151,10 @@ class DFA(FiniteStateAutomaton):
         (self.start_state,) = tuple(filter(lambda s: s.is_start, self.states))
         self.accept = set(filter(lambda s: s.accepts, self.accept))
 
-    def transition_is_possible(self, state: State, symbol: Symbol) -> Optional[State]:
-        return self[state].match_atom(symbol, None)
+    def transition_is_possible(
+        self, state: State, text: str, position: int
+    ) -> Optional[State]:
+        return self[state].match_atom(text, position, None)
 
 
 if __name__ == "__main__":
@@ -208,6 +208,4 @@ if __name__ == "__main__":
     # dfa3.minimize()
     # dfa3.draw_with_graphviz()
 
-    df = DFA(regexp=r"a*b+aa*c|d?")
-    df.minimize()
-    df.draw_with_graphviz()
+    ...
