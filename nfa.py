@@ -3,14 +3,8 @@ from functools import reduce
 from parser import Epsilon
 from typing import Iterable, Optional
 
-from core import (
-    DFAState,
-    FiniteStateAutomaton,
-    MatchableMixin,
-    NullState,
-    State,
-    SymbolDispatchedMapping,
-)
+from core import (DFAState, FiniteStateAutomaton, MatchableMixin, NullState,
+                  State, TransitionsProvider)
 
 StatePair = tuple[State, State]
 
@@ -35,13 +29,13 @@ class NFA(FiniteStateAutomaton):
 
     def __init__(
         self,
-        transitions: Optional[defaultdict[State, SymbolDispatchedMapping]] = None,
+        transitions: Optional[defaultdict[State, TransitionsProvider]] = None,
         states: Optional[set[State]] = None,
         symbols: Optional[set[MatchableMixin]] = None,
         start_state: Optional[State] = None,
         accept: Optional[State] = None,
     ):
-        super(FiniteStateAutomaton, self).__init__(lambda: SymbolDispatchedMapping(set))
+        super(FiniteStateAutomaton, self).__init__(lambda: TransitionsProvider(set))
         assert transitions is not None
         self.update(transitions)
         assert symbols is not None
@@ -49,9 +43,14 @@ class NFA(FiniteStateAutomaton):
         assert states is not None
         self.states = states
         assert start_state is not None
-        self.start_state = start_state
+        self.set_start(start_state)
         assert accept is not None
+        self.set_accept(accept)
         self.accept = accept
+
+    def set_accept(self, accept: State):
+        self.accept = accept
+        accept.accepts = True
 
     def all_transitions(self):
         for state1, table in self.items():
@@ -110,8 +109,6 @@ class NFA(FiniteStateAutomaton):
 
     def gen_dfa_state_set_flags(self, sources) -> DFAState:
         state = DFAState(from_states=sources)
-        if self.start_state in state.sources:
-            state.is_start = True
         if self.accept in state.sources:
             state.accepts = True
         return state

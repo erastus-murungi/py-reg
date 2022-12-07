@@ -24,57 +24,51 @@ class Match:
         )
 
 
-class Matcher:
-    def __init__(self, pattern: str, regexp: str):
-        self.text = pattern
+class RegexMatcher:
+    def __init__(self, regexp: str, text: str):
+        self.text = text
         self.regexp = regexp
         self.compiled_regex = compile_regex(regexp)
-        self.compiled_regex.draw_with_graphviz()
 
-    def search_from(self, start_index) -> tuple[Match, int]:
-        current_state: State = self.compiled_regex.start_state
-        accepting_indices: list[int] = []
-
-        current_index = start_index
-        while current_index < len(self.text):
-            sym, next_state = self.compiled_regex[current_state].match_atom(
+    def search_from_index(self, current_state: State, current_index: int):
+        if current_state is not None:
+            matches = self.compiled_regex[current_state].match_atom(
                 self.text, current_index, None
             )
-            if next_state is None:
-                break
+            indices = []
+            for sym, next_state in matches:
+                current_state = next_state
 
-            current_state = next_state
+                index = self.search_from_index(
+                    next_state,
+                    current_index if isinstance(sym, Anchor) else current_index + 1,
+                )
+
+                if index is not None:
+                    indices.append(index)
+
+            if indices:
+                return max(indices)
 
             if current_state.accepts:
-                accepting_indices.append(current_index)
-            if not isinstance(sym, Anchor):
-                current_index += 1
-
-        if current_index >= len(self.text):
-            # some end of line characters might exist
-            sym, next_state = self.compiled_regex[current_state].match_atom(
-                self.text, current_index, None
-            )
-            if next_state is not None:
-                current_state = next_state
-                if current_state.accepts:
-                    accepting_indices.append(current_index - 1)
-
-        if accepting_indices:
-            index = accepting_indices[-1]
-            match = Match(start_index, index + 1, self.text[start_index : index + 1])
-            start_index = index + 1
-        else:
-            start_index = start_index + 1
-            match = None
-        return match, start_index
+                return current_index if not matches else current_index + 1
+        return None
 
     def __iter__(self):
         start_index = 0
         while start_index < len(self.text):
-            match, start_index = self.search_from(start_index)
-            if match:
-                yield match
+            end_index = self.search_from_index(
+                self.compiled_regex.start_state, start_index
+            )
+            if end_index is not None:
+                yield Match(start_index, end_index, self.text[start_index:end_index])
+                # empty matches
+                if end_index == start_index:
+                    start_index = end_index + 1
+                else:
+                    start_index = end_index
+            else:
+                start_index = start_index + 1
 
     def __repr__(self):
         return f"{self.__class__.__name__}(regex={self.regexp!r}, text={self.text!r})"
@@ -85,9 +79,14 @@ if __name__ == "__main__":
     # t = "5abb"  # nfa.draw_with_graphviz()
     # regex = r"^a*b+a.a*b|d+[A-Z]?(CD)+\w\d+r$"
     # t = "aaabbaaabbbaadACDC075854r"
-    regex = r"(ab){3,8}"
-    t = "abababababab"
-    matcher = Matcher(t, regex)
+    # regex = r"(ab){3,8}"
+    # t = "abababababab"
+    # regex, t = (r"h.*od?", "hello\ngoodbye\n")
+    # regex, t = r'a', 'a'
+    # regex, t = (r"[abcd]+", "xxxabcdxxx")
+    regex, t = (r"a{,2}", "str{a{,2}}")
+
+    matcher = RegexMatcher(regex, t)
 
     print(matcher)
     for span in matcher:

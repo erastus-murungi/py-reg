@@ -3,16 +3,8 @@ from collections import defaultdict
 from functools import cache
 from itertools import chain, count, product
 from string import ascii_uppercase
-from typing import (
-    ClassVar,
-    Collection,
-    Final,
-    Generic,
-    MutableMapping,
-    Optional,
-    Sequence,
-    TypeVar,
-)
+from typing import (ClassVar, Collection, Final, Generic, MutableMapping,
+                    Optional, Sequence, TypeVar)
 
 import graphviz
 
@@ -96,7 +88,7 @@ class DFAState(State):
 NullDfaState: Final[State] = DFAState(from_states=None)
 
 
-class SymbolDispatchedMapping(MutableMapping):
+class TransitionsProvider(MutableMapping):
     def __init__(self, default=None):
         self.default_factory = default
         self.sorted_map: list[tuple[CompoundMatchableMixin, set[State] | State]] = []
@@ -161,22 +153,27 @@ class SymbolDispatchedMapping(MutableMapping):
 
     def match_atom(
         self, text: str, position: int, default
-    ) -> tuple[MatchableMixin | str, set[State] | State]:
+    ) -> list[tuple[MatchableMixin | str, set[State] | State]]:
         if position >= len(text):
             char = None
         else:
             char = text[position]
+        matches = []
         for sym, value in self.sorted_map:
             if sym.match(position, text):
-                return sym, value
-        return char, self.hash_map.get(char, default)
+                matches.append((sym, value))
+
+        res = self.hash_map.get(char, default)
+        if res is not default:
+            matches.append((char, res))
+        return matches
 
     def __repr__(self):
         return repr(dict(self.items()))
 
 
 class FiniteStateAutomaton(
-    defaultdict[State, SymbolDispatchedMapping],
+    defaultdict[State, TransitionsProvider],
     ABC,
 ):
     states: set[State] | set[DFAState]

@@ -4,14 +4,8 @@ from typing import Iterator, Optional
 
 from more_itertools import minmax
 
-from core import (
-    DFAState,
-    FiniteStateAutomaton,
-    MatchableMixin,
-    NullDfaState,
-    State,
-    SymbolDispatchedMapping,
-)
+from core import (DFAState, FiniteStateAutomaton, MatchableMixin, NullDfaState,
+                  State, TransitionsProvider)
 from data_structures import UnionFind
 from nfa import NFA
 
@@ -19,7 +13,7 @@ from nfa import NFA
 class DFA(FiniteStateAutomaton):
     def __init__(
         self,
-        transitions: Optional[dict[DFAState, SymbolDispatchedMapping]] = None,
+        transitions: Optional[dict[DFAState, TransitionsProvider]] = None,
         states: Optional[set[DFAState]] = None,
         symbols: Optional[set[MatchableMixin]] = None,
         start_state: Optional[DFAState] = None,
@@ -27,7 +21,7 @@ class DFA(FiniteStateAutomaton):
         *,
         nfa: Optional[NFA] = None
     ):
-        super(FiniteStateAutomaton, self).__init__(SymbolDispatchedMapping)
+        super(FiniteStateAutomaton, self).__init__(TransitionsProvider)
 
         if nfa is not None:
             self.states: set[DFAState] = set()
@@ -139,6 +133,7 @@ class DFA(FiniteStateAutomaton):
         self.states: set[DFAState] = set(
             map(self.gen_dfa_state_set_flags, self.gen_equivalence_states())
         )
+
         lost = {
             original: compound
             for compound in self.states
@@ -153,9 +148,13 @@ class DFA(FiniteStateAutomaton):
             for symbol, b in self[a].items():
                 if b in lost:
                     self[a][symbol] = lost.get(b)
-
-        (self.start_state,) = tuple(filter(lambda s: s.is_start, self.states))
+        start_state, *rest = tuple(filter(lambda s: s.is_start, self.states))
+        self.set_start(start_state)
         self.accept = set(filter(lambda s: s.accepts, self.accept))
+
+    @property
+    def states_(self):
+        return self.states
 
     def transition_is_possible(
         self, state: State, text: str, position: int

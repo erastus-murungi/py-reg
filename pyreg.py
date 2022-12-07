@@ -2,7 +2,7 @@ from collections import defaultdict
 from parser import Epsilon, RegexParser
 from pprint import pprint
 
-from core import SymbolDispatchedMapping
+from core import TransitionsProvider
 from dfa import DFA
 from nfa import NFA
 from simplify import simplify
@@ -17,7 +17,7 @@ class CompiledRegex(DFA):
 def compile_regex(regex: str) -> CompiledRegex:
     simplified_regex = simplify(regex)
     parser = RegexParser(simplified_regex)
-    transitions = defaultdict(lambda: SymbolDispatchedMapping(set))
+    transitions = defaultdict(lambda: TransitionsProvider(set))
     start_state, final_state = parser.root.to_fsm(transitions)
 
     symbols = set()

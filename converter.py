@@ -2,7 +2,7 @@ from collections import defaultdict
 from itertools import product
 from typing import Iterable
 
-from core import State, SymbolDispatchedMapping
+from core import State, TransitionsProvider
 from dfa import DFA
 from nfa import NFA
 
@@ -10,7 +10,7 @@ from nfa import NFA
 def _remove_unreachable_states(
     start_state: State,
     states: Iterable[State],
-    transitions: dict[State, SymbolDispatchedMapping],
+    transitions: dict[State, TransitionsProvider],
 ):
     # remove unreachable states
     seen = set()
@@ -54,7 +54,7 @@ def _mutate_and_gen_accept_states(
 def _fill_transitions_and_gen_states(
     nfa: NFA,
     state2closure: dict[State, frozenset[State]],
-    transitions: dict[State, SymbolDispatchedMapping],
+    transitions: dict[State, TransitionsProvider],
 ) -> set[State]:
     #  Construct transitions between `i` and `j` if there is some intermediary state k where
     # • there’s an ε-path i -> k
@@ -73,7 +73,7 @@ def _fill_transitions_and_gen_states(
 
 def remove_epsilon_transitions(nfa: NFA) -> DFA:
     state2closure = _compute_state_2_closure_mapping(nfa)
-    transitions = defaultdict(lambda: SymbolDispatchedMapping(set))
+    transitions = defaultdict(lambda: TransitionsProvider(set))
     states = _fill_transitions_and_gen_states(nfa, state2closure, transitions)
     _remove_unreachable_states(nfa.start_state, states, transitions)
     accept_states = _mutate_and_gen_accept_states(states, state2closure)
