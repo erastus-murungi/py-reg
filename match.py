@@ -84,15 +84,15 @@ if __name__ == "__main__":
     # regex, t = (r"h.*od?", "hello\ngoodbye\n")
     # regex, t = r'a', 'a'
     # regex, t = (r"[abcd]+", "xxxabcdxxx")
-    regex, t = (r"a{,2}", "str{a{,2}}")
+    regex, t = ("(abc)\\1", "abcabc")
+
+    for span in re.finditer(regex, t):
+        print(span)
 
     matcher = RegexMatcher(regex, t)
 
     print(matcher)
     for span in matcher:
-        print(span)
-
-    for span in re.finditer(regex, t):
         print(span)
 
     # regex = r".*"

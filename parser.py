@@ -9,13 +9,15 @@ from typing import MutableMapping, Optional, Sequence
 from core import (CompoundMatchableMixin, MatchableMixin, State, T,
                   TransitionsProvider)
 
-ESCAPED = set(". \\ + * ? [ ^ ] $ ( ) { } = ! < > | : -".split())
+ESCAPED = set(". \\ + * ? [ ^ ] $ ( ) { } = ! < > | -".split())
 
 anchors = {"$", "^"}
 
 character_classes = {"w", "W", "s", "S", "d", "D"}
 
 StatePair = tuple[State, State]
+
+no_escape_in_group = {"\\", "-", "[", ":", "."}
 
 
 def zero_or_more(state_pair, transitions) -> StatePair:
@@ -177,14 +179,24 @@ class RangeQuantifier(QuantifierItem):
 
         if self.end is not None:
             if self.end == inf:
-                item = seq.pop()
-                seq.append(
-                    Group(
-                        item.pos,
-                        Expression(item.pos, [item]),
-                        Quantifier(QuantifierChar(QuantifierType.OneOrMore)),
+                if self.start > 0:
+                    item = seq.pop()
+                    seq.append(
+                        Group(
+                            item.pos,
+                            Expression(item.pos, [item]),
+                            Quantifier(QuantifierChar(QuantifierType.OneOrMore)),
+                        )
                     )
-                )
+                else:
+                    seq.append(
+                        Group(
+                            item.pos,
+                            Expression(item.pos, [item]),
+                            Quantifier(QuantifierChar(QuantifierType.ZeroOrMore)),
+                        )
+                    )
+
             else:
                 for _ in range(self.start, self.end):
                     seq.append(
@@ -335,7 +347,7 @@ class CharacterGroup(MatchCharacterClass, CompoundMatchableMixin):
     def __post_init__(self):
         self.intervals = frozenset(
             [
-                (item.start.char, item.end.char)
+                (item.start, item.end)
                 for item in self.items
                 if isinstance(item, CharacterRange)
             ]
@@ -345,6 +357,8 @@ class CharacterGroup(MatchCharacterClass, CompoundMatchableMixin):
         )
 
     def match(self, position: int, text: Sequence[T]):
+        if position >= len(text):
+            return False
         token = text[position]
         if token == "ε":
             raise RuntimeError()
@@ -452,9 +466,16 @@ class CharacterClass(RegexNode, CharacterGroupItem, CompoundMatchableMixin):
 
 
 @dataclass
-class CharacterRange(CharacterGroupItem):
-    start: Char
-    end: Optional[Char]
+class CharacterRange(CharacterGroupItem, CompoundMatchableMixin):
+    start: str
+    end: str
+
+    def match(self, position: int, text: Sequence[T]) -> bool:
+        return self.start <= text[position] <= self.end
+
+    def __post_init__(self):
+        if self.start > self.end:
+            raise ValueError(f"[{self.start}-{self.end}] is not ordered")
 
 
 class AnchorType(Enum):
@@ -560,7 +581,7 @@ class Anchor(SubExpressionItem, CompoundMatchableMixin):
 
 class RegexParser:
     def __init__(self, regex: str):
-        self._regex = regex.replace(" ", "").replace("\t", "")
+        self._regex = regex
         self._pos = 0
         self._root = self.parse_regex()
         if self._pos < len(self._regex):
@@ -573,7 +594,10 @@ class RegexParser:
         return self._root
 
     def consume(self, char):
-        assert self.current() == char, f"expected {char} got {self.current()}"
+        if self._pos >= len(self._regex):
+            raise ValueError("index out of bounds")
+        if self.current() != char:
+            raise ValueError(f"expected {char} got {self.current()}")
         self._pos += 1
 
     def consume_and_return(self):
@@ -631,8 +655,11 @@ class RegexParser:
     def matches(self, char):
         return self._pos < len(self._regex) and self.current() == char
 
-    def matches_any(self, options):
-        return self._pos < len(self._regex) and self.current() in options
+    def matches_any(self, options, lookahead: int = 0):
+        return (
+            self._pos + lookahead < len(self._regex)
+            and self.current(lookahead) in options
+        )
 
     def parse_expression(self):
         # Expression ::= Subexpression ("|" Expression)?
@@ -641,7 +668,8 @@ class RegexParser:
         expr = None
         if self.matches("|"):
             self.consume("|")
-            expr = self.parse_expression()
+            if self.can_parse_sub_expression_item():
+                expr = self.parse_expression()
         return Expression(pos, sub_exprs, expr)
 
     def parse_sub_expression(self) -> list[SubExpressionItem]:
@@ -726,11 +754,11 @@ class RegexParser:
         self.consume("\\")
         return CharacterClass(self._pos, self.consume_and_return())
 
-    def parse_character_range(self, char: Char) -> CharacterRange:
+    def parse_character_range(self, char: str) -> CharacterRange:
         self.consume("-")
         to = self.parse_char()
         assert to.char != "]"
-        return CharacterRange(char, to)
+        return CharacterRange(char, to.char)
 
     def can_parse_character_class(self):
         return (
@@ -740,12 +768,21 @@ class RegexParser:
         )
 
     def parse_character_group_item(self) -> CharacterGroupItem | Char:
-        if self.matches("\\") and self.current(1) in character_classes:
+        if self.matches("\\") and self.matches_any(character_classes, 1):
             return self.parse_character_class()
         else:
+            # If the dash character is the first one in the list,
+            # then it is treated as an ordinary character.
+            # For example [-AZ] matches '-' or 'A' or 'Z' .
+            # And tag[-]line matches "tag-line" and "tag line" as in a previous example.
+
+            if self.matches_any(no_escape_in_group):
+                if self.matches("\\"):
+                    self.consume("\\")
+                return Char(self._pos, self.consume_and_return())
             char = self.parse_char()
             if self.matches("-"):
-                return self.parse_character_range(char)
+                return self.parse_character_range(char.char)
             else:
                 return char
 
@@ -758,31 +795,36 @@ class RegexParser:
             negated = True
         items = []
         group_pos = self._pos
-        while self.can_parse_char() and self.current() != "]" or self.current() == "\\":
+        while self.can_parse_char() or self.matches_any(no_escape_in_group):
             items.append(self.parse_character_group_item())
+        if not items:
+            raise ValueError(
+                f"failed parsing from {group_pos}: {self._regex[group_pos:]}"
+            )
         self.consume("]")
         return CharacterGroup(group_pos, items, negated)
 
     def parse_char(self):
         if self.can_parse_escaped():
             return self.parse_escaped()
-        assert self.can_parse_char()
+        if not self.can_parse_char():
+            raise ValueError(
+                f"expected a char: found "
+                f'{"EOF" if self._pos >= len(self._regex) else self.current()} at index {self._pos}'
+            )
         return Char(self._pos - 1, self.consume_and_return())
 
     def can_parse_escaped(self):
         return (
             self._pos < len(self._regex)
-            and self.current() == "\\"
-            and self.current(1) in ESCAPED
+            and self.matches("\\")
+            and self.matches_any(ESCAPED, 1)
         )
 
     def can_parse_anchor(self):
         return self._pos < len(self._regex) and (
-            (
-                self.current() == "\\"
-                and self.current(1) in {"A", "z", "Z", "G", "b", "B"}
-            )
-            or self.current() in ("^", "$")
+            (self.matches("\\") and self.matches_any({"A", "z", "Z", "G", "b", "B"}, 1))
+            or self.matches_any(("^", "$"))
         )
 
     def parse_escaped(self):

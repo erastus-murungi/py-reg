@@ -6,10 +6,9 @@ def substitute_character_classes(regexp: str):
     )
 
 
-def simplify_redundant_quantifiers(regexp: str):
-    reduced = (
-        regexp.replace("**", "*")
-        .replace("*?", "*")
+def apply_replacements(regexp: str):
+    return (
+        regexp.replace("*?", "*")
         .replace("+*", "*")
         .replace("+?", "*")
         .replace("?*", "*")
@@ -17,20 +16,17 @@ def simplify_redundant_quantifiers(regexp: str):
         .replace("*+", "*")
         .replace("++", "+")
         .replace("??", "?")
+        .replace("()", "")
+        .replace("|)", ")|")
     )
+
+
+def simplify_redundant_quantifiers(regexp: str):
+    reduced = apply_replacements(regexp)
+
     while reduced != regexp:
         regexp = reduced
-        reduced = (
-            regexp.replace("**", "*")
-            .replace("*?", "*")
-            .replace("+*", "*")
-            .replace("+?", "*")
-            .replace("?*", "*")
-            .replace("?+", "*")
-            .replace("*+", "*")
-            .replace("++", "+")
-            .replace("??", "?")
-        )
+        reduced = apply_replacements(regexp)
 
     return reduced
 
