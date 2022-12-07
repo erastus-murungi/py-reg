@@ -19,7 +19,6 @@ def test_simply_maintains_simple_constructs():
         assert simplify(test_input) == expected, (test_input, expected)
 
 
-# acquired from:
 # acquired from re2: https://github.com/google/re2/blob/main/re2/testing/search_test.cc
 
 
