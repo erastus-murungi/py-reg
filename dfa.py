@@ -154,7 +154,8 @@ class DFA(FiniteStateAutomaton):
     def transition_is_possible(
         self, state: State, text: str, position: int
     ) -> Optional[State]:
-        return self[state].match_atom(text, position, None)
+        _, val = self[state].match_atom(text, position, None)
+        return val
 
 
 if __name__ == "__main__":

@@ -3,8 +3,8 @@ from collections import defaultdict
 from functools import cache
 from itertools import chain, count, product
 from string import ascii_uppercase
-from typing import (Callable, ClassVar, Collection, Final, Generic,
-                    MutableMapping, Optional, Sequence, TypeVar)
+from typing import (ClassVar, Collection, Final, Generic, MutableMapping,
+                    Optional, Sequence, TypeVar)
 
 import graphviz
 
@@ -91,11 +91,13 @@ NullDfaState: Final[State] = DFAState(from_states=None)
 class SymbolDispatchedMapping(MutableMapping):
     def __init__(self, default=None):
         self.default_factory = default
-        self.sorted_map: list[tuple[CompoundMatchableMixin, Callable]] = []
+        self.sorted_map: list[tuple[CompoundMatchableMixin, set[State] | State]] = []
         if default is None:
             self.hash_map = {}
         else:
-            self.hash_map: defaultdict[MatchableMixin, Callable] = defaultdict(default)
+            self.hash_map: defaultdict[
+                MatchableMixin, set[State] | State
+            ] = defaultdict(default)
 
     def __setitem__(self, symbol, v) -> None:
         if isinstance(symbol, CompoundMatchableMixin):
@@ -149,11 +151,13 @@ class SymbolDispatchedMapping(MutableMapping):
         for k, v in m.items():
             self[k] = v
 
-    def match_atom(self, text: str, position: int, default):
+    def match_atom(
+        self, text: str, position: int, default
+    ) -> tuple[MatchableMixin | str, set[State] | State]:
         for sym, value in self.sorted_map:
             if sym.match(position, text):
-                return value
-        return self.hash_map.get(text[position], default)
+                return sym, value
+        return text[position], self.hash_map.get(text[position], default)
 
     def __repr__(self):
         return repr(dict(self.items()))

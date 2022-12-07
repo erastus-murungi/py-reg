@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
+from math import inf
 from typing import MutableMapping, Optional, Sequence
 
 from core import (CompoundMatchableMixin, MatchableMixin, State,
@@ -54,6 +55,15 @@ def concatenate(state_pair1_end, state_pair2_start, transitions):
     transitions[state_pair1_end][Epsilon].add(state_pair2_start)
 
 
+def trivial(
+    matchable: MatchableMixin,
+    transitions: MutableMapping[State, SymbolDispatchedMapping],
+) -> StatePair:
+    source, sink = State.pair()
+    transitions[source][matchable].add(sink)
+    return source, sink
+
+
 @dataclass
 class RegexNode(ABC):
     pos: int = field(repr=False)
@@ -87,7 +97,9 @@ class Quantifier(Operator):
                     return zero_or_more(state_pair, transitions)
                 case QuantifierType.ZeroOrOne:
                     return zero_or_one(state_pair, transitions)
-        raise NotImplementedError
+        else:
+            assert isinstance(self.item, RangeQuantifier)
+            self.item.transform(state_pair, transitions)
 
 
 class QuantifierType(Enum):
@@ -118,24 +130,18 @@ class RangeQuantifier(QuantifierItem):
     start: int
     end: Optional[int] = None
 
+    def transform(self, state_pair, transitions):
+        # e{3} expands to eee; e{3,5} expands to eeee?e?, and e{3,} expands to eee+.
+        raise NotImplementedError
+
 
 class SubExpressionItem(RegexNode, ABC):
     pass
 
 
-class SubExpression(RegexNode):
-    items: list[SubExpressionItem]
-
-    def to_fsm(
-        self, transitions: MutableMapping[State, SymbolDispatchedMapping]
-    ) -> StatePair:
-        pass
-
-
 @dataclass
 class Expression(RegexNode):
-    # a sequence of concatenated expressions
-    seq: list[SubExpression]
+    seq: list[SubExpressionItem]
     # an alternative
     alternate: Optional["Expression"]
 
@@ -169,7 +175,7 @@ class MatchItem(SubExpressionItem, ABC):
 
 
 @dataclass
-class Match(RegexNode):
+class Match(SubExpressionItem):
     item: MatchItem
     quantifier: Optional[Quantifier]
 
@@ -185,9 +191,7 @@ class MatchAnyCharacter(MatchItem, CompoundMatchableMixin):
     ignore: tuple = ("ε",)
 
     def to_fsm(self, transitions: dict[State, SymbolDispatchedMapping]) -> StatePair:
-        source, sink = State.pair()
-        transitions[source][self].add(sink)
-        return source, sink
+        return trivial(self, transitions)
 
     def __eq__(self, other):
         return isinstance(other, MatchAnyCharacter) and other.ignore == self.ignore
@@ -233,16 +237,6 @@ class Char(MatchItem, MatchableMixin):
 
 
 Epsilon = Char("ε")
-
-
-class AnchorType(Enum):
-    StartOfStringAnchor = "^"
-    EndOfStringAnchor = "$"
-
-
-class Anchor(Operator):
-    pos: int
-    anchor_type: AnchorType
 
 
 class MatchCharacterClass(MatchItem, ABC):
@@ -319,11 +313,60 @@ class CharacterGroup(MatchCharacterClass, CompoundMatchableMixin):
 
 
 @dataclass
-class CharacterClass(CharacterGroupItem):
+class CharacterClass(RegexNode, CharacterGroupItem, CompoundMatchableMixin):
     item: str
+
+    # to be filled later
+    intervals: tuple[tuple[str, str], ...] = field(default_factory=tuple)
+    options: frozenset[str] = field(default_factory=set)
+    # inverted = false
+    negated: bool = False
+
+    character_class2interval = {
+        "w": ((("a", "z"), ("A", "Z")), frozenset(["_"]), False),
+        "W": ((("a", "z"), ("A", "Z")), frozenset(["_"]), True),
+        "d": ((("0", "9"),), frozenset(), False),
+        "D": ((("0", "9"),), frozenset(), True),
+        "s": ((), frozenset([" ", "\t", "\n", "\r", "\v", "\f"]), False),
+        "S": ((), frozenset([" ", "\t", "\n", "\r", "\v", "\f"]), True),
+    }
 
     def __post_init__(self):
         assert self.item in character_classes
+        self.intervals, self.options, self.negated = self.character_class2interval[
+            self.item
+        ]
+
+    def match(self, position: int, text: Sequence[T]):
+        token = text[position]
+        if token == "ε":
+            raise RuntimeError()
+        eq = token in self.options or any(
+            start <= token <= stop for start, stop in self.intervals
+        )
+        if self.negated:
+            return not eq
+        return eq
+
+    def __eq__(self, other):
+        if isinstance(other, CharacterClass):
+            return (
+                self.options == other.options
+                and self.intervals == other.intervals
+                and self.negated == other.negated
+            )
+        return False
+
+    def to_fsm(
+        self, transitions: MutableMapping[State, SymbolDispatchedMapping]
+    ) -> StatePair:
+        return trivial(self, transitions)
+
+    def __hash__(self):
+        return hash((self.negated, self.options, self.intervals))
+
+    def __repr__(self):
+        return f"\\\\{self.item}"
 
 
 @dataclass
@@ -332,17 +375,71 @@ class CharacterRange(CharacterGroupItem):
     end: Optional[Char]
 
 
-@dataclass
-class MetaData:
-    anchored_at_beginning: bool = False
-    anchored_at_end: bool = False
+class AnchorType(Enum):
+    StartOfString = "^"
+    EndOfString = "$"
+    # must be escaped
+    AnchorWordBoundary = "b"
+    AnchorNonWordBoundary = "B"
+    AnchorStartOfStringOnly = "A"
+    AnchorEndOfStringOnlyNotNewline = "z"
+    AnchorEndOfStringOnly = "Z"
+    AnchorPreviousMatchEnd = "G"
+
+    @staticmethod
+    def get(char):
+        match char:
+            case "^":
+                return AnchorType.StartOfString
+            case "$":
+                return AnchorType.EndOfString
+            case "b":
+                return AnchorType.AnchorWordBoundary
+            case "B":
+                return AnchorType.AnchorNonWordBoundary
+            case "A":
+                return AnchorType.AnchorStartOfStringOnly
+            case "z":
+                return AnchorType.AnchorEndOfStringOnlyNotNewline
+            case "Z":
+                return AnchorType.AnchorEndOfStringOnly
+            case "G":
+                return AnchorType.AnchorPreviousMatchEnd
+            case _:
+                raise ValueError(f"unrecognized anchor {char}")
+
+
+@dataclass(slots=True)
+class Anchor(SubExpressionItem, CompoundMatchableMixin):
+    anchor_type: AnchorType
+
+    def to_fsm(
+        self, transitions: MutableMapping[State, SymbolDispatchedMapping]
+    ) -> StatePair:
+        return trivial(self, transitions)
+
+    def match(self, position: int, text: Sequence[T]) -> bool:
+        match self.anchor_type:
+            case AnchorType.StartOfString:
+                # assert that this is the beginning of the string
+                return (
+                    position == 0
+                )  # or the previous char is a \n if MULTILINE mode enabled
+            case AnchorType.EndOfString:
+                return position >= len(text)
+        raise NotImplementedError
+
+    def __hash__(self):
+        return hash(self.anchor_type)
+
+    def __repr__(self):
+        return self.anchor_type.name
 
 
 class RegexParser:
     def __init__(self, regex: str):
         self._regex = regex.replace(" ", "").replace("\t", "")
         self._pos = 0
-        self._metadata = MetaData()
         self._root = self.parse_regex()
         if self._pos < len(self._regex):
             raise ValueError(
@@ -352,10 +449,6 @@ class RegexParser:
     @property
     def root(self):
         return self._root
-
-    @property
-    def metadata(self):
-        return self._metadata
 
     def consume(self, char):
         assert self.current() == char, f"expected {char} got {self.current()}"
@@ -379,15 +472,14 @@ class RegexParser:
 
     def parse_regex(self):
         if self.current() == "^":
-            self.consume("^")
-            self._metadata.anchored_at_beginning = True
+            anchor = Anchor(self._pos, AnchorType.get(self.consume_and_return()))
+            expr = self.parse_expression()
+            expr.seq.insert(0, anchor)
+            return expr
         return self.parse_expression()
 
     def can_parse_group(self):
         return self.current() == "("
-
-    def can_parse_anchor(self):
-        return self.current() in anchors
 
     def can_parse_char(self):
         return self._pos < len(self._regex) and self.current() not in ESCAPED
@@ -418,14 +510,14 @@ class RegexParser:
             expr = self.parse_expression()
         return Expression(pos, sub_exprs, expr)
 
-    def parse_sub_expression(self) -> list[SubExpression]:
+    def parse_sub_expression(self) -> list[SubExpressionItem]:
         # Subexpression ::= SubexpressionItem+
         sub_exprs = [self.parse_sub_expression_item()]
         while self.can_parse_sub_expression_item():
             sub_exprs.append(self.parse_sub_expression_item())
         return sub_exprs
 
-    def parse_sub_expression_item(self):
+    def parse_sub_expression_item(self) -> SubExpressionItem:
         if self.current() == "(":
             return self.parse_group()
         elif self.current() in anchors:
@@ -471,6 +563,7 @@ class RegexParser:
         lower_bound = self.parse_int()
         upper_bound = None
         while self.current() == ",":
+            upper_bound = inf
             self.consume_and_return()
             if self.current().isdigit():
                 upper_bound = self.parse_int()
@@ -489,9 +582,9 @@ class RegexParser:
     def can_parse_character_group(self):
         return self.current() == "["
 
-    def parse_character_class(self):
+    def parse_character_class(self) -> CharacterClass:
         self.consume("\\")
-        return CharacterClass(self.consume_and_return())
+        return CharacterClass(self._pos, self.consume_and_return())
 
     def parse_character_range(self, char: Char) -> CharacterRange:
         self.consume("-")
@@ -543,6 +636,15 @@ class RegexParser:
             and self.current(1) in ESCAPED
         )
 
+    def can_parse_anchor(self):
+        return self._pos < len(self._regex) and (
+            (
+                self.current() == "\\"
+                and self.current(1) in {"A", "z", "Z", "G", "b", "B"}
+            )
+            or self.current() in ("^", "$")
+        )
+
     def parse_escaped(self):
         self.consume("\\")
         return Char(self.consume_and_return())
@@ -567,7 +669,11 @@ class RegexParser:
             return self.parse_char()
 
     def parse_anchor(self):
-        raise NotImplementedError
+        pos = self._pos
+        if self.current() == "\\":
+            self.consume("\\")
+            assert self.current() in {"A", "z", "Z", "G", "b", "B"}
+        return Anchor(pos, AnchorType.get(self.consume_and_return()))
 
     def __repr__(self):
         return f"Parser({self._regex})"

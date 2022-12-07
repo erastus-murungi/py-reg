@@ -1,10 +1,12 @@
 import re
 from dataclasses import dataclass
+from parser import Anchor
 
+from core import State
 from pyreg import compile_regex
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class Match:
     start: int
     end: int
@@ -13,6 +15,13 @@ class Match:
     @property
     def span(self):
         return self.start, self.end
+
+    def __repr__(self):
+        return (
+            f"{self.__class__.__name__}"
+            f"(span={self.span}, "
+            f"match={self.substr!r})"
+        )
 
 
 class Matcher:
@@ -23,20 +32,33 @@ class Matcher:
         self.compiled_regex.draw_with_graphviz()
 
     def search_from(self, start_index) -> tuple[Match, int]:
-        current_state = self.compiled_regex.start_state
+        current_state: State = self.compiled_regex.start_state
         accepting_indices: list[int] = []
 
-        for current_index in range(start_index, len(self.text)):
-            if (
-                next_state := self.compiled_regex[current_state].match_atom(
-                    self.text, current_index, None
-                )
-            ) is None:
+        current_index = start_index
+        while current_index < len(self.text):
+            sym, next_state = self.compiled_regex[current_state].match_atom(
+                self.text, current_index, None
+            )
+            if next_state is None:
                 break
 
             current_state = next_state
+
             if current_state.accepts:
                 accepting_indices.append(current_index)
+            if not isinstance(sym, Anchor):
+                current_index += 1
+
+        if current_index >= len(self.text):
+            # some end of line characters might exist
+            sym, next_state = self.compiled_regex[current_state].match_atom(
+                self.text, current_index, None
+            )
+            if next_state is not None:
+                current_state = next_state
+                if current_state.accepts:
+                    accepting_indices.append(current_index - 1)
 
         if accepting_indices:
             index = accepting_indices[-1]
@@ -61,8 +83,10 @@ class Matcher:
 if __name__ == "__main__":
     # regex = c
     # t = "5abb"  # nfa.draw_with_graphviz()
-    regex = r"^a*b+a.a*b|d+[A-Z]?(CD)+"
-    t = "aaabbaaabbbaadACDC"
+    # regex = r"^a*b+a.a*b|d+[A-Z]?(CD)+\w\d+r$"
+    # t = "aaabbaaabbbaadACDC075854r"
+    regex = r"(ab){3}"
+    t = "abababab"
     matcher = Matcher(t, regex)
 
     print(matcher)

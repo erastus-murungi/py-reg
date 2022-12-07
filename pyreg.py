@@ -1,5 +1,5 @@
 from collections import defaultdict
-from parser import Epsilon, MetaData, RegexParser
+from parser import Epsilon, RegexParser
 from pprint import pprint
 
 from core import SymbolDispatchedMapping
@@ -9,13 +9,9 @@ from simplify import simplify
 
 
 class CompiledRegex(DFA):
-    def __init__(self, nfa: NFA, metadata: MetaData):
+    def __init__(self, nfa: NFA):
         super().__init__(nfa=nfa)
         self.minimize()
-        self.metadata = metadata
-
-    def options(self):
-        return self.metadata
 
 
 def compile_regex(regex: str) -> CompiledRegex:
@@ -33,12 +29,15 @@ def compile_regex(regex: str) -> CompiledRegex:
             symbols.add(sym)
     symbols.discard(Epsilon)
     compiled_regex = CompiledRegex(
-        NFA(transitions, states, symbols, start_state, final_state), parser.metadata
+        NFA(transitions, states, symbols, start_state, final_state)
     )
     return compiled_regex
 
 
 if __name__ == "__main__":
+    # r = r"a*b+a.a*b|d+[A-Z]?"
+    # compiled = compile_regex(r)
+    # pprint(compiled)
     r = r"a*b+a.a*b|d+[A-Z]?"
     compiled = compile_regex(r)
     pprint(compiled)
