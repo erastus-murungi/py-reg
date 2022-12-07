@@ -2,8 +2,7 @@ from collections import defaultdict
 from itertools import product
 from typing import Iterable
 
-from core import State
-from data_structures import SymbolDispatchedMapping
+from core import State, SymbolDispatchedMapping
 from dfa import DFA
 from nfa import NFA
 

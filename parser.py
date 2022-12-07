@@ -1,11 +1,17 @@
 from abc import ABC, abstractmethod
+from copy import copy
 from dataclasses import dataclass, field
 from enum import Enum
 from math import inf
 from typing import MutableMapping, Optional, Sequence
 
-from core import (CompoundMatchableMixin, MatchableMixin, State,
-                  SymbolDispatchedMapping, T)
+from core import (
+    CompoundMatchableMixin,
+    MatchableMixin,
+    State,
+    SymbolDispatchedMapping,
+    T,
+)
 
 ESCAPED = set(". \\ + * ? [ ^ ] $ ( ) { } = ! < > | : -".split())
 
@@ -83,25 +89,6 @@ class QuantifierItem(ABC):
     pass
 
 
-@dataclass
-class Quantifier(Operator):
-    item: QuantifierItem
-    lazy: bool = False
-
-    def transform(self, state_pair, transitions):
-        if isinstance(self.item, QuantifierChar):
-            match self.item.type:
-                case QuantifierType.OneOrMore:
-                    return one_or_more(state_pair, transitions)
-                case QuantifierType.ZeroOrMore:
-                    return zero_or_more(state_pair, transitions)
-                case QuantifierType.ZeroOrOne:
-                    return zero_or_one(state_pair, transitions)
-        else:
-            assert isinstance(self.item, RangeQuantifier)
-            self.item.transform(state_pair, transitions)
-
-
 class QuantifierType(Enum):
     OneOrMore = "+"
     ZeroOrMore = "*"
@@ -126,13 +113,70 @@ class QuantifierChar(QuantifierItem):
 
 
 @dataclass
+class Quantifier(Operator):
+    item: QuantifierChar
+    lazy: bool = False
+
+    def transform(self, state_pair, transitions):
+        if isinstance(self.item, QuantifierChar):
+            match self.item.type:
+                case QuantifierType.OneOrMore:
+                    return one_or_more(state_pair, transitions)
+                case QuantifierType.ZeroOrMore:
+                    return zero_or_more(state_pair, transitions)
+                case QuantifierType.ZeroOrOne:
+                    return zero_or_one(state_pair, transitions)
+        raise NotImplementedError
+
+
+class HasQuantifier(ABC):
+    @abstractmethod
+    def get_quantifier(self) -> Optional[Quantifier]:
+        pass
+
+    @abstractmethod
+    def set_quantifier(self, quantifier: Quantifier):
+        pass
+
+
+@dataclass
 class RangeQuantifier(QuantifierItem):
     start: int
     end: Optional[int] = None
 
-    def transform(self, state_pair, transitions):
+    def __post_init__(self):
+        assert self.start >= 0
+        if self.end is not None:
+            assert self.start <= self.end
+
+    def expand(self, item: "Expression"):
         # e{3} expands to eee; e{3,5} expands to eeee?e?, and e{3,} expands to eee+.
-        raise NotImplementedError
+        assert isinstance(item, (RegexNode, HasQuantifier))
+
+        seq = []
+        for _ in range(self.start):
+            seq.append(copy(item))
+
+        if self.end is not None:
+            if self.end == inf:
+                item = seq.pop()
+                seq.append(
+                    Group(
+                        item.pos,
+                        Expression(item.pos, [item]),
+                        Quantifier(QuantifierChar(QuantifierType.OneOrMore)),
+                    )
+                )
+            else:
+                for _ in range(self.start, self.end):
+                    seq.append(
+                        Group(
+                            item.pos,
+                            Expression(item.pos, [item]),
+                            Quantifier(QuantifierChar(QuantifierType.ZeroOrOne)),
+                        )
+                    )
+        return Expression(item.pos, seq)
 
 
 class SubExpressionItem(RegexNode, ABC):
@@ -142,8 +186,7 @@ class SubExpressionItem(RegexNode, ABC):
 @dataclass
 class Expression(RegexNode):
     seq: list[SubExpressionItem]
-    # an alternative
-    alternate: Optional["Expression"]
+    alternate: Optional["Expression"] = None
 
     def to_fsm(self, transitions) -> StatePair:
         nodes = [subexpression.to_fsm(transitions) for subexpression in self.seq]
@@ -156,10 +199,10 @@ class Expression(RegexNode):
 
 
 @dataclass
-class Group(SubExpressionItem):
-    is_capturing: bool
+class Group(SubExpressionItem, HasQuantifier):
     expression: Expression
     quantifier: Optional[Quantifier]
+    is_capturing: bool = False
 
     def to_fsm(
         self, transitions: MutableMapping[State, SymbolDispatchedMapping]
@@ -169,13 +212,19 @@ class Group(SubExpressionItem):
             return self.quantifier.transform(state_pair, transitions)
         return state_pair
 
+    def set_quantifier(self, quantifier: Quantifier):
+        self.quantifier = quantifier
+
+    def get_quantifier(self) -> Optional[Quantifier]:
+        return self.quantifier
+
 
 class MatchItem(SubExpressionItem, ABC):
     pass
 
 
 @dataclass
-class Match(SubExpressionItem):
+class Match(SubExpressionItem, HasQuantifier):
     item: MatchItem
     quantifier: Optional[Quantifier]
 
@@ -184,6 +233,12 @@ class Match(SubExpressionItem):
         if self.quantifier is None:
             return state_pair
         return self.quantifier.transform(state_pair, transitions)
+
+    def get_quantifier(self) -> Optional[Quantifier]:
+        return self.quantifier
+
+    def set_quantifier(self, quantifier: Quantifier):
+        self.quantifier = quantifier
 
 
 @dataclass
@@ -252,7 +307,6 @@ class CharacterGroup(MatchCharacterClass, CompoundMatchableMixin):
     items: list[CharacterGroupItem]
     negated: bool = False
 
-    # to be filled later
     intervals: frozenset[tuple[str, str]] = field(default_factory=frozenset, repr=False)
     options: frozenset[str] = field(default_factory=frozenset, repr=False)
 
@@ -536,7 +590,10 @@ class RegexParser:
         quantifier = None
         if self.can_parse_quantifier():
             quantifier = self.parse_quantifier()
-        return Group(self._pos, is_capturing, expr, quantifier)
+            # handle range qualifies and return a list of matches instead
+            if isinstance(quantifier.item, RangeQuantifier):
+                return quantifier.item.expand(expr)
+        return Group(self._pos, expr, quantifier, is_capturing)
 
     def can_parse_quantifier(self):
         return self._pos < len(self._regex) and self.current() in ("*", "+", "?", "{")
@@ -577,6 +634,9 @@ class RegexParser:
         quantifier = None
         if self.can_parse_quantifier():
             quantifier = self.parse_quantifier()
+            # handle range qualifies and return a list of matches instead
+            if isinstance(quantifier.item, RangeQuantifier):
+                return quantifier.item.expand(match_item)
         return Match(pos, match_item, quantifier)
 
     def can_parse_character_group(self):

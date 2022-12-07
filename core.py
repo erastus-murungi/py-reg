@@ -3,8 +3,16 @@ from collections import defaultdict
 from functools import cache
 from itertools import chain, count, product
 from string import ascii_uppercase
-from typing import (ClassVar, Collection, Final, Generic, MutableMapping,
-                    Optional, Sequence, TypeVar)
+from typing import (
+    ClassVar,
+    Collection,
+    Final,
+    Generic,
+    MutableMapping,
+    Optional,
+    Sequence,
+    TypeVar,
+)
 
 import graphviz
 
@@ -74,11 +82,11 @@ class DFAState(State):
         super().__init__(is_start=is_start, accepts=accepts)
 
     def _gen_id(self):
-        return self.get_label(self.sources)
+        return self._gen_label(self.sources)
 
     @staticmethod
     @cache
-    def get_label(_frozen):
+    def _gen_label(_frozen):
         return next(DFAState._labels_gen)
 
     def is_null(self):
@@ -154,10 +162,14 @@ class SymbolDispatchedMapping(MutableMapping):
     def match_atom(
         self, text: str, position: int, default
     ) -> tuple[MatchableMixin | str, set[State] | State]:
+        if position >= len(text):
+            char = None
+        else:
+            char = text[position]
         for sym, value in self.sorted_map:
             if sym.match(position, text):
                 return sym, value
-        return text[position], self.hash_map.get(text[position], default)
+        return char, self.hash_map.get(char, default)
 
     def __repr__(self):
         return repr(dict(self.items()))

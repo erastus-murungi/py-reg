@@ -85,8 +85,8 @@ if __name__ == "__main__":
     # t = "5abb"  # nfa.draw_with_graphviz()
     # regex = r"^a*b+a.a*b|d+[A-Z]?(CD)+\w\d+r$"
     # t = "aaabbaaabbbaadACDC075854r"
-    regex = r"(ab){3}"
-    t = "abababab"
+    regex = r"(ab){3,8}"
+    t = "abababababab"
     matcher = Matcher(t, regex)
 
     print(matcher)
@@ -98,7 +98,7 @@ if __name__ == "__main__":
 
     # regex = r".*"
     # t = "aaabbaaabbbaadA"
-    # matcher = Matcher(t, regex)
+    # matcher = Matcher(t, regex)x
     #
     # print(matcher)
     # for span in matcher:

@@ -3,8 +3,14 @@ from functools import reduce
 from parser import Epsilon
 from typing import Iterable, Optional
 
-from core import (DFAState, FiniteStateAutomaton, MatchableMixin, NullState,
-                  State, SymbolDispatchedMapping)
+from core import (
+    DFAState,
+    FiniteStateAutomaton,
+    MatchableMixin,
+    NullState,
+    State,
+    SymbolDispatchedMapping,
+)
 
 StatePair = tuple[State, State]
 
