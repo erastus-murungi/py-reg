@@ -18,7 +18,7 @@ def compile_regex(regex: str) -> CompiledRegex:
     simplified_regex = simplify(regex)
     parser = RegexParser(simplified_regex)
     transitions = defaultdict(lambda: TransitionsProvider(set))
-    start_state, final_state = parser.root.to_fsm(transitions)
+    start_state, final_state = parser.root.fsm(transitions)
 
     symbols = set()
     states = set()

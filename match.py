@@ -1,8 +1,9 @@
 import re
 from dataclasses import dataclass
 from parser import Anchor
+from typing import Optional
 
-from core import State
+from core import RegexContext, State
 from pyreg import compile_regex
 
 
@@ -30,18 +31,18 @@ class RegexMatcher:
         self.regexp = regexp
         self.compiled_regex = compile_regex(regexp)
 
-    def search_from_index(self, current_state: State, current_index: int):
+    def search_from_index(
+        self, current_state: State, context: RegexContext
+    ) -> Optional[int]:
         if current_state is not None:
-            matches = self.compiled_regex[current_state].match_atom(
-                self.text, current_index, None
-            )
+            matches = self.compiled_regex[current_state].match_atom(context)
             indices = []
             for sym, next_state in matches:
                 current_state = next_state
 
                 index = self.search_from_index(
                     next_state,
-                    current_index if isinstance(sym, Anchor) else current_index + 1,
+                    context.copy() if isinstance(sym, Anchor) else context.increment(),
                 )
 
                 if index is not None:
@@ -51,22 +52,21 @@ class RegexMatcher:
                 return max(indices)
 
             if current_state.accepts:
-                return current_index if not matches else current_index + 1
+                return context.position if not matches else context.position + 1
         return None
 
     def __iter__(self):
         start_index = 0
-        while start_index < len(self.text):
-            end_index = self.search_from_index(
-                self.compiled_regex.start_state, start_index
+        while start_index <= len(self.text):
+            position = self.search_from_index(
+                self.compiled_regex.start_state, RegexContext(self.text, start_index)
             )
-            if end_index is not None:
-                yield Match(start_index, end_index, self.text[start_index:end_index])
-                # empty matches
-                if end_index == start_index:
-                    start_index = end_index + 1
+            if position is not None:
+                yield Match(start_index, position, self.text[start_index:position])
+                if position == start_index:
+                    start_index = position + 1
                 else:
-                    start_index = end_index
+                    start_index = position
             else:
                 start_index = start_index + 1
 
@@ -84,12 +84,12 @@ if __name__ == "__main__":
     # regex, t = (r"h.*od?", "hello\ngoodbye\n")
     # regex, t = r'a', 'a'
     # regex, t = (r"[abcd]+", "xxxabcdxxx")
-    regex, t = ("(abc)\\1", "abcabc")
+
+    regex, t = (".*Python", "Python")
+    matcher = RegexMatcher(regex, t)
 
     for span in re.finditer(regex, t):
         print(span)
-
-    matcher = RegexMatcher(regex, t)
 
     print(matcher)
     for span in matcher:

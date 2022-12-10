@@ -6,8 +6,8 @@ from enum import Enum
 from math import inf
 from typing import MutableMapping, Optional, Sequence
 
-from core import (CompoundMatchableMixin, MatchableMixin, State, T,
-                  TransitionsProvider)
+from core import (CompoundMatchableMixin, MatchableMixin, RegexContext, State,
+                  T, TransitionsProvider)
 
 ESCAPED = set(". \\ + * ? [ ^ ] $ ( ) { } = ! < > | -".split())
 
@@ -27,7 +27,9 @@ def zero_or_more(state_pair, transitions) -> StatePair:
     transitions[new_start][Epsilon].add(source)
     transitions[sink][Epsilon].add(new_accept)
     transitions[new_start][Epsilon].add(new_accept)
-    return new_start, new_accept
+    s1_start, s2_end = trivial(Anchor.empty_string(), transitions)
+    concatenate(s2_end, new_start, transitions)
+    return s1_start, new_accept
 
 
 def one_or_more(state_pair: StatePair, transitions):
@@ -39,7 +41,9 @@ def one_or_more(state_pair: StatePair, transitions):
 def zero_or_one(state_pair: StatePair, transitions):
     source, sink = state_pair
     transitions[source][Epsilon].add(sink)
-    return source, sink
+    s1_start, s2_end = trivial(Anchor.empty_string(), transitions)
+    concatenate(s2_end, source, transitions)
+    return s1_start, sink
 
 
 def alternation(lower, upper, transitions):
@@ -73,9 +77,7 @@ class RegexNode(ABC):
     pos: int = field(repr=False)
 
     @abstractmethod
-    def to_fsm(
-        self, transitions: MutableMapping[State, TransitionsProvider]
-    ) -> StatePair:
+    def fsm(self, transitions: MutableMapping[State, TransitionsProvider]) -> StatePair:
         ...
 
 
@@ -218,14 +220,14 @@ class Expression(RegexNode):
     seq: list[SubExpressionItem]
     alternate: Optional["Expression"] = None
 
-    def to_fsm(self, transitions) -> StatePair:
-        nodes = [subexpression.to_fsm(transitions) for subexpression in self.seq]
+    def fsm(self, transitions) -> StatePair:
+        nodes = [subexpression.fsm(transitions) for subexpression in self.seq]
         for (_, s1_accept), (s2_start, _) in zip(nodes, nodes[1:]):
             transitions[s1_accept][Epsilon].add(s2_start)
         state_pair = nodes[0][0], nodes[-1][1]
         if self.alternate is None:
             return state_pair
-        return alternation(state_pair, self.alternate.to_fsm(transitions), transitions)
+        return alternation(state_pair, self.alternate.fsm(transitions), transitions)
 
 
 @dataclass
@@ -234,10 +236,8 @@ class Group(SubExpressionItem, HasQuantifier):
     quantifier: Optional[Quantifier]
     is_capturing: bool = False
 
-    def to_fsm(
-        self, transitions: MutableMapping[State, TransitionsProvider]
-    ) -> StatePair:
-        state_pair = self.expression.to_fsm(transitions)
+    def fsm(self, transitions: MutableMapping[State, TransitionsProvider]) -> StatePair:
+        state_pair = self.expression.fsm(transitions)
         if self.quantifier:
             return self.quantifier.transform(state_pair, transitions)
         return state_pair
@@ -258,8 +258,8 @@ class Match(SubExpressionItem, HasQuantifier):
     item: MatchItem
     quantifier: Optional[Quantifier]
 
-    def to_fsm(self, transitions: dict[State, TransitionsProvider]) -> StatePair:
-        state_pair = self.item.to_fsm(transitions)
+    def fsm(self, transitions: dict[State, TransitionsProvider]) -> StatePair:
+        state_pair = self.item.fsm(transitions)
         if self.quantifier is None:
             return state_pair
         return self.quantifier.transform(state_pair, transitions)
@@ -275,13 +275,14 @@ class Match(SubExpressionItem, HasQuantifier):
 class MatchAnyCharacter(MatchItem, CompoundMatchableMixin):
     ignore: tuple = ("ε", "\n")
 
-    def to_fsm(self, transitions: dict[State, TransitionsProvider]) -> StatePair:
+    def fsm(self, transitions: dict[State, TransitionsProvider]) -> StatePair:
         return trivial(self, transitions)
 
     def __eq__(self, other):
         return isinstance(other, MatchAnyCharacter) and other.ignore == self.ignore
 
-    def match(self, position: int, text: Sequence[T]) -> bool:
+    def match(self, context: RegexContext) -> bool:
+        text, position = context.text, context.position
         return position < len(text) and text[position] not in self.ignore
 
     def __repr__(self):
@@ -295,12 +296,13 @@ class MatchAnyCharacter(MatchItem, CompoundMatchableMixin):
 class Char(MatchableMixin, MatchItem):
     char: str
 
-    def to_fsm(self, transitions) -> tuple[State, State]:
+    def fsm(self, transitions) -> tuple[State, State]:
         source, sink = State.pair()
         transitions[source][self].add(sink)
         return source, sink
 
-    def match(self, position: int, text: Sequence[T]) -> bool:
+    def match(self, context) -> bool:
+        text, position = context.text, context.position
         return self.char == text[position]
 
     def __eq__(self, other) -> bool:
@@ -337,9 +339,7 @@ class CharacterGroup(MatchCharacterClass, CompoundMatchableMixin):
     intervals: frozenset[tuple[str, str]] = field(default_factory=frozenset, repr=False)
     options: frozenset[str] = field(default_factory=frozenset, repr=False)
 
-    def to_fsm(
-        self, transitions: dict[State, TransitionsProvider]
-    ) -> tuple[State, State]:
+    def fsm(self, transitions: dict[State, TransitionsProvider]) -> tuple[State, State]:
         source, sink = State.pair()
         transitions[source][self].add(sink)
         return source, sink
@@ -356,7 +356,8 @@ class CharacterGroup(MatchCharacterClass, CompoundMatchableMixin):
             [item.char for item in self.items if isinstance(item, Char)]
         )
 
-    def match(self, position: int, text: Sequence[T]):
+    def match(self, context):
+        text, position = context.text, context.position
         if position >= len(text):
             return False
         token = text[position]
@@ -366,7 +367,7 @@ class CharacterGroup(MatchCharacterClass, CompoundMatchableMixin):
             start <= token <= stop for start, stop in self.intervals
         )
         eq_c = any(
-            char_class.match(position, text)
+            char_class.match(context)
             for char_class in filter(
                 lambda item: isinstance(item, CharacterClass), self.items
             )
@@ -433,7 +434,8 @@ class CharacterClass(RegexNode, CharacterGroupItem, CompoundMatchableMixin):
             self.item
         ]
 
-    def match(self, position: int, text: Sequence[T]):
+    def match(self, context):
+        text, position = context.text, context.position
         token = text[position]
         if token == "ε":
             raise RuntimeError()
@@ -453,9 +455,7 @@ class CharacterClass(RegexNode, CharacterGroupItem, CompoundMatchableMixin):
             )
         return False
 
-    def to_fsm(
-        self, transitions: MutableMapping[State, TransitionsProvider]
-    ) -> StatePair:
+    def fsm(self, transitions: MutableMapping[State, TransitionsProvider]) -> StatePair:
         return trivial(self, transitions)
 
     def __hash__(self):
@@ -470,7 +470,8 @@ class CharacterRange(CharacterGroupItem, CompoundMatchableMixin):
     start: str
     end: str
 
-    def match(self, position: int, text: Sequence[T]) -> bool:
+    def match(self, context) -> bool:
+        text, position = context.text, context.position
         return self.start <= text[position] <= self.end
 
     def __post_init__(self):
@@ -481,6 +482,8 @@ class CharacterRange(CharacterGroupItem, CompoundMatchableMixin):
 class AnchorType(Enum):
     StartOfString = "^"
     EndOfString = "$"
+    EmptyString = "nothing to see here"
+
     # must be escaped
     AnchorWordBoundary = "b"
     AnchorNonWordBoundary = "B"
@@ -547,12 +550,15 @@ def is_word_boundary(text: Sequence[T], position: int) -> bool:
 class Anchor(SubExpressionItem, CompoundMatchableMixin):
     anchor_type: AnchorType
 
-    def to_fsm(
-        self, transitions: MutableMapping[State, TransitionsProvider]
-    ) -> StatePair:
+    def fsm(self, transitions: MutableMapping[State, TransitionsProvider]) -> StatePair:
         return trivial(self, transitions)
 
-    def match(self, position: int, text: Sequence[T]) -> bool:
+    @staticmethod
+    def empty_string():
+        return Anchor(-sys.maxsize, AnchorType.EmptyString)
+
+    def match(self, context) -> bool:
+        text, position = context.text, context.position
         match self.anchor_type:
             case AnchorType.StartOfString:
                 # assert that this is the beginning of the string
@@ -568,7 +574,9 @@ class Anchor(SubExpressionItem, CompoundMatchableMixin):
             case AnchorType.AnchorWordBoundary:
                 return is_word_boundary(text, position)
             case AnchorType.AnchorNonWordBoundary:
-                return not is_word_boundary(text, position)
+                return text and not is_word_boundary(text, position)
+            case AnchorType.EmptyString:
+                return True
 
         raise NotImplementedError
 
@@ -670,6 +678,8 @@ class RegexParser:
             self.consume("|")
             if self.can_parse_sub_expression_item():
                 expr = self.parse_expression()
+            else:
+                expr = Anchor.empty_string()
         return Expression(pos, sub_exprs, expr)
 
     def parse_sub_expression(self) -> list[SubExpressionItem]:
@@ -841,8 +851,7 @@ class RegexParser:
             return self.parse_character_group()
 
     def parse_match_item(self):
-        if self.matches("."):
-            # parse AnyCharacter
+        if self.matches("."):  # parse AnyCharacter
             self.consume(".")
             return MatchAnyCharacter(self._pos)
         elif self.can_parse_character_class_or_group():
@@ -859,27 +868,3 @@ class RegexParser:
 
     def __repr__(self):
         return f"Parser({self._regex})"
-
-
-if __name__ == "__main__":
-    # p = Parser(r"(ab){3, 4}[^A-Za0-9_]+(\w)*")
-    # p = Parser(r"(ab)|(df)")
-    # p = RegexParser(r"a*b+a.a*b|d+[A-Z]?")
-    # t = defaultdict(lambda: SymbolDispatchedMapping(set))
-    # pprint(p._start_state)
-    # initial, accept = p._start_state.to_fsm(t)
-    #
-    # # symbols
-    # symbols = set()
-    # states = set()
-    # for s1 in t:
-    #     states.add(s1)
-    #     for sym, s2 in t[s1].items():
-    #         states = states | s2
-    #         symbols.add(sym)
-    # symbols.discard(Epsilon)
-    #
-    # dfa1 = DFA(nfa=NFA(t, states, symbols, initial, accept))
-    # dfa1.minimize()
-    # dfa1.draw_with_graphviz()
-    ...

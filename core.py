@@ -1,21 +1,46 @@
 from abc import ABC, abstractmethod
 from collections import defaultdict
+from dataclasses import dataclass
+from enum import IntFlag, auto
 from functools import cache
 from itertools import chain, count, product
 from string import ascii_uppercase
 from typing import (ClassVar, Collection, Final, Generic, MutableMapping,
-                    Optional, Sequence, TypeVar)
+                    Optional, TypeVar)
 
 import graphviz
 
 from utils import Comparable, is_iterable
+
+
+class RegexFlag(IntFlag):
+    NOFLAG = auto()
+    IGNORECASE = auto()
+    MULTILINE = auto()
+    DOTALL = auto()  # make dot match newline
+
+
+@dataclass
+class RegexContext:
+    text: str
+    position: int = 0
+    flag: RegexFlag = RegexFlag.NOFLAG
+
+    def increment(self):
+        cp = self.copy()
+        cp.position += 1
+        return cp
+
+    def copy(self):
+        return RegexContext(self.text, self.position, self.flag)
+
 
 T = TypeVar("T", bound=Comparable)
 
 
 class MatchableMixin(Generic[T], ABC):
     @abstractmethod
-    def match(self, position: int, text: Sequence[T]) -> bool:
+    def match(self, context: RegexContext) -> bool:
         ...
 
 
@@ -137,7 +162,7 @@ class TransitionsProvider(MutableMapping):
 
     def items_non_epsilon(self):
         for symbol, val in self.items():
-            if not symbol.match(0, "ε"):
+            if not symbol.match():
                 yield symbol, val
 
     def clear(self) -> None:
@@ -152,15 +177,16 @@ class TransitionsProvider(MutableMapping):
             self[k] = v
 
     def match_atom(
-        self, text: str, position: int, default
+        self, context: RegexContext, default=None
     ) -> list[tuple[MatchableMixin | str, set[State] | State]]:
+        text, position = context.text, context.position
         if position >= len(text):
             char = None
         else:
             char = text[position]
         matches = []
         for sym, value in self.sorted_map:
-            if sym.match(position, text):
+            if sym.match(context):
                 matches.append((sym, value))
 
         res = self.hash_map.get(char, default)
@@ -183,13 +209,13 @@ class FiniteStateAutomaton(
 
     @abstractmethod
     def transition(
-        self, state: State, text: str, position: int
+        self, state: State, symbol: MatchableMixin
     ) -> DFAState | Collection[State]:
         pass
 
     @abstractmethod
     def transition_is_possible(
-        self, state: State, text: str, position: int
+        self, state: State, context: RegexContext
     ) -> Optional[State]:
         pass
 

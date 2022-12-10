@@ -26,8 +26,8 @@ def test_simply_maintains_simple_constructs():
 
 def _test_cases_suite(cases: list[tuple[str, str]]):
     for i, (pattern, text) in enumerate(cases):
-        expected = [m.group(0) for m in re.finditer(pattern, text) if m.group(0) != ""]
-        actual = [m.substr for m in RegexMatcher(pattern, text) if m.substr != ""]
+        expected = [m.group(0) for m in re.finditer(pattern, text)]
+        actual = [m.substr for m in RegexMatcher(pattern, text)]
         assert expected == actual, (i, pattern, text)
 
 
@@ -41,6 +41,7 @@ def test_repetition():
         ("ab{0,1}bc", "abc"),
         ("ab{0,1}c", "abc"),
         ("^", "abc"),
+        ("$", "abc"),
         ("ab{1,}bc", "abq"),
         ("a{1,}b{1,}c", "aabbabc"),
         ("(a+|b){0,}", "ab"),

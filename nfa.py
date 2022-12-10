@@ -4,7 +4,7 @@ from parser import Epsilon
 from typing import Iterable, Optional
 
 from core import (DFAState, FiniteStateAutomaton, MatchableMixin, NullState,
-                  State, TransitionsProvider)
+                  RegexContext, State, TransitionsProvider)
 
 StatePair = tuple[State, State]
 
@@ -58,11 +58,11 @@ class NFA(FiniteStateAutomaton):
                 for state2 in state2s:
                     yield symbol, state1, state2
 
-    def transition(self, state: State, text: str, position: int) -> list[State]:
-        return self[state].match_atom(text, position, [NullState])
+    def transition(self, state: State, context: RegexContext) -> list[State]:
+        return self[state].match_atom(context, [NullState])
 
-    def transition_is_possible(self, state: State, text: str, position: int) -> bool:
-        return self[state].match_atom(text, position, None)
+    def transition_is_possible(self, state: State, context: RegexContext) -> bool:
+        return self[state].match_atom(context, None)
 
     def __repr__(self):
         return (

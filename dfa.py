@@ -5,7 +5,7 @@ from typing import Iterator, Optional
 from more_itertools import minmax
 
 from core import (DFAState, FiniteStateAutomaton, MatchableMixin, NullDfaState,
-                  State, TransitionsProvider)
+                  RegexContext, State, TransitionsProvider)
 from data_structures import UnionFind
 from nfa import NFA
 
@@ -157,9 +157,9 @@ class DFA(FiniteStateAutomaton):
         return self.states
 
     def transition_is_possible(
-        self, state: State, text: str, position: int
+        self, state: State, context: RegexContext
     ) -> Optional[State]:
-        _, val = self[state].match_atom(text, position, None)
+        _, val = self[state].match_atom(context, None)
         return val
 
 
