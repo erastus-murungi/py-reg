@@ -132,16 +132,6 @@ class Quantifier(Operator):
         raise NotImplementedError
 
 
-class HasQuantifier(ABC):
-    @abstractmethod
-    def get_quantifier(self) -> Optional[Quantifier]:
-        pass
-
-    @abstractmethod
-    def set_quantifier(self, quantifier: Quantifier):
-        pass
-
-
 @dataclass
 class RangeQuantifier(QuantifierItem):
     start: Optional[int]
@@ -176,7 +166,6 @@ class RangeQuantifier(QuantifierItem):
 
     def expand(self, item: "SubExpressionItem", lazy: bool):
         # e{3} expands to eee; e{3,5} expands to eeee?e?, and e{3,} expands to eee+.
-        assert isinstance(item, (RegexNode, HasQuantifier))
 
         seq = []
         for _ in range(self.start):
@@ -234,7 +223,7 @@ class Expression(RegexNode):
 
 
 @dataclass
-class Group(SubExpressionItem, HasQuantifier):
+class Group(SubExpressionItem):
     expression: Expression
     quantifier: Optional[Quantifier]
     is_capturing: bool = False
@@ -245,19 +234,13 @@ class Group(SubExpressionItem, HasQuantifier):
             return self.quantifier.transform(state_pair, transitions)
         return state_pair
 
-    def set_quantifier(self, quantifier: Quantifier):
-        self.quantifier = quantifier
-
-    def get_quantifier(self) -> Optional[Quantifier]:
-        return self.quantifier
-
 
 class MatchItem(SubExpressionItem, ABC):
     pass
 
 
 @dataclass
-class Match(SubExpressionItem, HasQuantifier):
+class Match(SubExpressionItem):
     item: MatchItem
     quantifier: Optional[Quantifier]
 
@@ -266,12 +249,6 @@ class Match(SubExpressionItem, HasQuantifier):
         if self.quantifier is None:
             return state_pair
         return self.quantifier.transform(state_pair, transitions)
-
-    def get_quantifier(self) -> Optional[Quantifier]:
-        return self.quantifier
-
-    def set_quantifier(self, quantifier: Quantifier):
-        self.quantifier = quantifier
 
 
 @dataclass
