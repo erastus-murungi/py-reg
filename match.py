@@ -35,10 +35,12 @@ class RegexMatcher:
         self, state: State, context: RegexContext
     ) -> Optional[int]:
         if state is not None:
-            matches = self.compiled_regex[state].match(context)
+            matching_indices = []
 
-            indices = []
-            lazy = state.lazy
+            if state.accepts:
+                matching_indices.append(context.position)
+
+            matches = self.compiled_regex[state].match(context)
 
             for symbol, next_state in matches:
                 index = self._try_match_from_index(
@@ -47,16 +49,12 @@ class RegexMatcher:
                     if isinstance(symbol, Anchor)
                     else context.increment(),
                 )
-
                 if index is not None:
-                    indices.append(index)
-                state = next_state
+                    matching_indices.append(index)
 
-            if indices:
-                return min(indices) if lazy else max(indices)
+            if matching_indices:
+                return min(matching_indices) if state.lazy else max(matching_indices)
 
-            if state.accepts:
-                return context.position if not matches else context.position + 1
         return None
 
     def __iter__(self):
@@ -76,7 +74,7 @@ class RegexMatcher:
 
 
 if __name__ == "__main__":
-    regex, t = ("[^\\s\\S]", "aaaaaaa")
+    regex, t = ("a{2,3}?", "aaaaa")
     matcher = RegexMatcher(regex, t)
 
     for span in re.finditer(regex, t):

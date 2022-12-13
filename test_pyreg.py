@@ -431,6 +431,11 @@ def test_more_python_re_implementation_cases():
 
 
 def test_greedy_vs_lazy():
-    cases = [("a.+?c", "abcabc"), ("a.*?c", "abcabc"), ("a.{0,5}?c", "abcabc")]
+    cases = [
+        ("a.+?c", "abcabc"),
+        ("a.*?c", "abcabc"),
+        ("a.{0,5}?c", "abcabc"),
+        ("a{2,3}?", "aaaaa"),
+    ]
 
     _test_cases_suite(cases)

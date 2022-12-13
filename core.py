@@ -5,8 +5,15 @@ from enum import IntFlag, auto
 from functools import cache
 from itertools import chain, count, product
 from string import ascii_uppercase
-from typing import (ClassVar, Collection, Final, Generic, MutableMapping,
-                    Optional, TypeVar)
+from typing import (
+    ClassVar,
+    Collection,
+    Final,
+    Generic,
+    MutableMapping,
+    Optional,
+    TypeVar,
+)
 
 import graphviz
 

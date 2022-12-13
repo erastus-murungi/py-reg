@@ -4,8 +4,15 @@ from typing import Iterator, Optional
 
 from more_itertools import minmax
 
-from core import (DFAState, FiniteStateAutomaton, MatchableMixin, NullDfaState,
-                  RegexContext, State, TransitionsProvider)
+from core import (
+    DFAState,
+    FiniteStateAutomaton,
+    MatchableMixin,
+    NullDfaState,
+    RegexContext,
+    State,
+    TransitionsProvider,
+)
 from data_structures import UnionFind
 from nfa import NFA
 
@@ -117,7 +124,7 @@ class DFA(FiniteStateAutomaton):
 
         return union_find.to_sets()
 
-    def gen_dfa_state_set_flags(self, sources):
+    def gen_dfa_state_set_flags(self, sources: set[State]):
         if len(sources) == 1:
             return sources.pop()
         state = DFAState(from_states=frozenset(sources))

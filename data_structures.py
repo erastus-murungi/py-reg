@@ -1,7 +1,4 @@
 from collections import defaultdict
-from typing import Callable, MutableMapping
-
-from core import CompoundMatchableMixin, MatchableMixin
 
 
 class UnionFind:

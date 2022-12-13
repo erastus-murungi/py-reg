@@ -6,8 +6,14 @@ from enum import Enum
 from math import inf
 from typing import MutableMapping, Optional, Sequence
 
-from core import (CompoundMatchableMixin, MatchableMixin, RegexContext, State,
-                  T, TransitionsProvider)
+from core import (
+    CompoundMatchableMixin,
+    MatchableMixin,
+    RegexContext,
+    State,
+    T,
+    TransitionsProvider,
+)
 
 ESCAPED = set(". \\ + * ? [ ^ ] $ ( ) { } = ! < > | -".split())
 
