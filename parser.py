@@ -121,15 +121,15 @@ class Quantifier(Operator):
     lazy: bool = False
 
     def transform(self, state_pair, transitions):
-        if isinstance(self.item, QuantifierChar):
-            match self.item.type:
-                case QuantifierType.OneOrMore:
-                    return one_or_more(state_pair, transitions, self.lazy)
-                case QuantifierType.ZeroOrMore:
-                    return zero_or_more(state_pair, transitions, self.lazy)
-                case QuantifierType.ZeroOrOne:
-                    return zero_or_one(state_pair, transitions, self.lazy)
-        raise NotImplementedError
+        match self.item.type:
+            case QuantifierType.OneOrMore:
+                return one_or_more(state_pair, transitions, self.lazy)
+            case QuantifierType.ZeroOrMore:
+                return zero_or_more(state_pair, transitions, self.lazy)
+            case QuantifierType.ZeroOrOne:
+                return zero_or_one(state_pair, transitions, self.lazy)
+            case _:
+                raise NotImplementedError
 
 
 @dataclass
