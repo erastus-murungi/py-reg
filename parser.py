@@ -6,14 +6,8 @@ from enum import Enum
 from math import inf
 from typing import MutableMapping, Optional, Sequence
 
-from core import (
-    CompoundMatchableMixin,
-    MatchableMixin,
-    RegexContext,
-    State,
-    T,
-    TransitionsProvider,
-)
+from core import (CompoundMatchableMixin, MatchableMixin, State, T,
+                  TransitionsProvider)
 
 ESCAPED = set(". \\ + * ? [ ^ ] $ ( ) { } = ! < > | -".split())
 
@@ -290,8 +284,7 @@ class MatchAnyCharacter(MatchItem, CompoundMatchableMixin):
     def __eq__(self, other):
         return isinstance(other, MatchAnyCharacter) and other.ignore == self.ignore
 
-    def match(self, context: RegexContext) -> bool:
-        text, position = context.text, context.position
+    def match(self, text, position, flags) -> bool:
         return position < len(text) and text[position] not in self.ignore
 
     def __repr__(self):
@@ -314,9 +307,8 @@ class Char(CharacterGroupItem, MatchItem):
         transitions[source][self].add(sink)
         return source, sink
 
-    def match(self, context) -> bool:
-        text, position = context.text, context.position
-        if context.position < len(context.text):
+    def match(self, text, position, flags) -> bool:
+        if position < len(text):
             return self.char == text[position]
         return False
 
@@ -352,11 +344,12 @@ class CharacterGroup(MatchCharacterClass, CompoundMatchableMixin):
         transitions[source][self].add(sink)
         return source, sink
 
-    def match(self, context) -> bool:
-        text, position = context.text, context.position
+    def match(self, text, position, flags) -> bool:
         if position >= len(text):
             return False
-        return self.negated ^ any(item.match(context) for item in self.items)
+        return self.negated ^ any(
+            item.match(text, position, flags) for item in self.items
+        )
 
     def __eq__(self, other):
         if isinstance(other, CharacterGroup):
@@ -378,8 +371,7 @@ class CharacterRange(CharacterGroupItem, CompoundMatchableMixin):
     start: str
     end: str
 
-    def match(self, context: RegexContext) -> bool:
-        text, position = context.text, context.position
+    def match(self, text, position, flags) -> bool:
         if position < len(text):
             return self.start <= text[position] <= self.end
         return False
@@ -473,8 +465,7 @@ class Anchor(SubExpressionItem, CompoundMatchableMixin):
     def empty_string(pos=sys.maxsize):
         return Anchor(pos, AnchorType.EmptyString)
 
-    def match(self, context) -> bool:
-        text, position = context.text, context.position
+    def match(self, text, position, flags) -> bool:
         match self.anchor_type:
             case AnchorType.StartOfString:
                 # assert that this is the beginning of the string

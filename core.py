@@ -5,15 +5,8 @@ from enum import IntFlag, auto
 from functools import cache
 from itertools import chain, count, product
 from string import ascii_uppercase
-from typing import (
-    ClassVar,
-    Collection,
-    Final,
-    Generic,
-    MutableMapping,
-    Optional,
-    TypeVar,
-)
+from typing import (ClassVar, Collection, Final, Generic, MutableMapping,
+                    Optional, TypeVar)
 
 import graphviz
 
@@ -47,7 +40,7 @@ T = TypeVar("T", bound=Comparable)
 
 class MatchableMixin(Generic[T], ABC):
     @abstractmethod
-    def match(self, context: RegexContext) -> bool:
+    def match(self, text: str, position: int, flags: RegexFlag) -> bool:
         ...
 
 
@@ -185,16 +178,15 @@ class TransitionsProvider(MutableMapping):
             self[k] = v
 
     def match(
-        self, context: RegexContext, default=None
+        self, text, position, flags, default=None
     ) -> list[tuple[MatchableMixin | str, set[State] | State]]:
-        text, position = context.text, context.position
         if position >= len(text):
             char = None
         else:
             char = text[position]
         matches = []
         for sym, value in self.sorted_map:
-            if sym.match(context):
+            if sym.match(text, position, flags):
                 matches.append((sym, value))
 
         res = self.hash_map.get(char, default)

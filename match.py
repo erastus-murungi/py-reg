@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from parser import Anchor
 from typing import Optional
 
-from core import RegexContext, State
+from core import RegexFlag, State
 from pyreg import compile_regex
 
 
@@ -30,24 +30,20 @@ class RegexMatcher:
         self.text = text
         self.regexp = regexp
         self.compiled_regex = compile_regex(regexp)
+        self.flags = RegexFlag.NOFLAG
 
-    def _try_match_from_index(
-        self, state: State, context: RegexContext
-    ) -> Optional[int]:
+    def _try_match_from_index(self, state: State, position, flags) -> Optional[int]:
         if state is not None:
             matching_indices = []
 
             if state.accepts:
-                matching_indices.append(context.position)
+                matching_indices.append(position)
 
-            matches = self.compiled_regex[state].match(context)
+            matches = self.compiled_regex[state].match(self.text, position, flags)
 
             for symbol, next_state in matches:
                 index = self._try_match_from_index(
-                    next_state,
-                    context.copy()
-                    if isinstance(symbol, Anchor)
-                    else context.increment(),
+                    next_state, position + (not isinstance(symbol, Anchor)), self.flags
                 )
                 if index is not None:
                     matching_indices.append(index)
@@ -61,7 +57,7 @@ class RegexMatcher:
         index = 0
         while index <= len(self.text):
             position = self._try_match_from_index(
-                self.compiled_regex.start_state, RegexContext(self.text, index)
+                self.compiled_regex.start_state, index, self.flags
             )
             if position is not None:
                 yield Match(index, position, self.text[index:position])
