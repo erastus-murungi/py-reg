@@ -6,8 +6,14 @@ from enum import Enum
 from math import inf
 from typing import MutableMapping, Optional, Sequence
 
-from core import (CompoundMatchableMixin, MatchableMixin, RegexContext, State,
-                  T, TransitionsProvider)
+from core import (
+    CompoundMatchableMixin,
+    MatchableMixin,
+    RegexContext,
+    State,
+    T,
+    TransitionsProvider,
+)
 
 ESCAPED = set(". \\ + * ? [ ^ ] $ ( ) { } = ! < > | -".split())
 
@@ -17,10 +23,10 @@ character_classes = {"w", "W", "s", "S", "d", "D"}
 
 StatePair = tuple[State, State]
 
-no_escape_in_group = {"\\", "-", "[", ":", "."}
+no_escape_in_group = {"\\", "-", "[", ":", ".", ">"}
 
 
-def zero_or_more(state_pair, transitions) -> StatePair:
+def zero_or_more(state_pair, transitions, lazy) -> StatePair:
     source, sink = state_pair
     new_start, new_accept = State.pair()
     transitions[sink][Epsilon].add(source)
@@ -29,20 +35,23 @@ def zero_or_more(state_pair, transitions) -> StatePair:
     transitions[new_start][Epsilon].add(new_accept)
     s1_start, s2_end = trivial(Anchor.empty_string(), transitions)
     concatenate(s2_end, new_start, transitions)
+    source.lazy = sink.lazy = lazy
     return s1_start, new_accept
 
 
-def one_or_more(state_pair: StatePair, transitions):
+def one_or_more(state_pair: StatePair, transitions, lazy: bool) -> StatePair:
     source, sink = state_pair
     transitions[sink][Epsilon].add(source)
+    source.lazy = sink.lazy = lazy
     return source, sink
 
 
-def zero_or_one(state_pair: StatePair, transitions):
+def zero_or_one(state_pair: StatePair, transitions, lazy: bool) -> StatePair:
     source, sink = state_pair
     transitions[source][Epsilon].add(sink)
     s1_start, s2_end = trivial(Anchor.empty_string(), transitions)
     concatenate(s2_end, source, transitions)
+    source.lazy = sink.lazy = lazy
     return s1_start, sink
 
 
@@ -121,11 +130,11 @@ class Quantifier(Operator):
         if isinstance(self.item, QuantifierChar):
             match self.item.type:
                 case QuantifierType.OneOrMore:
-                    return one_or_more(state_pair, transitions)
+                    return one_or_more(state_pair, transitions, self.lazy)
                 case QuantifierType.ZeroOrMore:
-                    return zero_or_more(state_pair, transitions)
+                    return zero_or_more(state_pair, transitions, self.lazy)
                 case QuantifierType.ZeroOrOne:
-                    return zero_or_one(state_pair, transitions)
+                    return zero_or_one(state_pair, transitions, self.lazy)
         raise NotImplementedError
 
 
@@ -171,7 +180,7 @@ class RangeQuantifier(QuantifierItem):
         else:
             raise ValueError(f"invalid range {{{self.start}, {self.end}}}")
 
-    def expand(self, item: "SubExpressionItem"):
+    def expand(self, item: "SubExpressionItem", lazy: bool):
         # e{3} expands to eee; e{3,5} expands to eeee?e?, and e{3,} expands to eee+.
         assert isinstance(item, (RegexNode, HasQuantifier))
 
@@ -187,7 +196,7 @@ class RangeQuantifier(QuantifierItem):
                         Group(
                             item.pos,
                             Expression(item.pos, [item]),
-                            Quantifier(QuantifierChar(QuantifierType.OneOrMore)),
+                            Quantifier(QuantifierChar(QuantifierType.OneOrMore), lazy),
                         )
                     )
                 else:
@@ -195,7 +204,7 @@ class RangeQuantifier(QuantifierItem):
                         Group(
                             item.pos,
                             Expression(item.pos, [item]),
-                            Quantifier(QuantifierChar(QuantifierType.ZeroOrMore)),
+                            Quantifier(QuantifierChar(QuantifierType.ZeroOrMore), lazy),
                         )
                     )
 
@@ -205,7 +214,7 @@ class RangeQuantifier(QuantifierItem):
                         Group(
                             item.pos,
                             Expression(item.pos, [item]),
-                            Quantifier(QuantifierChar(QuantifierType.ZeroOrOne)),
+                            Quantifier(QuantifierChar(QuantifierType.ZeroOrOne), lazy),
                         )
                     )
         return Expression(item.pos, seq)
@@ -292,8 +301,12 @@ class MatchAnyCharacter(MatchItem, CompoundMatchableMixin):
         return hash(".") ^ 12934
 
 
+class CharacterGroupItem(MatchableMixin, ABC):
+    pass
+
+
 @dataclass
-class Char(MatchableMixin, MatchItem):
+class Char(CharacterGroupItem, MatchItem):
     char: str
 
     def fsm(self, transitions) -> tuple[State, State]:
@@ -303,7 +316,9 @@ class Char(MatchableMixin, MatchItem):
 
     def match(self, context) -> bool:
         text, position = context.text, context.position
-        return self.char == text[position]
+        if context.position < len(context.text):
+            return self.char == text[position]
+        return False
 
     def __eq__(self, other) -> bool:
         return other == self.char
@@ -327,86 +342,35 @@ class MatchCharacterClass(MatchItem, ABC):
     pass
 
 
-class CharacterGroupItem(ABC):
-    pass
-
-
 @dataclass
 class CharacterGroup(MatchCharacterClass, CompoundMatchableMixin):
-    items: list[CharacterGroupItem]
+    items: tuple[CharacterGroupItem, ...]
     negated: bool = False
-
-    intervals: frozenset[tuple[str, str]] = field(default_factory=frozenset, repr=False)
-    options: frozenset[str] = field(default_factory=frozenset, repr=False)
 
     def fsm(self, transitions: dict[State, TransitionsProvider]) -> tuple[State, State]:
         source, sink = State.pair()
         transitions[source][self].add(sink)
         return source, sink
 
-    def __post_init__(self):
-        self.intervals = frozenset(
-            [
-                (item.start, item.end)
-                for item in self.items
-                if isinstance(item, CharacterRange)
-            ]
-        )
-        self.options = frozenset(
-            [item.char for item in self.items if isinstance(item, Char)]
-        )
-
-    def match(self, context):
+    def match(self, context) -> bool:
         text, position = context.text, context.position
         if position >= len(text):
             return False
-        token = text[position]
-        if token == "ε":
-            raise RuntimeError()
-        eq = token in self.options or any(
-            start <= token <= stop for start, stop in self.intervals
-        )
-        eq_c = any(
-            char_class.match(context)
-            for char_class in filter(
-                lambda item: isinstance(item, CharacterClass), self.items
-            )
-        )
-        eq = eq or eq_c
-
-        if self.negated:
-            return not eq
-        return eq
+        return self.negated ^ any(item.match(context) for item in self.items)
 
     def __eq__(self, other):
         if isinstance(other, CharacterGroup):
-            return (
-                self.options == other.options
-                and self.intervals == other.intervals
-                and self.negated == other.negated
-            )
+            return self.items == other.items
         return False
 
     def __repr__(self):
-        return (
-            "["
-            + ("^" if self.negated else "")
-            + "".join(f"{start}-{stop}" for start, stop in self.intervals)
-            + "".join(self.options)
-            + "".join(
-                repr(char_class)
-                for char_class in filter(
-                    lambda item: isinstance(item, CharacterClass), self.items
-                )
-            )
-            + "]"
-        )
+        return f"{self.items}"
 
     def __lt__(self, other):
         return id(self) < id(other)
 
     def __hash__(self):
-        return hash((self.options, self.intervals, self.negated))
+        return hash((self.items, self.negated))
 
 
 @dataclass
@@ -436,6 +400,8 @@ class CharacterClass(RegexNode, CharacterGroupItem, CompoundMatchableMixin):
 
     def match(self, context):
         text, position = context.text, context.position
+        if position >= len(text):
+            return False
         token = text[position]
         if token == "ε":
             raise RuntimeError()
@@ -470,13 +436,21 @@ class CharacterRange(CharacterGroupItem, CompoundMatchableMixin):
     start: str
     end: str
 
-    def match(self, context) -> bool:
+    def match(self, context: RegexContext) -> bool:
         text, position = context.text, context.position
-        return self.start <= text[position] <= self.end
+        if position < len(text):
+            return self.start <= text[position] <= self.end
+        return False
 
     def __post_init__(self):
         if self.start > self.end:
             raise ValueError(f"[{self.start}-{self.end}] is not ordered")
+
+    def __hash__(self):
+        return hash((self.start, self.end))
+
+    def __repr__(self):
+        return f"[{self.start}-{self.end}]"
 
 
 class AnchorType(Enum):
@@ -485,8 +459,8 @@ class AnchorType(Enum):
     EmptyString = "nothing to see here"
 
     # must be escaped
-    AnchorWordBoundary = "b"
-    AnchorNonWordBoundary = "B"
+    WordBoundary = "b"
+    NonWordBoundary = "B"
     AnchorStartOfStringOnly = "A"
     AnchorEndOfStringOnlyNotNewline = "z"
     AnchorEndOfStringOnly = "Z"
@@ -500,9 +474,9 @@ class AnchorType(Enum):
             case "$":
                 return AnchorType.EndOfString
             case "b":
-                return AnchorType.AnchorWordBoundary
+                return AnchorType.WordBoundary
             case "B":
-                return AnchorType.AnchorNonWordBoundary
+                return AnchorType.NonWordBoundary
             case "A":
                 return AnchorType.AnchorStartOfStringOnly
             case "z":
@@ -554,8 +528,8 @@ class Anchor(SubExpressionItem, CompoundMatchableMixin):
         return trivial(self, transitions)
 
     @staticmethod
-    def empty_string():
-        return Anchor(-sys.maxsize, AnchorType.EmptyString)
+    def empty_string(pos=sys.maxsize):
+        return Anchor(pos, AnchorType.EmptyString)
 
     def match(self, context) -> bool:
         text, position = context.text, context.position
@@ -571,9 +545,9 @@ class Anchor(SubExpressionItem, CompoundMatchableMixin):
                     or position == len(text) - 1
                     and text[position] == "\n"
                 )
-            case AnchorType.AnchorWordBoundary:
+            case AnchorType.WordBoundary:
                 return is_word_boundary(text, position)
-            case AnchorType.AnchorNonWordBoundary:
+            case AnchorType.NonWordBoundary:
                 return text and not is_word_boundary(text, position)
             case AnchorType.EmptyString:
                 return True
@@ -669,7 +643,7 @@ class RegexParser:
             and self.current(lookahead) in options
         )
 
-    def parse_expression(self):
+    def parse_expression(self) -> Expression:
         # Expression ::= Subexpression ("|" Expression)?
         pos = self._pos
         sub_exprs = self.parse_sub_expression()
@@ -679,7 +653,7 @@ class RegexParser:
             if self.can_parse_sub_expression_item():
                 expr = self.parse_expression()
             else:
-                expr = Anchor.empty_string()
+                expr = Anchor.empty_string(self._pos)
         return Expression(pos, sub_exprs, expr)
 
     def parse_sub_expression(self) -> list[SubExpressionItem]:
@@ -697,7 +671,7 @@ class RegexParser:
         else:
             return self.parse_match()
 
-    def parse_group(self):
+    def parse_group(self) -> Group | Expression:
         self.consume("(")
         is_capturing = True
         if self._regex.startswith("?:"):
@@ -710,7 +684,7 @@ class RegexParser:
             quantifier = self.parse_quantifier()
             # handle range qualifies and return a list of matches instead
             if isinstance(quantifier.item, RangeQuantifier):
-                return quantifier.item.expand(expr)
+                return quantifier.item.expand(expr, quantifier.lazy)
         return Group(self._pos, expr, quantifier, is_capturing)
 
     def can_parse_quantifier(self):
@@ -754,15 +728,41 @@ class RegexParser:
             quantifier = self.parse_quantifier()
             # handle range qualifies and return a list of matches instead
             if isinstance(quantifier.item, RangeQuantifier):
-                return quantifier.item.expand(match_item)
+                return quantifier.item.expand(match_item, quantifier.lazy)
         return Match(pos, match_item, quantifier)
 
     def can_parse_character_group(self):
         return self.current() == "["
 
-    def parse_character_class(self) -> CharacterClass:
+    def parse_character_class(self) -> CharacterGroup:
         self.consume("\\")
-        return CharacterClass(self._pos, self.consume_and_return())
+        if self.matches_any(("w", "W")):
+            return CharacterGroup(
+                self._pos,
+                (
+                    CharacterRange("A", "Z"),
+                    CharacterRange("a", "z"),
+                    Char(self._pos, "_"),
+                ),
+                self.matches("W"),
+            )
+        elif self.matches_any(("d", "D")):
+            return CharacterGroup(
+                self._pos, (CharacterRange("0", "9"), self.matches("D"))
+            )
+        elif self.matches_any(("s", "S")):
+            return CharacterGroup(
+                self._pos,
+                tuple(
+                    map(
+                        lambda c: Char(self._pos, c),
+                        [" ", "\t", "\n", "\r", "\v", "\f"],
+                    )
+                ),
+                self.matches("S"),
+            )
+        else:
+            raise ValueError(f"unrecognized character class{self.current()}")
 
     def parse_character_range(self, char: str) -> CharacterRange:
         self.consume("-")
@@ -771,14 +771,10 @@ class RegexParser:
         return CharacterRange(char, to.char)
 
     def can_parse_character_class(self):
-        return (
-            self.matches("\\")
-            and self._pos + 1 < len(self._regex)
-            and self.current(1) in character_classes
-        )
+        return self.matches("\\") and self.matches_any(character_classes, 1)
 
-    def parse_character_group_item(self) -> CharacterGroupItem | Char:
-        if self.matches("\\") and self.matches_any(character_classes, 1):
+    def parse_character_group_item(self) -> CharacterGroupItem | CharacterGroup:
+        if self.can_parse_character_class():
             return self.parse_character_class()
         else:
             # If the dash character is the first one in the list,
@@ -812,7 +808,7 @@ class RegexParser:
                 f"failed parsing from {group_pos}: {self._regex[group_pos:]}"
             )
         self.consume("]")
-        return CharacterGroup(group_pos, items, negated)
+        return CharacterGroup(group_pos, tuple(items), negated)
 
     def parse_char(self):
         if self.can_parse_escaped():

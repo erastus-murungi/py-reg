@@ -5,12 +5,19 @@ from enum import IntFlag, auto
 from functools import cache
 from itertools import chain, count, product
 from string import ascii_uppercase
-from typing import (ClassVar, Collection, Final, Generic, MutableMapping,
-                    Optional, TypeVar)
+from typing import (
+    ClassVar,
+    Collection,
+    Final,
+    Generic,
+    MutableMapping,
+    Optional,
+    TypeVar,
+)
 
 import graphviz
 
-from utils import Comparable, is_iterable
+from utils import Comparable, isiterable
 
 
 class RegexFlag(IntFlag):
@@ -26,12 +33,12 @@ class RegexContext:
     position: int = 0
     flag: RegexFlag = RegexFlag.NOFLAG
 
-    def increment(self):
+    def increment(self) -> "RegexContext":
         cp = self.copy()
         cp.position += 1
         return cp
 
-    def copy(self):
+    def copy(self) -> "RegexContext":
         return RegexContext(self.text, self.position, self.flag)
 
 
@@ -60,10 +67,11 @@ def yield_letters():
 class State:
     ids: ClassVar = count(-1)
 
-    def __init__(self, *, is_start=False, accepts=False):
+    def __init__(self, *, is_start=False, accepts=False, lazy=False):
         self.is_start = is_start
         self.accepts = accepts
         self.id = self._gen_id()
+        self.lazy = lazy
 
     def _gen_id(self):
         return next(self.ids)
@@ -176,7 +184,7 @@ class TransitionsProvider(MutableMapping):
         for k, v in m.items():
             self[k] = v
 
-    def match_atom(
+    def match(
         self, context: RegexContext, default=None
     ) -> list[tuple[MatchableMixin | str, set[State] | State]]:
         text, position = context.text, context.position
@@ -229,7 +237,7 @@ class FiniteStateAutomaton(
     ) -> defaultdict[State, MutableMapping[MatchableMixin, DFAState | list[State]]]:
         pass
 
-    def draw_with_graphviz(self):
+    def graph(self):
         dot = graphviz.Digraph(
             self.__class__.__name__ + ", ".join(map(str, self.states)),
             format="pdf",
@@ -248,6 +256,13 @@ class FiniteStateAutomaton(
                         shape="doublecircle" if s1.accepts else "circle",
                         style="filled",
                     )
+                elif s1.lazy:
+                    dot.node(
+                        str(s1.id),
+                        color="red",
+                        shape="doublecircle" if s1.accepts else "circle",
+                        style="filled",
+                    )
                 else:
                     dot.node(
                         f"{s1.id}",
@@ -256,7 +271,17 @@ class FiniteStateAutomaton(
                 seen.add(s1)
             if s2 not in seen:
                 seen.add(s2)
-                dot.node(f"{s2.id}", shape="doublecircle" if s2.accepts else "circle")
+                if s2.lazy:
+                    dot.node(
+                        f"{s2.id}",
+                        color="gray",
+                        style="filled",
+                        shape="doublecircle" if s2.accepts else "circle",
+                    )
+                else:
+                    dot.node(
+                        f"{s2.id}", shape="doublecircle" if s2.accepts else "circle"
+                    )
             dot.edge(str(s1.id), str(s2.id), label=str(symbol))
 
         dot.node("start", shape="none")
@@ -267,7 +292,7 @@ class FiniteStateAutomaton(
         for source, table in self.items():
             self.states.add(source)
             for sinks in table.values():
-                if is_iterable(sinks):
+                if isiterable(sinks):
                     for sink in sinks:
                         self.states.add(sink)
                 else:

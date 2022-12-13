@@ -2,7 +2,7 @@ from abc import abstractmethod
 from typing import Any, Protocol, TypeVar
 
 
-def is_iterable(maybe_iterable):
+def isiterable(maybe_iterable):
     try:
         iter(maybe_iterable)
         return True

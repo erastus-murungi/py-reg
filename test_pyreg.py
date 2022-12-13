@@ -276,6 +276,7 @@ def test_raises_exception():
         ("*a", "-"),
         ("(*)b", "-"),
         ("a**", ""),
+        (r"^*", ""),
     ]
 
     for pattern, text in cases:
@@ -321,6 +322,8 @@ def test_failures():
         ("^abc$", "abcc"),
         ("^abc$", "aabc"),
         ("a[^bc]d", "abd"),
+        (r"^a*?$", "foo"),
+        (r"a[^>]*?b", "a>b"),
     ]
 
     for i, (pattern, text, *rest) in enumerate(cases):
@@ -392,7 +395,7 @@ def test_more_python_re_implementation_cases():
         ("ab*", "xayabbbz"),
         ("(ab|cd)e", "abcde"),
         ("[abhgefdc]ij", "hij"),
-        # ("(abc|)ef", "abcdef"),
+        ("(abc|)ef", "abcdef"),
         ("(a|b)c*d", "abcd"),
         ("(ab|ab*)bc", "abc"),
         ("a([bc]*)c*", "abc"),
@@ -423,5 +426,11 @@ def test_more_python_re_implementation_cases():
         ("([xyz]*)x", "abcx"),
         ("(a)+b|aac", "aac"),
     ]
+
+    _test_cases_suite(cases)
+
+
+def test_greedy_vs_lazy():
+    cases = [("a.+?c", "abcabc"), ("a.*?c", "abcabc"), ("a.{0,5}?c", "abcabc")]
 
     _test_cases_suite(cases)

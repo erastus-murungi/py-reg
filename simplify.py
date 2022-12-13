@@ -1,4 +1,4 @@
-def substitute_character_classes(regexp: str):
+def substitute_character_classes(regexp: str) -> str:
     return (
         regexp.replace("\\d", "[0-9]")
         .replace("\\w", "[A-z0-9_]")
@@ -6,22 +6,11 @@ def substitute_character_classes(regexp: str):
     )
 
 
-def apply_replacements(regexp: str):
-    return (
-        regexp.replace("*?", "*")
-        .replace("+*", "*")
-        .replace("+?", "*")
-        .replace("?*", "*")
-        .replace("?+", "*")
-        .replace("*+", "*")
-        .replace("++", "+")
-        .replace("??", "?")
-        .replace("()", "")
-        .replace("|)", ")|")
-    )
+def apply_replacements(regexp: str) -> str:
+    return regexp.replace("()", "")
 
 
-def simplify_redundant_quantifiers(regexp: str):
+def simplify_redundant_quantifiers(regexp: str) -> str:
     reduced = apply_replacements(regexp)
 
     while reduced != regexp:

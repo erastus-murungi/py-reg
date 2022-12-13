@@ -3,8 +3,15 @@ from functools import reduce
 from parser import Epsilon
 from typing import Iterable, Optional
 
-from core import (DFAState, FiniteStateAutomaton, MatchableMixin, NullState,
-                  RegexContext, State, TransitionsProvider)
+from core import (
+    DFAState,
+    FiniteStateAutomaton,
+    MatchableMixin,
+    NullState,
+    RegexContext,
+    State,
+    TransitionsProvider,
+)
 
 StatePair = tuple[State, State]
 
@@ -59,10 +66,10 @@ class NFA(FiniteStateAutomaton):
                     yield symbol, state1, state2
 
     def transition(self, state: State, context: RegexContext) -> list[State]:
-        return self[state].match_atom(context, [NullState])
+        return self[state].match(context, [NullState])
 
     def transition_is_possible(self, state: State, context: RegexContext) -> bool:
-        return self[state].match_atom(context, None)
+        return self[state].match(context, None)
 
     def __repr__(self):
         return (
@@ -111,6 +118,7 @@ class NFA(FiniteStateAutomaton):
         state = DFAState(from_states=sources)
         if self.accept in state.sources:
             state.accepts = True
+        state.lazy = any(s.lazy for s in sources)
         return state
 
     def compute_transitions_for_dfa_state(
