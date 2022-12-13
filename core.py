@@ -1,12 +1,10 @@
 from abc import ABC, abstractmethod
 from collections import defaultdict
-from dataclasses import dataclass
 from enum import IntFlag, auto
 from functools import cache
 from itertools import chain, count, product
 from string import ascii_uppercase
-from typing import (Any, ClassVar, Collection, Final, Generic, MutableMapping,
-                    Optional, Protocol, TypeVar)
+from typing import ClassVar, Collection, Final, MutableMapping
 
 import graphviz
 
@@ -19,28 +17,6 @@ def isiterable(maybe_iterable):
         return False
 
 
-C = TypeVar("C", bound="Comparable")
-
-
-class Comparable(Protocol):
-    @abstractmethod
-    def __eq__(self, other: Any) -> bool:
-        pass
-
-    @abstractmethod
-    def __lt__(self: C, other: C) -> bool:
-        pass
-
-    def __gt__(self: C, other: C) -> bool:
-        return (not self < other) and self != other
-
-    def __le__(self: C, other: C) -> bool:
-        return self < other or self == other
-
-    def __ge__(self: C, other: C) -> bool:
-        return not self < other
-
-
 class RegexFlag(IntFlag):
     NOFLAG = auto()
     IGNORECASE = auto()
@@ -48,25 +24,7 @@ class RegexFlag(IntFlag):
     DOTALL = auto()  # make dot match newline
 
 
-@dataclass
-class RegexContext:
-    text: str
-    position: int = 0
-    flag: RegexFlag = RegexFlag.NOFLAG
-
-    def increment(self) -> "RegexContext":
-        cp = self.copy()
-        cp.position += 1
-        return cp
-
-    def copy(self) -> "RegexContext":
-        return RegexContext(self.text, self.position, self.flag)
-
-
-T = TypeVar("T", bound=Comparable)
-
-
-class MatchableMixin(Generic[T], ABC):
+class MatchableMixin(ABC):
     @abstractmethod
     def match(self, text: str, position: int, flags: RegexFlag) -> bool:
         ...
@@ -189,11 +147,6 @@ class TransitionsProvider(MutableMapping):
         yield from self.sorted_map
         yield from self.hash_map.items()
 
-    def items_non_epsilon(self):
-        for symbol, val in self.items():
-            if not symbol.match():
-                yield symbol, val
-
     def clear(self) -> None:
         self.sorted_map = []
         if self.default_factory is None:
@@ -239,12 +192,6 @@ class FiniteStateAutomaton(
     def transition(
         self, state: State, symbol: MatchableMixin
     ) -> DFAState | Collection[State]:
-        pass
-
-    @abstractmethod
-    def transition_is_possible(
-        self, state: State, context: RegexContext
-    ) -> Optional[State]:
         pass
 
     @abstractmethod

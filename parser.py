@@ -4,9 +4,9 @@ from copy import copy
 from dataclasses import dataclass, field
 from enum import Enum
 from math import inf
-from typing import MutableMapping, Optional, Sequence
+from typing import MutableMapping, Optional, Union
 
-from core import (CompoundMatchableMixin, MatchableMixin, State, T,
+from core import (CompoundMatchableMixin, MatchableMixin, State,
                   TransitionsProvider)
 
 ESCAPED = set(". \\ + * ? [ ^ ] $ ( ) { } = ! < > | -".split())
@@ -164,7 +164,7 @@ class RangeQuantifier(QuantifierItem):
         else:
             raise ValueError(f"invalid range {{{self.start}, {self.end}}}")
 
-    def expand(self, item: "SubExpressionItem", lazy: bool):
+    def expand(self, item: Union["SubExpressionItem", "Expression"], lazy: bool):
         # e{3} expands to eee; e{3,5} expands to eeee?e?, and e{3,} expands to eee+.
 
         seq = []
@@ -404,7 +404,7 @@ def is_word_character(char: str) -> bool:
     return len(char) == 1 and char.isalpha() or char == "_"
 
 
-def is_word_boundary(text: Sequence[T], position: int) -> bool:
+def is_word_boundary(text: str, position: int) -> bool:
     # There are three different positions that qualify as word boundaries:
     #
     # 1. Before the first character in the string, if the first character is a word character.
