@@ -11,6 +11,8 @@ A simple NFA-based regular expression engine.
   6. ``[x-y]`` Character classes
   7. ``()`` Non-capturing grouping
   8. ``.`` Match any character operator
+  9. Lazy ops: ``*?``, ``+?``, ``??``, {``x, y?}?`` 
+  10. Anchors such as ``$, ^, \b, \B``
 
 
 ### Extras
