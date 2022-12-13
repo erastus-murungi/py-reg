@@ -6,14 +6,8 @@ from enum import Enum
 from math import inf
 from typing import MutableMapping, Optional, Sequence
 
-from core import (
-    CompoundMatchableMixin,
-    MatchableMixin,
-    RegexContext,
-    State,
-    T,
-    TransitionsProvider,
-)
+from core import (CompoundMatchableMixin, MatchableMixin, RegexContext, State,
+                  T, TransitionsProvider)
 
 ESCAPED = set(". \\ + * ? [ ^ ] $ ( ) { } = ! < > | -".split())
 
@@ -371,64 +365,6 @@ class CharacterGroup(MatchCharacterClass, CompoundMatchableMixin):
 
     def __hash__(self):
         return hash((self.items, self.negated))
-
-
-@dataclass
-class CharacterClass(RegexNode, CharacterGroupItem, CompoundMatchableMixin):
-    item: str
-
-    # to be filled later
-    intervals: tuple[tuple[str, str], ...] = field(default_factory=tuple)
-    options: frozenset[str] = field(default_factory=set)
-    # inverted = false
-    negated: bool = False
-
-    character_class2interval = {
-        "w": ((("a", "z"), ("A", "Z")), frozenset(["_"]), False),
-        "W": ((("a", "z"), ("A", "Z")), frozenset(["_"]), True),
-        "d": ((("0", "9"),), frozenset(), False),
-        "D": ((("0", "9"),), frozenset(), True),
-        "s": ((), frozenset([" ", "\t", "\n", "\r", "\v", "\f"]), False),
-        "S": ((), frozenset([" ", "\t", "\n", "\r", "\v", "\f"]), True),
-    }
-
-    def __post_init__(self):
-        assert self.item in character_classes
-        self.intervals, self.options, self.negated = self.character_class2interval[
-            self.item
-        ]
-
-    def match(self, context):
-        text, position = context.text, context.position
-        if position >= len(text):
-            return False
-        token = text[position]
-        if token == "ε":
-            raise RuntimeError()
-        eq = token in self.options or any(
-            start <= token <= stop for start, stop in self.intervals
-        )
-        if self.negated:
-            return not eq
-        return eq
-
-    def __eq__(self, other):
-        if isinstance(other, CharacterClass):
-            return (
-                self.options == other.options
-                and self.intervals == other.intervals
-                and self.negated == other.negated
-            )
-        return False
-
-    def fsm(self, transitions: MutableMapping[State, TransitionsProvider]) -> StatePair:
-        return trivial(self, transitions)
-
-    def __hash__(self):
-        return hash((self.negated, self.options, self.intervals))
-
-    def __repr__(self):
-        return f"\\\\{self.item}"
 
 
 @dataclass

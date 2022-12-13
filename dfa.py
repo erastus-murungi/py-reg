@@ -4,15 +4,8 @@ from typing import Iterator, Optional
 
 from more_itertools import minmax
 
-from core import (
-    DFAState,
-    FiniteStateAutomaton,
-    MatchableMixin,
-    NullDfaState,
-    RegexContext,
-    State,
-    TransitionsProvider,
-)
+from core import (DFAState, FiniteStateAutomaton, MatchableMixin, NullDfaState,
+                  RegexContext, State, TransitionsProvider)
 from data_structures import UnionFind
 from nfa import NFA
 
