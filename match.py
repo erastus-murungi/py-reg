@@ -4,7 +4,7 @@ from parser import Anchor
 from typing import Optional
 
 from core import RegexFlag, State
-from pyreg import compile_regex
+from pyreg import CompiledRegex
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,7 +29,7 @@ class RegexMatcher:
     def __init__(self, regexp: str, text: str):
         self.text = text
         self.regexp = regexp
-        self.compiled_regex = compile_regex(regexp)
+        self.compiled_regex = CompiledRegex(regexp)
         self.flags = RegexFlag.NOFLAG
 
     def _try_match_from_index(self, state: State, index: int) -> Optional[int]:

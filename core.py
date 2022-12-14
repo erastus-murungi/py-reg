@@ -4,8 +4,7 @@ from enum import IntFlag, auto
 from functools import cache
 from itertools import chain, count, product
 from string import ascii_uppercase
-from typing import (ClassVar, Collection, Final, NamedTuple,
-                    Optional)
+from typing import ClassVar, Collection, Final, NamedTuple, Optional
 
 import graphviz
 
@@ -171,9 +170,10 @@ class FiniteStateAutomaton(
         dot.edge("start", f"{self.start_state.id}", arrowhead="vee")
         dot.render(view=True, directory="graphs", filename=str(id(self)))
 
-    def update_states_set(self):
-        for _, start, end in self.all_transitions():
+    def update_symbols_and_states(self):
+        for symbol, start, end in self.all_transitions():
             self.states.update({start, end})
+            self.symbols.add(symbol)
 
     def _dict(self) -> defaultdict[State, set[Transition]]:
         d = defaultdict(set)

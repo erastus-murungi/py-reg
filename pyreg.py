@@ -9,7 +9,15 @@ from simplify import simplify
 
 
 class CompiledRegex(DFA):
-    def __init__(self, nfa: NFA):
+    def __init__(self, regex: str):
+        simplified_regex = simplify(regex)
+        parser = RegexParser(simplified_regex)
+        nfa = NFA()
+        start_state, final_state = parser.root.fsm(nfa)
+        nfa.update_symbols_and_states()
+        nfa.symbols.discard(Epsilon)
+        nfa.set_start(start_state)
+        nfa.set_accept(final_state)
         super().__init__(nfa=nfa)
         self.minimize()
 
@@ -23,30 +31,10 @@ class CompiledRegex(DFA):
         ]
 
 
-def compile_regex(regex: str) -> CompiledRegex:
-    simplified_regex = simplify(regex)
-    parser = RegexParser(simplified_regex)
-    transitions = defaultdict(set)
-    start_state, final_state = parser.root.fsm(transitions)
-
-    symbols = set()
-    states = set()
-    for state in transitions:
-        states.add(state)
-        for sym, end_state in transitions[state]:
-            states.add(end_state)
-            symbols.add(sym)
-    symbols.discard(Epsilon)
-    compiled_regex = CompiledRegex(
-        NFA(transitions, states, symbols, start_state, final_state)
-    )
-    return compiled_regex
-
-
 if __name__ == "__main__":
     # r = r"a*b+a.a*b|d+[A-Z]?"
     # compiled = compile_regex(r)
     # pprint(compiled)
     r = r"a*b+a.a*b|d+[A-Z]?"
-    compiled = compile_regex(r)
+    compiled = CompiledRegex(r)
     pprint(compiled)

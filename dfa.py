@@ -3,8 +3,14 @@ from typing import Iterator, Optional
 
 from more_itertools import minmax
 
-from core import (DFAState, FiniteStateAutomaton, Matchable, NullDfaState,
-                  State, Transition)
+from core import (
+    DFAState,
+    FiniteStateAutomaton,
+    Matchable,
+    NullDfaState,
+    State,
+    Transition,
+)
 from data_structures import UnionFind
 from nfa import NFA
 
@@ -54,7 +60,7 @@ class DFA(FiniteStateAutomaton):
             nfa.compute_transitions_for_dfa_state(self, stack.pop(), seen, stack)
 
         self.clean_up_empty_sets()
-        self.update_states_set()
+        self.update_symbols_and_states()
         self.symbols = nfa.symbols
 
     def clean_up_empty_sets(self):

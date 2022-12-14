@@ -1,10 +1,8 @@
-from collections import defaultdict
 from functools import reduce
-from parser import Epsilon
 from typing import Iterable, Optional
 
-from core import (DFAState, FiniteStateAutomaton, Matchable, NullState,
-                  State, Transition)
+from core import DFAState, FiniteStateAutomaton, Matchable, NullState, State, Transition
+from parser import Epsilon
 
 StatePair = tuple[State, State]
 
@@ -19,26 +17,10 @@ class NFA(FiniteStateAutomaton):
         • δ is the transition function.
     Now the transition function specifies a set of states rather than a state: it maps Q × Σ to { subsets of Q }."""
 
-    def __init__(
-        self,
-        transitions: Optional[defaultdict[State, set[Transition]]] = None,
-        states: Optional[set[State]] = None,
-        symbols: Optional[set[Matchable]] = None,
-        start_state: Optional[State] = None,
-        accept: Optional[State] = None,
-    ):
+    def __init__(self):
         super(FiniteStateAutomaton, self).__init__(set)
-        assert transitions is not None
-        self.update(transitions)
-        assert symbols is not None
-        self.symbols = symbols
-        assert states is not None
-        self.states = states
-        assert start_state is not None
-        self.set_start(start_state)
-        assert accept is not None
-        self.set_accept(accept)
-        self.accept = accept
+        self.symbols = set()
+        self.states = set()
 
     def set_accept(self, accept: State):
         self.accept = accept
