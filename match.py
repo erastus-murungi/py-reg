@@ -35,7 +35,7 @@ class RegexMatcher:
         if state is not None:
             matching_indices = []
 
-            if state.accepts:
+            if state in self.compiled_regex.accept:
                 matching_indices.append(index)
 
             transitions = self.compiled_regex.match(state, self.text, index, self.flags)
@@ -69,8 +69,7 @@ class RegexMatcher:
 
 
 if __name__ == "__main__":
-    regex, t = ("([^.]*)\\.([^:]*):[T ]+(.*)", "track1.title:TBlah blah blah")
-
+    regex, t = ("(bc+d$|ef*g.|h?i(j|k))", "effgz")
     matcher = RegexMatcher(regex, t)
 
     for span in re.finditer(regex, t):

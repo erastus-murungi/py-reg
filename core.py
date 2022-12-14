@@ -8,7 +8,8 @@ from itertools import chain, combinations, count, product
 from math import inf
 from string import ascii_uppercase
 from sys import maxsize
-from typing import ClassVar, Collection, Final, Iterable, Iterator, Optional, Union
+from typing import (ClassVar, Collection, Final, Iterable, Iterator, Optional,
+                    Union)
 
 import graphviz
 from more_itertools import minmax, pairwise
@@ -41,9 +42,7 @@ def yield_letters():
 class State:
     ids: ClassVar = count(-1)
 
-    def __init__(self, *, is_start=False, accepts=False, lazy=False):
-        self.is_start = is_start
-        self.accepts = accepts
+    def __init__(self, *, lazy: bool = False):
         self.id = self._gen_id()
         self.lazy = lazy
 
@@ -66,18 +65,33 @@ class State:
         return self is NullState
 
 
-NullState: Final[State] = State(is_start=False, accepts=False)
+NullState: Final[State] = State()
 
 
 class DFAState(State):
     _labels_gen = yield_letters()
 
-    def __init__(self, from_states, *, is_start=False, accepts=False):
-        self.sources = from_states
-        super().__init__(is_start=is_start, accepts=accepts)
+    def __init__(
+        self,
+        sources: Iterable[State],
+        *,
+        prev_fsm: Optional["FiniteStateAutomaton"] = None,
+        fsm: Optional["FiniteStateAutomaton"] = None,
+    ):
+        self.sources = tuple(sorted(sources))
+        super().__init__()
+        if prev_fsm is not None and fsm is not None:
+            if any(s == prev_fsm.start_state for s in sources):
+                fsm.start_state = self
+            if any(s in prev_fsm.accept for s in sources):
+                fsm.accept.add(self)
+            self.lazy = any(s.lazy for s in sources)
 
     def _gen_id(self):
         return self._gen_label(self.sources)
+
+    def __hash__(self):
+        return hash(self.sources)
 
     @staticmethod
     @cache
@@ -88,7 +102,7 @@ class DFAState(State):
         return self is NullDfaState
 
 
-NullDfaState: Final[State] = DFAState(from_states=None)
+NullDfaState: Final[State] = DFAState((None,))
 
 
 @dataclass(frozen=True)
@@ -127,74 +141,77 @@ class FiniteStateAutomaton(
 ):
     states: set[State]
     start_state: State
-    accept: State | set[DFAState]
+    accept: set[State]
     symbols: set[Matchable]
 
     @abstractmethod
-    def transition(
-        self, state: State, symbol: Matchable
-    ) -> DFAState | Collection[State]:
-        pass
-
-    @abstractmethod
-    def all_transitions(self) -> tuple[Matchable, State, State]:
+    def transition(self, state: State, symbol: Matchable) -> Collection[State] | State:
         pass
 
     def graph(self):
         dot = graphviz.Digraph(
             self.__class__.__name__ + ", ".join(map(str, self.states)),
             format="pdf",
-            engine="circo",
+            engine="dot",
         )
         dot.attr("graph", rankdir="LR")
 
         seen = set()
 
-        for symbol, start, end in self.all_transitions():
-            if start not in seen:
-                if start.is_start:
-                    dot.node(
-                        str(start.id),
-                        color="green",
-                        shape="doublecircle" if start.accepts else "circle",
-                        style="filled",
-                    )
-                elif start.lazy:
-                    dot.node(
-                        str(start.id),
-                        color="red",
-                        shape="doublecircle" if start.accepts else "circle",
-                        style="filled",
-                    )
-                else:
-                    dot.node(
-                        f"{start.id}",
-                        shape="doublecircle" if start.accepts else "circle",
-                    )
-                seen.add(start)
-            if end not in seen:
-                seen.add(end)
-                if end.lazy:
-                    dot.node(
-                        f"{end.id}",
-                        color="gray",
-                        style="filled",
-                        shape="doublecircle" if end.accepts else "circle",
-                    )
-                else:
-                    dot.node(
-                        f"{end.id}", shape="doublecircle" if end.accepts else "circle"
-                    )
-            dot.edge(str(start.id), str(end.id), label=str(symbol))
+        for start, transitions in self.items():
+            for symbol, end in transitions:
+                if start not in seen:
+                    if start == self.start_state:
+                        dot.node(
+                            str(start.id),
+                            color="green",
+                            shape="doublecircle" if start in self.accept else "circle",
+                            style="filled",
+                        )
+                    elif start.lazy:
+                        dot.node(
+                            str(start.id),
+                            color="red",
+                            shape="doublecircle" if start in self.accept else "circle",
+                            style="filled",
+                        )
+                    else:
+                        dot.node(
+                            f"{start.id}",
+                            shape="doublecircle" if start in self.accept else "circle",
+                        )
+                    seen.add(start)
+                if end not in seen:
+                    seen.add(end)
+                    if end.lazy:
+                        dot.node(
+                            f"{end.id}",
+                            color="gray",
+                            style="filled",
+                            shape="doublecircle" if end in self.accept else "circle",
+                        )
+                    else:
+                        dot.node(
+                            f"{end.id}",
+                            shape="doublecircle" if end in self.accept else "circle",
+                        )
+                dot.edge(str(start.id), str(end.id), label=str(symbol))
 
         dot.node("start", shape="none")
         dot.edge("start", f"{self.start_state.id}", arrowhead="vee")
         dot.render(view=True, directory="graphs", filename=str(id(self)))
 
     def update_symbols_and_states(self):
-        for symbol, start, end in self.all_transitions():
-            self.states.update({start, end})
-            self.symbols.add(symbol)
+        for start, transitions in self.items():
+            self.states.add(start)
+            for symbol, end in transitions:
+                self.states.add(end)
+                self.symbols.add(symbol)
+        self.symbols.discard(Epsilon)
+
+    def update_symbols(self):
+        for transition in chain.from_iterable(self.values()):
+            self.symbols.add(transition.matchable)
         self.symbols.discard(Epsilon)
 
     def _dict(self) -> defaultdict[State, set[Transition]]:
@@ -205,11 +222,6 @@ class FiniteStateAutomaton(
 
     def set_start(self, state: State):
         self.start_state = state
-        self.start_state.is_start = True
-
-    @abstractmethod
-    def create_state(self, sources) -> DFAState:
-        pass
 
     @abstractmethod
     def create_transition(self, start: State, end: State, matchable: Matchable) -> None:
@@ -232,13 +244,7 @@ class NFA(FiniteStateAutomaton):
         self.states = set()
 
     def set_accept(self, accept: State):
-        self.accept = accept
-        accept.accepts = True
-
-    def all_transitions(self):
-        for start, transitions in self.items():
-            for symbol, end in transitions:
-                yield symbol, start, end
+        self.accept = {accept}
 
     def transition(self, state: State, symbol: Matchable) -> list[State]:
         states = []
@@ -266,7 +272,7 @@ class NFA(FiniteStateAutomaton):
     def filter(self, start: State, matchable: Matchable) -> tuple[Transition, ...]:
         return tuple(state for symbol, state in self[start] if symbol == matchable)
 
-    def epsilon_closure(self, states: Iterable[State]) -> frozenset:
+    def epsilon_closure(self, states: Iterable[State]) -> tuple[State, ...]:
         """
         This is the set of all the nodes which can be reached by following epsilon labeled edges
         This is done here using a depth first search
@@ -288,7 +294,7 @@ class NFA(FiniteStateAutomaton):
             stack.extend(self.filter(u, Epsilon))
             closure.add(u)
 
-        return frozenset(closure)
+        return tuple(closure)
 
     def move(self, states: Iterable[State], symbol: Matchable) -> frozenset[State]:
         return frozenset(
@@ -300,13 +306,6 @@ class NFA(FiniteStateAutomaton):
             if state_id == state.id:
                 return state
         return None
-
-    def create_state(self, sources) -> DFAState:
-        state = DFAState(from_states=sources)
-        if self.accept in state.sources:
-            state.accepts = True
-        state.lazy = any(s.lazy for s in sources)
-        return state
 
     def zero_or_more(self, fragment: Fragment, lazy: bool) -> Fragment:
         new_fragment = Fragment()
@@ -373,50 +372,28 @@ class DFA(FiniteStateAutomaton):
         return NullDfaState
 
     def subset_construction(self, nfa: NFA):
-        s0 = DFAState(from_states=frozenset({nfa.start_state}))
-        seen, stack = set(), []
+        seen, stack = set(), [(nfa.start_state,)]
 
-        def compute_transitions_for_dfa_state(
-            state: DFAState,
-        ):
-            # what is the epsilon closure of the dfa_states
-            closure_items = nfa.epsilon_closure(state.sources)
-            d = nfa.create_state(closure_items)
-            if d.accepts:
-                self.accept.add(d)
-
-            # next we want to see which states are reachable from each of the states in the epsilon closure
-            for symbol in nfa.symbols:
-                next_states_set = nfa.epsilon_closure(nfa.move(closure_items, symbol))
-                # new DFAState
-                df = nfa.create_state(next_states_set)
-                self.create_transition(d, df, symbol)
-                if next_states_set not in seen:
-                    seen.add(next_states_set)
-                    stack.append(df)
-            return d
-
-        self.set_start(compute_transitions_for_dfa_state(s0))
+        finished = []
 
         while stack:
-            compute_transitions_for_dfa_state(stack.pop())
+            sources = stack.pop()  # what is the epsilon closure of the dfa_states
+            closure = nfa.epsilon_closure(sources)
+            start = DFAState(closure, prev_fsm=nfa, fsm=self)
+            # next we want to see which states are reachable from each of the states in the epsilon closure
+            for symbol in nfa.symbols:
+                move = nfa.epsilon_closure(nfa.move(closure, symbol))
+                if move:
+                    end = DFAState(move, prev_fsm=nfa, fsm=self)
+                    self.create_transition(start, end, symbol)
+                    if move not in seen:
+                        seen.add(move)
+                        stack.append(move)
+            finished.append(start)
 
-        self.clean_up_empty_sets()
-        self.update_symbols_and_states()
-        self.symbols = nfa.symbols
-
-    def clean_up_empty_sets(self):
-        items = self._dict().items()
-        self.clear()
-        for state, transitions in items:
-            for symbol, end in transitions:
-                if end.sources:
-                    self.create_transition(state, end, symbol)
-
-    def all_transitions(self):
-        for state, transitions in self.items():
-            for symbol, end in transitions:
-                yield symbol, state, end
+        self.states.update(finished)
+        self.update_symbols()
+        self.start_state = finished[0]
 
     def gen_equivalence_states(self) -> Iterator[set[State]]:
         """
@@ -432,7 +409,7 @@ class DFA(FiniteStateAutomaton):
             # if they are both accepting or both non-accepting
             # we use min max to provide an ordering based on the labels
             p, q = minmax(p, q)
-            if p.accepts == q.accepts:
+            if (p in self.accept) == (q in self.accept):
                 indistinguishable.add((p, q))
 
         union_find = UnionFind(self.states)
@@ -461,41 +438,42 @@ class DFA(FiniteStateAutomaton):
 
         return union_find.to_sets()
 
-    def create_state(self, sources: set[State]):
-        if len(sources) == 1:
-            return sources.pop()
-        state = DFAState(from_states=frozenset(sources))
-        if self.start_state in state.sources:
-            state.is_start = True
-        for accept_state in self.accept:
-            if accept_state in state.sources:
-                state.accepts = True
-                break
-        state.lazy = any(s.lazy for s in sources)
-        return state
+    def clear(self):
+        super(DFA, self).clear()
+        self.states.clear()
+        self.accept.clear()
+        self.symbols.clear()
 
     def minimize(self):
+        accept_states = self.accept.copy()
         self.states: set[DFAState] = set(
-            map(self.create_state, self.gen_equivalence_states())
+            (
+                DFAState(sources, prev_fsm=self, fsm=self)
+                for sources in self.gen_equivalence_states()
+            )
         )
+        self.accept = self.accept - accept_states
 
         lost = {
             original: compound
             for compound in self.states
             for original in compound.sources
-            if len(compound.sources) > 1
         }
 
-        for a in list(self.keys()):
-            if a in lost:
-                self[lost.get(a)] = self.pop(a)
-        for a in self:
-            for symbol, b in self[a].copy():
-                if b in lost:
-                    self.create_transition(a, lost.get(b), symbol)
-        (start_state,) = tuple(filter(lambda s: s.is_start, self.states))
-        self.set_start(start_state)
-        self.accept = set(filter(lambda s: s.accepts, self.accept))
+        for start in list(self.keys()):
+            if start in lost:
+                self[lost.get(start)] = self.pop(start)
+
+        for start in self:
+            new_transitions = set()
+            for transition in self[start].copy():
+                if transition.end in lost:
+                    new_transitions.add(
+                        Transition(transition.matchable, lost.get(transition.end))
+                    )
+                else:
+                    new_transitions.add(transition)
+            self[start] = new_transitions
 
     def create_transition(self, start: State, end: State, matchable: Matchable) -> None:
         self[start].add(Transition(matchable, end))
@@ -686,7 +664,7 @@ class Match(SubExpressionItem):
 
 @dataclass
 class MatchAnyCharacter(MatchItem, Matchable):
-    ignore: tuple = ("ε", "\n")
+    ignore: tuple = ("\n",)
 
     def fsm(self, nfa: NFA) -> Fragment:
         return nfa.base(self)
@@ -959,7 +937,7 @@ class RegexParser:
         return self.parse_expression()
 
     def can_parse_group(self):
-        return self.current() == "("
+        return self.matches("(")
 
     def can_parse_char(self):
         return self._pos < len(self._regex) and self.current() not in ESCAPED
@@ -972,7 +950,7 @@ class RegexParser:
             or self.can_parse_escaped()
         )
 
-    def inbound(self, lookahead=0):
+    def inbound(self, lookahead: int = 0) -> bool:
         return self._pos + lookahead < len(self._regex)
 
     def can_parse_sub_expression_item(self):
