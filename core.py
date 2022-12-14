@@ -1,23 +1,14 @@
 from abc import ABC, abstractmethod
 from collections import defaultdict
 from copy import copy
-from dataclasses import dataclass, field, astuple
+from dataclasses import astuple, dataclass, field
 from enum import Enum, IntFlag, auto
 from functools import cache, reduce
 from itertools import chain, combinations, count, product
 from math import inf
 from string import ascii_uppercase
 from sys import maxsize
-from typing import (
-    ClassVar,
-    Collection,
-    Final,
-    Iterable,
-    Iterator,
-    NamedTuple,
-    Optional,
-    Union,
-)
+from typing import ClassVar, Collection, Final, Iterable, Iterator, Optional, Union
 
 import graphviz
 from more_itertools import minmax, pairwise
@@ -109,16 +100,25 @@ class Fragment:
         yield from astuple(self)
 
 
-class Transition(NamedTuple):
+@dataclass(frozen=True)
+class Transition(Matchable):
     matchable: Matchable
     end: State
 
     def match(
-        self, text: str, position: int, flags: RegexFlag, default=None
+        self,
+        text: str,
+        position: int,
+        flags: RegexFlag,
+        default: Optional[State] = None,
     ) -> Optional[State]:
         if self.matchable.match(text, position, flags):
             return self.end
         return default
+
+    def __iter__(self):
+        # noinspection PyRedundantParentheses
+        yield from (self.matchable, self.end)
 
 
 class FiniteStateAutomaton(
@@ -647,7 +647,7 @@ class Expression(RegexNode):
     seq: list[SubExpressionItem]
     alternate: Optional["Expression"] = None
 
-    def fsm(self, nfa) -> Fragment:
+    def fsm(self, nfa: NFA) -> Fragment:
         fragments = [subexpression.fsm(nfa) for subexpression in self.seq]
         for fragment1, fragment2 in pairwise(fragments):
             nfa.epsilon(fragment1.end, fragment2.start)
@@ -932,8 +932,8 @@ class RegexParser:
         self.consume(char)
         return char
 
-    def optional(self, expected):
-        if self._pos < len(self._regex) and self.current() == expected:
+    def optional(self, expected: str) -> bool:
+        if self.matches(expected):
             self.consume(expected)
             return True
         return False
@@ -967,26 +967,26 @@ class RegexParser:
         return self._pos < len(self._regex) and self.current() not in ESCAPED
 
     def can_parse_match(self):
-        return self._pos < len(self._regex) and (
-            self.current() == "."
+        return (
+            self.matches(".")
             or self.can_parse_character_class_or_group()
             or self.can_parse_char()
             or self.can_parse_escaped()
         )
 
+    def inbound(self, lookahead=0):
+        return self._pos + lookahead < len(self._regex)
+
     def can_parse_sub_expression_item(self):
-        return self._pos < len(self._regex) and (
+        return self.inbound() and (
             self.can_parse_group() or self.can_parse_anchor() or self.can_parse_match()
         )
 
     def matches(self, char):
-        return self._pos < len(self._regex) and self.current() == char
+        return self.inbound() and self.current() == char
 
     def matches_any(self, options, lookahead: int = 0):
-        return (
-            self._pos + lookahead < len(self._regex)
-            and self.current(lookahead) in options
-        )
+        return self.inbound(lookahead) and self.current(lookahead) in options
 
     def parse_expression(self) -> Expression:
         # Expression ::= Subexpression ("|" Expression)?
@@ -1033,10 +1033,10 @@ class RegexParser:
         return Group(self._pos, expr, quantifier, is_capturing)
 
     def can_parse_quantifier(self):
-        return self._pos < len(self._regex) and self.current() in ("*", "+", "?", "{")
+        return self.matches_any(("*", "+", "?", "{"))
 
     def parse_quantifier(self):
-        if self.current() in ("*", "+", "?"):
+        if self.matches_any(("*", "+", "?")):
             quantifier_item = QuantifierChar(
                 QuantifierType.get(self.consume_and_return())
             )
@@ -1077,7 +1077,7 @@ class RegexParser:
         return Match(pos, match_item, quantifier)
 
     def can_parse_character_group(self):
-        return self.current() == "["
+        return self.matches("[")
 
     def parse_character_class(self) -> CharacterGroup:
         self.consume("\\")
@@ -1166,17 +1166,12 @@ class RegexParser:
         return CharacterScalar(self._pos - 1, self.consume_and_return())
 
     def can_parse_escaped(self):
-        return (
-            self._pos < len(self._regex)
-            and self.matches("\\")
-            and self.matches_any(ESCAPED, 1)
-        )
+        return self.matches("\\") and self.matches_any(ESCAPED, 1)
 
     def can_parse_anchor(self):
-        return self._pos < len(self._regex) and (
-            (self.matches("\\") and self.matches_any({"A", "z", "Z", "G", "b", "B"}, 1))
-            or self.matches_any(("^", "$"))
-        )
+        return (
+            self.matches("\\") and self.matches_any({"A", "z", "Z", "G", "b", "B"}, 1)
+        ) or self.matches_any(("^", "$"))
 
     def parse_escaped(self):
         self.consume("\\")
