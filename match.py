@@ -40,9 +40,9 @@ class RegexMatcher:
 
             transitions = self.compiled_regex.match(state, self.text, index, self.flags)
 
-            for symbol, end_state in transitions:
+            for matchable, end_state in transitions:
                 next_index = self._try_match_from_index(
-                    end_state, index + (not isinstance(symbol, Anchor))
+                    end_state, index + (not isinstance(matchable, Anchor))
                 )
                 if next_index is not None:
                     matching_indices.append(next_index)

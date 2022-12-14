@@ -9,10 +9,10 @@ class CompiledRegex(DFA):
         simplified_regex = simplify(regex)
         parser = RegexParser(simplified_regex)
         nfa = NFA()
-        start_state, final_state = parser.root.fsm(nfa)
+        fragment = parser.root.fsm(nfa)
         nfa.update_symbols_and_states()
-        nfa.set_start(start_state)
-        nfa.set_accept(final_state)
+        nfa.set_start(fragment.start)
+        nfa.set_accept(fragment.end)
         super().__init__(nfa=nfa)
         self.minimize()
 

@@ -208,7 +208,7 @@ class FiniteStateAutomaton(
         self.start_state.is_start = True
 
     @abstractmethod
-    def gen_dfa_state_set_flags(self, sources) -> DFAState:
+    def create_state(self, sources) -> DFAState:
         pass
 
     @abstractmethod
@@ -301,7 +301,7 @@ class NFA(FiniteStateAutomaton):
                 return state
         return None
 
-    def gen_dfa_state_set_flags(self, sources) -> DFAState:
+    def create_state(self, sources) -> DFAState:
         state = DFAState(from_states=sources)
         if self.accept in state.sources:
             state.accepts = True
@@ -317,7 +317,7 @@ class NFA(FiniteStateAutomaton):
         self.epsilon(new_fragment.start, new_fragment.end)
 
         empty_fragment = self.base(Anchor.empty_string())
-        self.concatenate(empty_fragment.end, new_fragment.start)
+        self.concatenate(empty_fragment, new_fragment)
         fragment.start.lazy = fragment.end.lazy = lazy
         return new_fragment
 
@@ -330,7 +330,7 @@ class NFA(FiniteStateAutomaton):
     def zero_or_one(self, fragment: Fragment, lazy: bool) -> Fragment:
         self.epsilon(fragment.start, fragment.end)
         base_fragment = self.base(Anchor.empty_string())
-        self.concatenate(base_fragment.end, fragment.start)
+        self.concatenate(base_fragment, fragment)
         fragment.start.lazy = fragment.end.lazy = lazy
         return Fragment(base_fragment.start, fragment.end)
 
@@ -344,8 +344,8 @@ class NFA(FiniteStateAutomaton):
 
         return fragment
 
-    def concatenate(self, state_pair1_end: State, state_pair2_start: State):
-        self.epsilon(state_pair1_end, state_pair2_start)
+    def concatenate(self, fragment1: Fragment, fragment2: Fragment):
+        self.epsilon(fragment1.end, fragment2.start)
 
     def base(
         self,
@@ -377,19 +377,19 @@ class DFA(FiniteStateAutomaton):
         seen, stack = set(), []
 
         def compute_transitions_for_dfa_state(
-            dfa_from: DFAState,
+            state: DFAState,
         ):
             # what is the epsilon closure of the dfa_states
-            eps = nfa.epsilon_closure(dfa_from.sources)
-            d = nfa.gen_dfa_state_set_flags(eps)
+            closure_items = nfa.epsilon_closure(state.sources)
+            d = nfa.create_state(closure_items)
             if d.accepts:
                 self.accept.add(d)
 
             # next we want to see which states are reachable from each of the states in the epsilon closure
             for symbol in nfa.symbols:
-                next_states_set = nfa.epsilon_closure(nfa.move(eps, symbol))
+                next_states_set = nfa.epsilon_closure(nfa.move(closure_items, symbol))
                 # new DFAState
-                df = nfa.gen_dfa_state_set_flags(next_states_set)
+                df = nfa.create_state(next_states_set)
                 self.create_transition(d, df, symbol)
                 if next_states_set not in seen:
                     seen.add(next_states_set)
@@ -461,7 +461,7 @@ class DFA(FiniteStateAutomaton):
 
         return union_find.to_sets()
 
-    def gen_dfa_state_set_flags(self, sources: set[State]):
+    def create_state(self, sources: set[State]):
         if len(sources) == 1:
             return sources.pop()
         state = DFAState(from_states=frozenset(sources))
@@ -476,7 +476,7 @@ class DFA(FiniteStateAutomaton):
 
     def minimize(self):
         self.states: set[DFAState] = set(
-            map(self.gen_dfa_state_set_flags, self.gen_equivalence_states())
+            map(self.create_state, self.gen_equivalence_states())
         )
 
         lost = {
@@ -664,10 +664,10 @@ class Group(SubExpressionItem):
     is_capturing: bool = False
 
     def fsm(self, nfa: NFA) -> Fragment:
-        state_pair = self.expression.fsm(nfa)
+        fragment = self.expression.fsm(nfa)
         if self.quantifier:
-            return self.quantifier.apply(state_pair, nfa)
-        return state_pair
+            return self.quantifier.apply(fragment, nfa)
+        return fragment
 
 
 class MatchItem(SubExpressionItem, ABC):
@@ -751,7 +751,7 @@ class CharacterGroup(MatchCharacterClass, Matchable):
     items: tuple[CharacterGroupItem, ...]
     negated: bool = False
 
-    def fsm(self, nfa: NFA) -> tuple[State, State]:
+    def fsm(self, nfa: NFA) -> Fragment:
         fragment = Fragment()
         nfa.create_transition(fragment.start, fragment.end, self)
         return fragment
