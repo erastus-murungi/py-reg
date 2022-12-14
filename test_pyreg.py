@@ -439,3 +439,9 @@ def test_greedy_vs_lazy():
     ]
 
     _test_cases_suite(cases)
+
+
+def test_unicode_simple():
+    cases = [("🇺🇸+", "🇺🇸🇺🇸🇺🇸🇺🇸🇺🇸")]
+
+    _test_cases_suite(cases)

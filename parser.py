@@ -6,8 +6,7 @@ from enum import Enum
 from math import inf
 from typing import MutableMapping, Optional, Union
 
-from core import (CompoundMatchableMixin, MatchableMixin, State,
-                  TransitionsProvider)
+from core import Matchable, State, Transition
 
 ESCAPED = set(". \\ + * ? [ ^ ] $ ( ) { } = ! < > | -".split())
 
@@ -17,16 +16,16 @@ character_classes = {"w", "W", "s", "S", "d", "D"}
 
 StatePair = tuple[State, State]
 
-no_escape_in_group = {"\\", "-", "[", ":", ".", ">"}
+no_escape_in_group = {"\\", "-", "[", ":", ".", ">", ">"}
 
 
-def zero_or_more(state_pair, transitions, lazy) -> StatePair:
+def zero_or_more(state_pair: StatePair, transitions, lazy) -> StatePair:
     source, sink = state_pair
     new_start, new_accept = State.pair()
-    transitions[sink][Epsilon].add(source)
-    transitions[new_start][Epsilon].add(source)
-    transitions[sink][Epsilon].add(new_accept)
-    transitions[new_start][Epsilon].add(new_accept)
+    transitions[sink].add(Transition(Epsilon, source))
+    transitions[new_start].add(Transition(Epsilon, source))
+    transitions[sink].add(Transition(Epsilon, new_accept))
+    transitions[new_start].add(Transition(Epsilon, new_accept))
     s1_start, s2_end = trivial(Anchor.empty_string(), transitions)
     concatenate(s2_end, new_start, transitions)
     source.lazy = sink.lazy = lazy
@@ -35,14 +34,14 @@ def zero_or_more(state_pair, transitions, lazy) -> StatePair:
 
 def one_or_more(state_pair: StatePair, transitions, lazy: bool) -> StatePair:
     source, sink = state_pair
-    transitions[sink][Epsilon].add(source)
+    transitions[sink].add(Transition(Epsilon, source))
     source.lazy = sink.lazy = lazy
     return source, sink
 
 
 def zero_or_one(state_pair: StatePair, transitions, lazy: bool) -> StatePair:
     source, sink = state_pair
-    transitions[source][Epsilon].add(sink)
+    transitions[source].add(Transition(Epsilon, sink))
     s1_start, s2_end = trivial(Anchor.empty_string(), transitions)
     concatenate(s2_end, source, transitions)
     source.lazy = sink.lazy = lazy
@@ -54,24 +53,24 @@ def alternation(lower, upper, transitions):
     upper_start, upper_accept = upper
     new_start, new_accept = State.pair()
 
-    transitions[new_start][Epsilon].add(lower_start)
-    transitions[new_start][Epsilon].add(upper_start)
-    transitions[lower_accept][Epsilon].add(new_accept)
-    transitions[upper_accept][Epsilon].add(new_accept)
+    transitions[new_start].add(Transition(Epsilon, lower_start))
+    transitions[new_start].add(Transition(Epsilon, upper_start))
+    transitions[lower_accept].add(Transition(Epsilon, new_accept))
+    transitions[upper_accept].add(Transition(Epsilon, new_accept))
 
     return new_start, new_accept
 
 
 def concatenate(state_pair1_end, state_pair2_start, transitions):
-    transitions[state_pair1_end][Epsilon].add(state_pair2_start)
+    transitions[state_pair1_end].add(Transition(Epsilon, state_pair2_start))
 
 
 def trivial(
-    matchable: MatchableMixin,
-    transitions: MutableMapping[State, TransitionsProvider],
+    matchable: Matchable,
+    transitions: MutableMapping[State, set[Transition]],
 ) -> StatePair:
     source, sink = State.pair()
-    transitions[source][matchable].add(sink)
+    transitions[source].add(Transition(matchable, sink))
     return source, sink
 
 
@@ -80,7 +79,7 @@ class RegexNode(ABC):
     pos: int = field(repr=False)
 
     @abstractmethod
-    def fsm(self, transitions: MutableMapping[State, TransitionsProvider]) -> StatePair:
+    def fsm(self, transitions: MutableMapping[State, set[Transition]]) -> StatePair:
         ...
 
 
@@ -215,7 +214,7 @@ class Expression(RegexNode):
     def fsm(self, transitions) -> StatePair:
         nodes = [subexpression.fsm(transitions) for subexpression in self.seq]
         for (_, s1_accept), (s2_start, _) in zip(nodes, nodes[1:]):
-            transitions[s1_accept][Epsilon].add(s2_start)
+            transitions[s1_accept].add(Transition(Epsilon, s2_start))
         state_pair = nodes[0][0], nodes[-1][1]
         if self.alternate is None:
             return state_pair
@@ -228,7 +227,7 @@ class Group(SubExpressionItem):
     quantifier: Optional[Quantifier]
     is_capturing: bool = False
 
-    def fsm(self, transitions: MutableMapping[State, TransitionsProvider]) -> StatePair:
+    def fsm(self, transitions: MutableMapping[State, set[Transition]]) -> StatePair:
         state_pair = self.expression.fsm(transitions)
         if self.quantifier:
             return self.quantifier.transform(state_pair, transitions)
@@ -244,7 +243,7 @@ class Match(SubExpressionItem):
     item: MatchItem
     quantifier: Optional[Quantifier]
 
-    def fsm(self, transitions: dict[State, TransitionsProvider]) -> StatePair:
+    def fsm(self, transitions: dict[State, set[Transition]]) -> StatePair:
         state_pair = self.item.fsm(transitions)
         if self.quantifier is None:
             return state_pair
@@ -252,10 +251,10 @@ class Match(SubExpressionItem):
 
 
 @dataclass
-class MatchAnyCharacter(MatchItem, CompoundMatchableMixin):
+class MatchAnyCharacter(MatchItem, Matchable):
     ignore: tuple = ("ε", "\n")
 
-    def fsm(self, transitions: dict[State, TransitionsProvider]) -> StatePair:
+    def fsm(self, transitions: dict[State, set[Transition]]) -> StatePair:
         return trivial(self, transitions)
 
     def __eq__(self, other):
@@ -271,7 +270,7 @@ class MatchAnyCharacter(MatchItem, CompoundMatchableMixin):
         return hash(".") ^ 12934
 
 
-class CharacterGroupItem(MatchableMixin, ABC):
+class CharacterGroupItem(Matchable, ABC):
     pass
 
 
@@ -281,7 +280,7 @@ class Char(CharacterGroupItem, MatchItem):
 
     def fsm(self, transitions) -> tuple[State, State]:
         source, sink = State.pair()
-        transitions[source][self].add(sink)
+        transitions[source].add(Transition(self, sink))
         return source, sink
 
     def match(self, text, position, flags) -> bool:
@@ -312,13 +311,13 @@ class MatchCharacterClass(MatchItem, ABC):
 
 
 @dataclass
-class CharacterGroup(MatchCharacterClass, CompoundMatchableMixin):
+class CharacterGroup(MatchCharacterClass, Matchable):
     items: tuple[CharacterGroupItem, ...]
     negated: bool = False
 
-    def fsm(self, transitions: dict[State, TransitionsProvider]) -> tuple[State, State]:
+    def fsm(self, transitions: dict[State, set[Transition]]) -> tuple[State, State]:
         source, sink = State.pair()
-        transitions[source][self].add(sink)
+        transitions[source].add(Transition(self, sink))
         return source, sink
 
     def match(self, text, position, flags) -> bool:
@@ -344,7 +343,7 @@ class CharacterGroup(MatchCharacterClass, CompoundMatchableMixin):
 
 
 @dataclass
-class CharacterRange(CharacterGroupItem, CompoundMatchableMixin):
+class CharacterRange(CharacterGroupItem, Matchable):
     start: str
     end: str
 
@@ -432,10 +431,10 @@ def is_word_boundary(text: str, position: int) -> bool:
 
 
 @dataclass(slots=True)
-class Anchor(SubExpressionItem, CompoundMatchableMixin):
+class Anchor(SubExpressionItem, Matchable):
     anchor_type: AnchorType
 
-    def fsm(self, transitions: MutableMapping[State, TransitionsProvider]) -> StatePair:
+    def fsm(self, transitions: MutableMapping[State, set[Transition]]) -> StatePair:
         return trivial(self, transitions)
 
     @staticmethod

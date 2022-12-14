@@ -32,21 +32,21 @@ class RegexMatcher:
         self.compiled_regex = compile_regex(regexp)
         self.flags = RegexFlag.NOFLAG
 
-    def _try_match_from_index(self, state: State, position) -> Optional[int]:
+    def _try_match_from_index(self, state: State, index: int) -> Optional[int]:
         if state is not None:
             matching_indices = []
 
             if state.accepts:
-                matching_indices.append(position)
+                matching_indices.append(index)
 
-            matches = self.compiled_regex[state].match(self.text, position, self.flags)
+            transitions = self.compiled_regex.match(state, self.text, index, self.flags)
 
-            for symbol, next_state in matches:
-                index = self._try_match_from_index(
-                    next_state, position + (not isinstance(symbol, Anchor))
+            for symbol, end_state in transitions:
+                next_index = self._try_match_from_index(
+                    end_state, index + (not isinstance(symbol, Anchor))
                 )
-                if index is not None:
-                    matching_indices.append(index)
+                if next_index is not None:
+                    matching_indices.append(next_index)
 
             if matching_indices:
                 return min(matching_indices) if state.lazy else max(matching_indices)
@@ -70,12 +70,14 @@ class RegexMatcher:
 
 
 if __name__ == "__main__":
-    regex, t = ("a{2,3}?", "aaaaa")
+    regex, t = ("([^.]*)\\.([^:]*):[T ]+(.*)", "track1.title:TBlah blah blah")
+
     matcher = RegexMatcher(regex, t)
 
     for span in re.finditer(regex, t):
         print(span)
 
-    print(matcher)
     for span in matcher:
         print(span)
+
+    print(matcher)

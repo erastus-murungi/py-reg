@@ -3,8 +3,8 @@ from functools import reduce
 from parser import Epsilon
 from typing import Iterable, Optional
 
-from core import (DFAState, FiniteStateAutomaton, MatchableMixin, NullState,
-                  State, TransitionsProvider)
+from core import (DFAState, FiniteStateAutomaton, Matchable, NullState,
+                  State, Transition)
 
 StatePair = tuple[State, State]
 
@@ -19,23 +19,15 @@ class NFA(FiniteStateAutomaton):
         • δ is the transition function.
     Now the transition function specifies a set of states rather than a state: it maps Q × Σ to { subsets of Q }."""
 
-    def _dict(self) -> defaultdict[State, defaultdict[MatchableMixin, list[State]]]:
-        d: defaultdict[State, defaultdict[MatchableMixin, list[State]]] = defaultdict(
-            lambda: defaultdict(list)
-        )
-        for symbol, s1, s2 in self.all_transitions():
-            d[s1][symbol].append(s2)
-        return d
-
     def __init__(
         self,
-        transitions: Optional[defaultdict[State, TransitionsProvider]] = None,
+        transitions: Optional[defaultdict[State, set[Transition]]] = None,
         states: Optional[set[State]] = None,
-        symbols: Optional[set[MatchableMixin]] = None,
+        symbols: Optional[set[Matchable]] = None,
         start_state: Optional[State] = None,
         accept: Optional[State] = None,
     ):
-        super(FiniteStateAutomaton, self).__init__(lambda: TransitionsProvider(set))
+        super(FiniteStateAutomaton, self).__init__(set)
         assert transitions is not None
         self.update(transitions)
         assert symbols is not None
@@ -53,13 +45,18 @@ class NFA(FiniteStateAutomaton):
         accept.accepts = True
 
     def all_transitions(self):
-        for state1, table in self.items():
-            for symbol, state2s in table.items():
-                for state2 in state2s:
-                    yield symbol, state1, state2
+        for start, table in self.items():
+            for symbol, end in table:
+                yield symbol, start, end
 
-    def transition(self, state: State, symbol: MatchableMixin) -> list[State]:
-        return self[state].get(symbol, [NullState])
+    def transition(self, state: State, symbol: Matchable) -> list[State]:
+        states = []
+        for sym, state in self[state]:
+            if sym == symbol:
+                states.append(state)
+        if not states:
+            states = [NullState]
+        return states
 
     def __repr__(self):
         return (
@@ -68,6 +65,9 @@ class NFA(FiniteStateAutomaton):
             f"start_state={self.start_state}, "
             f"accept_states={self.accept}) "
         )
+
+    def filter(self, start: State, matchable: Matchable) -> tuple[Transition, ...]:
+        return tuple(state for symbol, state in self[start] if symbol == matchable)
 
     def epsilon_closure(self, states: Iterable) -> frozenset:
         """
@@ -88,14 +88,14 @@ class NFA(FiniteStateAutomaton):
                 continue
             seen.add(u)
 
-            stack.extend(self[u][Epsilon])
+            stack.extend(self.filter(u, Epsilon))
             closure.add(u)
 
         return frozenset(closure)
 
-    def move(self, states: Iterable, symbol: MatchableMixin) -> frozenset[State]:
+    def move(self, states: Iterable, symbol: Matchable) -> frozenset[State]:
         return frozenset(
-            reduce(set.union, (self[state][symbol] for state in states), set())
+            reduce(set.union, (self.filter(state, symbol) for state in states), set())
         )
 
     def find_state(self, state_id: int) -> Optional[State]:
@@ -129,7 +129,7 @@ class NFA(FiniteStateAutomaton):
             next_states_set = self.epsilon_closure(self.move(eps, symbol))
             # new DFAState
             df = self.gen_dfa_state_set_flags(next_states_set)
-            dfa[d][symbol] = df
+            dfa[d].add(Transition(symbol, df))
             if next_states_set not in seen:
                 seen.add(next_states_set)
                 stack.append(df)

@@ -1,11 +1,10 @@
-from collections import defaultdict
 from itertools import combinations
 from typing import Iterator, Optional
 
 from more_itertools import minmax
 
-from core import (DFAState, FiniteStateAutomaton, MatchableMixin, NullDfaState,
-                  State, TransitionsProvider)
+from core import (DFAState, FiniteStateAutomaton, Matchable, NullDfaState,
+                  State, Transition)
 from data_structures import UnionFind
 from nfa import NFA
 
@@ -13,19 +12,19 @@ from nfa import NFA
 class DFA(FiniteStateAutomaton):
     def __init__(
         self,
-        transitions: Optional[dict[DFAState, TransitionsProvider]] = None,
+        transitions: Optional[dict[DFAState, set[State]]] = None,
         states: Optional[set[DFAState]] = None,
-        symbols: Optional[set[MatchableMixin]] = None,
+        symbols: Optional[set[Matchable]] = None,
         start_state: Optional[DFAState] = None,
         accept: Optional[set[DFAState]] = None,
         *,
         nfa: Optional[NFA] = None
     ):
-        super(FiniteStateAutomaton, self).__init__(TransitionsProvider)
+        super(FiniteStateAutomaton, self).__init__(set)
 
         if nfa is not None:
             self.states: set[DFAState] = set()
-            self.symbols: set[MatchableMixin] = set()
+            self.symbols: set[Matchable] = set()
             self.accept: set[DFAState] = set()
             self.subset_construction(nfa)
         else:
@@ -40,8 +39,11 @@ class DFA(FiniteStateAutomaton):
             assert accept is not None
             self.accept = accept
 
-    def transition(self, state: State, symbol: MatchableMixin) -> State:
-        return self[state].get(symbol, NullDfaState)
+    def transition(self, state: State, symbol: Matchable) -> State:
+        for sym, state in self[state]:
+            if sym == symbol:
+                return state
+        return NullDfaState
 
     def subset_construction(self, nfa: NFA):
         s0 = DFAState(from_states=frozenset({nfa.start_state}))
@@ -58,21 +60,15 @@ class DFA(FiniteStateAutomaton):
     def clean_up_empty_sets(self):
         items = self._dict().items()
         self.clear()
-        for start_state, table in items:
-            for symbol, end_state in table.items():
-                if end_state.sources:
-                    self[start_state][symbol] = end_state
+        for state, transitions in items:
+            for symbol, end in transitions:
+                if end.sources:
+                    self[state].add(Transition(symbol, end))
 
     def all_transitions(self):
-        for state1, table in self.items():
-            for symbol, state2 in table.items():
-                yield symbol, state1, state2
-
-    def _dict(self) -> defaultdict[DFAState, dict[MatchableMixin, DFAState]]:
-        d = defaultdict(dict)
-        for symbol, s1, s2 in self.all_transitions():
-            d[s1][symbol] = s2
-        return d
+        for state, transitions in self.items():
+            for symbol, end in transitions:
+                yield symbol, state, end
 
     def gen_equivalence_states(self) -> Iterator[set[State]]:
         """
@@ -146,9 +142,9 @@ class DFA(FiniteStateAutomaton):
             if a in lost:
                 self[lost.get(a)] = self.pop(a)
         for a in self:
-            for symbol, b in self[a].items():
+            for symbol, b in self[a].copy():
                 if b in lost:
-                    self[a][symbol] = lost.get(b)
+                    self[a].add(Transition(symbol, lost.get(b)))
         start_state, *rest = tuple(filter(lambda s: s.is_start, self.states))
         self.set_start(start_state)
         self.accept = set(filter(lambda s: s.accepts, self.accept))
