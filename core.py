@@ -150,42 +150,42 @@ class FiniteStateAutomaton(
 
         seen = set()
 
-        for symbol, s1, s2 in self.all_transitions():
-            if s1 not in seen:
-                if s1.is_start:
+        for symbol, start, end in self.all_transitions():
+            if start not in seen:
+                if start.is_start:
                     dot.node(
-                        str(s1.id),
+                        str(start.id),
                         color="green",
-                        shape="doublecircle" if s1.accepts else "circle",
+                        shape="doublecircle" if start.accepts else "circle",
                         style="filled",
                     )
-                elif s1.lazy:
+                elif start.lazy:
                     dot.node(
-                        str(s1.id),
+                        str(start.id),
                         color="red",
-                        shape="doublecircle" if s1.accepts else "circle",
+                        shape="doublecircle" if start.accepts else "circle",
                         style="filled",
                     )
                 else:
                     dot.node(
-                        f"{s1.id}",
-                        shape="doublecircle" if s1.accepts else "circle",
+                        f"{start.id}",
+                        shape="doublecircle" if start.accepts else "circle",
                     )
-                seen.add(s1)
-            if s2 not in seen:
-                seen.add(s2)
-                if s2.lazy:
+                seen.add(start)
+            if end not in seen:
+                seen.add(end)
+                if end.lazy:
                     dot.node(
-                        f"{s2.id}",
+                        f"{end.id}",
                         color="gray",
                         style="filled",
-                        shape="doublecircle" if s2.accepts else "circle",
+                        shape="doublecircle" if end.accepts else "circle",
                     )
                 else:
                     dot.node(
-                        f"{s2.id}", shape="doublecircle" if s2.accepts else "circle"
+                        f"{end.id}", shape="doublecircle" if end.accepts else "circle"
                     )
-            dot.edge(str(s1.id), str(s2.id), label=str(symbol))
+            dot.edge(str(start.id), str(end.id), label=str(symbol))
 
         dot.node("start", shape="none")
         dot.edge("start", f"{self.start_state.id}", arrowhead="vee")
@@ -602,9 +602,7 @@ class RangeQuantifier(QuantifierItem):
     def expand(self, item: Union["SubExpressionItem", "Expression"], lazy: bool):
         # e{3} expands to eee; e{3,5} expands to eeee?e?, and e{3,} expands to eee+.
 
-        seq = []
-        for _ in range(self.start):
-            seq.append(copy(item))
+        seq = [copy(item) for _ in range(self.start)]
 
         if self.end is not None:
             if self.end == inf:
@@ -661,7 +659,7 @@ class Expression(RegexNode):
 class Group(SubExpressionItem):
     expression: Expression
     quantifier: Optional[Quantifier]
-    is_capturing: bool = False
+    capturing: bool = False
 
     def fsm(self, nfa: NFA) -> Fragment:
         fragment = self.expression.fsm(nfa)
@@ -995,10 +993,11 @@ class RegexParser:
         expr = None
         if self.matches("|"):
             self.consume("|")
-            if self.can_parse_sub_expression_item():
-                expr = self.parse_expression()
-            else:
-                expr = Anchor.empty_string(self._pos)
+            expr = (
+                self.parse_expression()
+                if self.can_parse_sub_expression_item()
+                else Anchor.empty_string(self._pos)
+            )
         return Expression(pos, sub_exprs, expr)
 
     def parse_sub_expression(self) -> list[SubExpressionItem]:
