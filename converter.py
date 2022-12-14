@@ -1,10 +1,7 @@
-from collections import defaultdict
 from itertools import product
 from typing import Iterable
 
-from core import State, FiniteStateAutomaton, Transition
-from dfa import DFA
-from nfa import NFA
+from core import DFA, NFA, FiniteStateAutomaton, State, Transition
 
 
 def _remove_unreachable_states(

@@ -1,9 +1,8 @@
 import re
 from dataclasses import dataclass
-from parser import Anchor
 from typing import Optional
 
-from core import RegexFlag, State
+from core import Anchor, RegexFlag, State
 from pyreg import CompiledRegex
 
 

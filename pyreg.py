@@ -1,10 +1,6 @@
-from collections import defaultdict
-from parser import Epsilon, RegexParser
 from pprint import pprint
 
-from core import RegexFlag, State, Transition
-from dfa import DFA
-from nfa import NFA
+from core import DFA, NFA, RegexFlag, RegexParser, State, Transition
 from simplify import simplify
 
 
@@ -15,7 +11,6 @@ class CompiledRegex(DFA):
         nfa = NFA()
         start_state, final_state = parser.root.fsm(nfa)
         nfa.update_symbols_and_states()
-        nfa.symbols.discard(Epsilon)
         nfa.set_start(start_state)
         nfa.set_accept(final_state)
         super().__init__(nfa=nfa)
