@@ -2,7 +2,7 @@ from collections import defaultdict
 from itertools import product
 from typing import Iterable
 
-from core import State, TransitionsProvider
+from core import State, FiniteStateAutomaton, Transition
 from dfa import DFA
 from nfa import NFA
 
@@ -10,7 +10,7 @@ from nfa import NFA
 def _remove_unreachable_states(
     start_state: State,
     states: Iterable[State],
-    transitions: dict[State, TransitionsProvider],
+    transitions: FiniteStateAutomaton,
 ):
     # remove unreachable states
     seen = set()
@@ -24,7 +24,7 @@ def _remove_unreachable_states(
             continue
         seen.add(u)
 
-        for _, v in transitions[u].items():
+        for _, v in transitions[u]:
             stack.extend(v)
         reachable.add(u)
 
@@ -54,27 +54,26 @@ def _mutate_and_gen_accept_states(
 def _fill_transitions_and_gen_states(
     nfa: NFA,
     state2closure: dict[State, frozenset[State]],
-    transitions: dict[State, TransitionsProvider],
-) -> set[State]:
+    fsm: FiniteStateAutomaton,
+) -> None:
     #  Construct transitions between `i` and `j` if there is some intermediary state k where
     # • there’s an ε-path i -> k
     # • there’s a non-ε transition k -> j
 
-    states = set()
     for i, j in product(nfa.states, repeat=2):
         for k in state2closure[i]:
             for symbol in nfa.symbols:
                 if j in nfa.transition(k, symbol):
-                    transitions[i][symbol].add(j)
-                    states = states | {i, j}
-
-    return states
+                    fsm[i].add(Transition(symbol, j))
+    fsm.update_symbols_and_states()
 
 
 def remove_epsilon_transitions(nfa: NFA) -> DFA:
     state2closure = _compute_state_2_closure_mapping(nfa)
-    transitions = defaultdict(lambda: TransitionsProvider(set))
-    states = _fill_transitions_and_gen_states(nfa, state2closure, transitions)
-    _remove_unreachable_states(nfa.start_state, states, transitions)
-    accept_states = _mutate_and_gen_accept_states(states, state2closure)
-    return DFA(transitions, states, nfa.symbols, nfa.start_state, accept_states)
+    dfa = DFA()
+    _fill_transitions_and_gen_states(nfa, state2closure, dfa)
+    _remove_unreachable_states(nfa.start_state, dfa.states, dfa)
+    accept_states = _mutate_and_gen_accept_states(dfa.states, state2closure)
+    dfa.accept.update(accept_states)
+    dfa.set_start(nfa.start_state)
+    return dfa

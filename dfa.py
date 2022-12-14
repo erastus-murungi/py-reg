@@ -16,34 +16,14 @@ from nfa import NFA
 
 
 class DFA(FiniteStateAutomaton):
-    def __init__(
-        self,
-        transitions: Optional[dict[DFAState, set[State]]] = None,
-        states: Optional[set[DFAState]] = None,
-        symbols: Optional[set[Matchable]] = None,
-        start_state: Optional[DFAState] = None,
-        accept: Optional[set[DFAState]] = None,
-        *,
-        nfa: Optional[NFA] = None
-    ):
+    def __init__(self, nfa: Optional[NFA] = None):
         super(FiniteStateAutomaton, self).__init__(set)
 
+        self.states: set[DFAState] = set()
+        self.symbols: set[Matchable] = set()
+        self.accept: set[DFAState] = set()
         if nfa is not None:
-            self.states: set[DFAState] = set()
-            self.symbols: set[Matchable] = set()
-            self.accept: set[DFAState] = set()
             self.subset_construction(nfa)
-        else:
-            assert transitions is not None
-            self.update(transitions)
-            assert symbols is not None
-            self.symbols = symbols
-            assert states is not None
-            self.states = states
-            assert start_state is not None
-            self.set_start(start_state)
-            assert accept is not None
-            self.accept = accept
 
     def transition(self, state: State, symbol: Matchable) -> State:
         for sym, state in self[state]:

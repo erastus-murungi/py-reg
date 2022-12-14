@@ -105,7 +105,7 @@ class FiniteStateAutomaton(
     ABC,
 ):
     states: set[State]
-    start_state: State | DFAState
+    start_state: State
     accept: State | set[DFAState]
     symbols: set[Matchable]
 

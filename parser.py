@@ -333,7 +333,7 @@ class CharacterGroup(MatchCharacterClass, Matchable):
         return False
 
     def __repr__(self):
-        return f"{self.items}"
+        return f"[{('^' if self.negated else '')}{', '.join(map(repr, self.items))}]"
 
     def __lt__(self, other):
         return id(self) < id(other)

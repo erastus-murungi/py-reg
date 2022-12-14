@@ -27,8 +27,8 @@ class NFA(FiniteStateAutomaton):
         accept.accepts = True
 
     def all_transitions(self):
-        for start, table in self.items():
-            for symbol, end in table:
+        for start, transitions in self.items():
+            for symbol, end in transitions:
                 yield symbol, start, end
 
     def transition(self, state: State, symbol: Matchable) -> list[State]:
