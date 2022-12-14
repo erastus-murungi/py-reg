@@ -1,27 +1,26 @@
-import sys
 from abc import ABC, abstractmethod
 from collections import defaultdict
 from copy import copy
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, astuple
 from enum import Enum, IntFlag, auto
 from functools import cache, reduce
 from itertools import chain, combinations, count, product
 from math import inf
 from string import ascii_uppercase
+from sys import maxsize
 from typing import (
     ClassVar,
     Collection,
     Final,
     Iterable,
     Iterator,
-    MutableMapping,
     NamedTuple,
     Optional,
     Union,
 )
 
 import graphviz
-from more_itertools import minmax
+from more_itertools import minmax, pairwise
 
 from unionfind import UnionFind
 
@@ -59,10 +58,6 @@ class State:
 
     def _gen_id(self):
         return next(self.ids)
-
-    @staticmethod
-    def pair():
-        return State(), State()
 
     def __repr__(self):
         return f"{self.id}"
@@ -103,6 +98,15 @@ class DFAState(State):
 
 
 NullDfaState: Final[State] = DFAState(from_states=None)
+
+
+@dataclass(frozen=True)
+class Fragment:
+    start: State = field(default_factory=State)
+    end: State = field(default_factory=State)
+
+    def __iter__(self):
+        yield from astuple(self)
 
 
 class Transition(NamedTuple):
@@ -212,9 +216,6 @@ class FiniteStateAutomaton(
         pass
 
 
-StatePair = tuple[State, State]
-
-
 class NFA(FiniteStateAutomaton):
     """Formally, an NFA is a 5-tuple (Q, Σ, q0, T, δ) where
         • Q is finite set of states;
@@ -265,7 +266,7 @@ class NFA(FiniteStateAutomaton):
     def filter(self, start: State, matchable: Matchable) -> tuple[Transition, ...]:
         return tuple(state for symbol, state in self[start] if symbol == matchable)
 
-    def epsilon_closure(self, states: Iterable) -> frozenset:
+    def epsilon_closure(self, states: Iterable[State]) -> frozenset:
         """
         This is the set of all the nodes which can be reached by following epsilon labeled edges
         This is done here using a depth first search
@@ -289,7 +290,7 @@ class NFA(FiniteStateAutomaton):
 
         return frozenset(closure)
 
-    def move(self, states: Iterable, symbol: Matchable) -> frozenset[State]:
+    def move(self, states: Iterable[State], symbol: Matchable) -> frozenset[State]:
         return frozenset(
             reduce(set.union, (self.filter(state, symbol) for state in states), set())
         )
@@ -307,80 +308,52 @@ class NFA(FiniteStateAutomaton):
         state.lazy = any(s.lazy for s in sources)
         return state
 
-    def compute_transitions_for_dfa_state(
-        self,
-        dfa,
-        dfa_from: DFAState,
-        seen: set[frozenset],
-        stack: list[DFAState],
-    ):
-        # what is the epsilon closure of the dfa_states
-        eps = self.epsilon_closure(dfa_from.sources)
-        d = self.gen_dfa_state_set_flags(eps)
-        if d.accepts:
-            dfa.accept.add(d)
+    def zero_or_more(self, fragment: Fragment, lazy: bool) -> Fragment:
+        new_fragment = Fragment()
 
-        # next we want to see which states are reachable from each of the states in the epsilon closure
-        for symbol in self.symbols:
-            next_states_set = self.epsilon_closure(self.move(eps, symbol))
-            # new DFAState
-            df = self.gen_dfa_state_set_flags(next_states_set)
-            dfa.create_transition(d, df, symbol)
-            if next_states_set not in seen:
-                seen.add(next_states_set)
-                stack.append(df)
-        return d
+        self.epsilon(fragment.end, fragment.start)
+        self.epsilon(new_fragment.start, fragment.start)
+        self.epsilon(fragment.end, new_fragment.end)
+        self.epsilon(new_fragment.start, new_fragment.end)
 
-    def zero_or_more(self, state_pair: StatePair, lazy: bool) -> StatePair:
-        source, sink = state_pair
-        new_start, new_accept = State.pair()
+        empty_fragment = self.base(Anchor.empty_string())
+        self.concatenate(empty_fragment.end, new_fragment.start)
+        fragment.start.lazy = fragment.end.lazy = lazy
+        return new_fragment
 
-        self.epsilon(sink, source)
-        self.epsilon(new_start, source)
-        self.epsilon(sink, new_accept)
-        self.epsilon(new_start, new_accept)
-
-        s1_start, s2_end = self.trivial(Anchor.empty_string())
-        self.concatenate(s2_end, new_start)
-        source.lazy = sink.lazy = lazy
-        return s1_start, new_accept
-
-    def one_or_more(self, state_pair: StatePair, lazy: bool) -> StatePair:
-        source, sink = state_pair
+    def one_or_more(self, fragment: Fragment, lazy: bool) -> Fragment:
+        source, sink = fragment
         self.epsilon(sink, source)
         source.lazy = sink.lazy = lazy
-        return source, sink
+        return fragment
 
-    def zero_or_one(self, state_pair: StatePair, lazy: bool) -> StatePair:
-        source, sink = state_pair
-        self.epsilon(source, sink)
-        s1_start, s2_end = self.trivial(Anchor.empty_string())
-        self.concatenate(s2_end, source)
-        source.lazy = sink.lazy = lazy
-        return s1_start, sink
+    def zero_or_one(self, fragment: Fragment, lazy: bool) -> Fragment:
+        self.epsilon(fragment.start, fragment.end)
+        base_fragment = self.base(Anchor.empty_string())
+        self.concatenate(base_fragment.end, fragment.start)
+        fragment.start.lazy = fragment.end.lazy = lazy
+        return Fragment(base_fragment.start, fragment.end)
 
-    def alternation(self, lower: StatePair, upper: StatePair):
-        lower_start, lower_accept = lower
-        upper_start, upper_accept = upper
-        new_start, new_accept = State.pair()
+    def alternation(self, lower: Fragment, upper: Fragment) -> Fragment:
+        fragment = Fragment()
 
-        self.epsilon(new_start, lower_start)
-        self.epsilon(new_start, upper_start)
-        self.epsilon(lower_accept, new_accept)
-        self.epsilon(upper_accept, new_accept)
+        self.epsilon(fragment.start, lower.start)
+        self.epsilon(fragment.start, upper.start)
+        self.epsilon(lower.end, fragment.end)
+        self.epsilon(upper.end, fragment.end)
 
-        return new_start, new_accept
+        return fragment
 
     def concatenate(self, state_pair1_end: State, state_pair2_start: State):
         self.epsilon(state_pair1_end, state_pair2_start)
 
-    def trivial(
+    def base(
         self,
         matchable: Matchable,
-    ) -> StatePair:
-        source, sink = State.pair()
-        self.create_transition(source, sink, matchable)
-        return source, sink
+    ) -> Fragment:
+        fragment = Fragment()
+        self.create_transition(fragment.start, fragment.end, matchable)
+        return fragment
 
 
 class DFA(FiniteStateAutomaton):
@@ -402,10 +375,31 @@ class DFA(FiniteStateAutomaton):
     def subset_construction(self, nfa: NFA):
         s0 = DFAState(from_states=frozenset({nfa.start_state}))
         seen, stack = set(), []
-        self.set_start(nfa.compute_transitions_for_dfa_state(self, s0, seen, stack))
+
+        def compute_transitions_for_dfa_state(
+            dfa_from: DFAState,
+        ):
+            # what is the epsilon closure of the dfa_states
+            eps = nfa.epsilon_closure(dfa_from.sources)
+            d = nfa.gen_dfa_state_set_flags(eps)
+            if d.accepts:
+                self.accept.add(d)
+
+            # next we want to see which states are reachable from each of the states in the epsilon closure
+            for symbol in nfa.symbols:
+                next_states_set = nfa.epsilon_closure(nfa.move(eps, symbol))
+                # new DFAState
+                df = nfa.gen_dfa_state_set_flags(next_states_set)
+                self.create_transition(d, df, symbol)
+                if next_states_set not in seen:
+                    seen.add(next_states_set)
+                    stack.append(df)
+            return d
+
+        self.set_start(compute_transitions_for_dfa_state(s0))
 
         while stack:
-            nfa.compute_transitions_for_dfa_state(self, stack.pop(), seen, stack)
+            compute_transitions_for_dfa_state(stack.pop())
 
         self.clean_up_empty_sets()
         self.update_symbols_and_states()
@@ -417,7 +411,7 @@ class DFA(FiniteStateAutomaton):
         for state, transitions in items:
             for symbol, end in transitions:
                 if end.sources:
-                    self[state].add(Transition(symbol, end))
+                    self.create_transition(state, end, symbol)
 
     def all_transitions(self):
         for state, transitions in self.items():
@@ -498,8 +492,8 @@ class DFA(FiniteStateAutomaton):
         for a in self:
             for symbol, b in self[a].copy():
                 if b in lost:
-                    self[a].add(Transition(symbol, lost.get(b)))
-        start_state, *rest = tuple(filter(lambda s: s.is_start, self.states))
+                    self.create_transition(a, lost.get(b), symbol)
+        (start_state,) = tuple(filter(lambda s: s.is_start, self.states))
         self.set_start(start_state)
         self.accept = set(filter(lambda s: s.accepts, self.accept))
 
@@ -521,7 +515,7 @@ class RegexNode(ABC):
     pos: int = field(repr=False)
 
     @abstractmethod
-    def fsm(self, transitions: MutableMapping[State, set[Transition]]) -> StatePair:
+    def fsm(self, nfa: NFA) -> Fragment:
         ...
 
 
@@ -561,14 +555,14 @@ class Quantifier(Operator):
     item: QuantifierChar
     lazy: bool = False
 
-    def transform(self, state_pair: StatePair, nfa: NFA) -> StatePair:
+    def apply(self, fragment: Fragment, nfa: NFA) -> Fragment:
         match self.item.type:
             case QuantifierType.OneOrMore:
-                return nfa.one_or_more(state_pair, self.lazy)
+                return nfa.one_or_more(fragment, self.lazy)
             case QuantifierType.ZeroOrMore:
-                return nfa.zero_or_more(state_pair, self.lazy)
+                return nfa.zero_or_more(fragment, self.lazy)
             case QuantifierType.ZeroOrOne:
-                return nfa.zero_or_one(state_pair, self.lazy)
+                return nfa.zero_or_one(fragment, self.lazy)
             case _:
                 raise NotImplementedError
 
@@ -653,14 +647,14 @@ class Expression(RegexNode):
     seq: list[SubExpressionItem]
     alternate: Optional["Expression"] = None
 
-    def fsm(self, nfa) -> StatePair:
-        nodes = [subexpression.fsm(nfa) for subexpression in self.seq]
-        for (_, s1_accept), (s2_start, _) in zip(nodes, nodes[1:]):
-            nfa[s1_accept].add(Transition(Epsilon, s2_start))
-        state_pair = nodes[0][0], nodes[-1][1]
+    def fsm(self, nfa) -> Fragment:
+        fragments = [subexpression.fsm(nfa) for subexpression in self.seq]
+        for fragment1, fragment2 in pairwise(fragments):
+            nfa.epsilon(fragment1.end, fragment2.start)
+        fragment = Fragment(fragments[0].start, fragments[-1].end)
         if self.alternate is None:
-            return state_pair
-        return nfa.alternation(state_pair, self.alternate.fsm(nfa))
+            return fragment
+        return nfa.alternation(fragment, self.alternate.fsm(nfa))
 
 
 @dataclass
@@ -669,10 +663,10 @@ class Group(SubExpressionItem):
     quantifier: Optional[Quantifier]
     is_capturing: bool = False
 
-    def fsm(self, nfa: NFA) -> StatePair:
+    def fsm(self, nfa: NFA) -> Fragment:
         state_pair = self.expression.fsm(nfa)
         if self.quantifier:
-            return self.quantifier.transform(state_pair, nfa)
+            return self.quantifier.apply(state_pair, nfa)
         return state_pair
 
 
@@ -685,19 +679,19 @@ class Match(SubExpressionItem):
     item: MatchItem
     quantifier: Optional[Quantifier]
 
-    def fsm(self, nfa: NFA) -> StatePair:
-        state_pair = self.item.fsm(nfa)
+    def fsm(self, nfa: NFA) -> Fragment:
+        fragment = self.item.fsm(nfa)
         if self.quantifier is None:
-            return state_pair
-        return self.quantifier.transform(state_pair, nfa)
+            return fragment
+        return self.quantifier.apply(fragment, nfa)
 
 
 @dataclass
 class MatchAnyCharacter(MatchItem, Matchable):
     ignore: tuple = ("ε", "\n")
 
-    def fsm(self, nfa: NFA) -> StatePair:
-        return nfa.trivial(self)
+    def fsm(self, nfa: NFA) -> Fragment:
+        return nfa.base(self)
 
     def __eq__(self, other):
         return isinstance(other, MatchAnyCharacter) and other.ignore == self.ignore
@@ -720,10 +714,10 @@ class CharacterGroupItem(Matchable, ABC):
 class CharacterScalar(CharacterGroupItem, MatchItem):
     char: str
 
-    def fsm(self, transitions) -> tuple[State, State]:
-        source, sink = State.pair()
-        transitions[source].add(Transition(self, sink))
-        return source, sink
+    def fsm(self, nfa: NFA) -> Fragment:
+        fragment = Fragment()
+        nfa.create_transition(fragment.start, fragment.end, self)
+        return fragment
 
     def match(self, text, position, flags) -> bool:
         if position < len(text):
@@ -745,7 +739,7 @@ class CharacterScalar(CharacterGroupItem, MatchItem):
         return hash(self.char)
 
 
-Epsilon = CharacterScalar(-sys.maxsize, "ε")
+Epsilon = CharacterScalar(-maxsize, "ε")
 
 
 class MatchCharacterClass(MatchItem, ABC):
@@ -757,10 +751,10 @@ class CharacterGroup(MatchCharacterClass, Matchable):
     items: tuple[CharacterGroupItem, ...]
     negated: bool = False
 
-    def fsm(self, transitions: dict[State, set[Transition]]) -> tuple[State, State]:
-        source, sink = State.pair()
-        transitions[source].add(Transition(self, sink))
-        return source, sink
+    def fsm(self, nfa: NFA) -> tuple[State, State]:
+        fragment = Fragment()
+        nfa.create_transition(fragment.start, fragment.end, self)
+        return fragment
 
     def match(self, text, position, flags) -> bool:
         if position >= len(text):
@@ -876,11 +870,11 @@ def is_word_boundary(text: str, position: int) -> bool:
 class Anchor(SubExpressionItem, Matchable):
     anchor_type: AnchorType
 
-    def fsm(self, nfa: NFA) -> StatePair:
-        return nfa.trivial(self)
+    def fsm(self, nfa: NFA) -> Fragment:
+        return nfa.base(self)
 
     @staticmethod
-    def empty_string(pos=sys.maxsize):
+    def empty_string(pos: int = maxsize) -> "Anchor":
         return Anchor(pos, AnchorType.EmptyString)
 
     def match(self, text, position, flags) -> bool:
