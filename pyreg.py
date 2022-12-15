@@ -15,6 +15,7 @@ class CompiledRegex(DFA):
         nfa.set_accept(fragment.end)
         super().__init__(nfa=nfa)
         self.minimize()
+        self.flags = parser.flags
 
     def match(
         self, state: State, text: str, position: int, flags: RegexFlag
@@ -22,7 +23,7 @@ class CompiledRegex(DFA):
         return [
             transition
             for transition in self[state]
-            if transition.match(text, position, flags)
+            if transition.match(text, position, flags) is not None
         ]
 
 

@@ -18,14 +18,16 @@ State = Union[int, str]
 
 
 def reset_state_gens():
+    s = (
+        "".join(t)
+        for t in chain.from_iterable(
+            (product(ascii_uppercase, repeat=i) for i in range(10))
+        )
+    )
+    _ = next(s)
     return (
         count(0),
-        (
-            "".join(t)
-            for t in chain.from_iterable(
-                (product(ascii_uppercase, repeat=i) for i in range(10))
-            )
-        ),
+        s,
         {},
     )
 
@@ -59,7 +61,8 @@ def gen_dfa_state(
     return strid
 
 
-_ = gen_dfa_state(())
+class InvalidCharacterRange(Exception):
+    ...
 
 
 class RegexFlag(IntFlag):
@@ -67,6 +70,7 @@ class RegexFlag(IntFlag):
     IGNORECASE = auto()
     MULTILINE = auto()
     DOTALL = auto()  # make dot match newline
+    FREESPACING = auto()
 
 
 class Matchable(ABC):
@@ -178,18 +182,17 @@ class NFA(defaultdict[State, set[Transition]]):
         """
 
         seen = set()
-
         stack = list(states)
         closure = set()
 
         while stack:
-            start = stack.pop()
-            if start in seen:
+            state = stack.pop()
+            if state in seen:
                 continue
 
-            seen.add(start)
-            stack.extend(self.transition(start, TemporaryEpsilon))
-            closure.add(start)
+            seen.add(state)
+            stack.extend(self.transition(state, TemporaryEpsilon))
+            closure.add(state)
 
         return tuple(closure)
 
@@ -408,7 +411,7 @@ ESCAPED = set(". \\ + * ? [ ^ ] $ ( ) { } = ! < > | -".split())
 
 character_classes = {"w", "W", "s", "S", "d", "D"}
 
-no_escape_in_group = {"\\", "-", "[", ":", ".", ">", ">", "+"}
+UNESCAPED_IN_CHAR_GROUP = ESCAPED - {"]"}
 
 
 @dataclass
@@ -475,30 +478,32 @@ class RangeQuantifier(QuantifierItem):
 
     def __post_init__(self):
         if isinstance(self.start, int) and self.end is None and self.start < 1:
-            raise ValueError(f"fixed quantifier, {{n}} must be >= 1: not {self.start}")
+            raise InvalidCharacterRange(
+                f"fixed quantifier, {{n}} must be >= 1: not {self.start}"
+            )
         elif isinstance(self.start, int) and isinstance(self.end, int):
             if self.start < 0:
-                raise ValueError(
+                raise InvalidCharacterRange(
                     f"for {{n, m}} quantifier, {{n}} must be >= 0: not {self.start}"
                 )
             if self.end < self.start:
-                raise ValueError(
+                raise InvalidCharacterRange(
                     f"for {{n, m}} quantifier, {{m}} must be >= {{n}}: not {self.end}"
                 )
         elif isinstance(self.start, int) and self.end == maxsize:
             if self.start < 0:
-                raise ValueError(
+                raise InvalidCharacterRange(
                     f"for {{n,}} quantifier, {{n}} must be >= 0: not {self.start}"
                 )
         elif self.start == 0:
             if not isinstance(self.end, int):
-                raise ValueError(f"invalid upper bound {self.end}")
+                raise InvalidCharacterRange(f"invalid upper bound {self.end}")
             if self.end < 1:
-                raise ValueError(
+                raise InvalidCharacterRange(
                     f"for {{, m}} quantifier, {{m}} must be >= 1: not {self.end}"
                 )
         else:
-            raise ValueError(f"invalid range {{{self.start}, {self.end}}}")
+            raise InvalidCharacterRange(f"invalid range {{{self.start}, {self.end}}}")
 
     def expand(self, item: Union["SubExpressionItem", "Expression"], lazy: bool):
         # e{3} expands to eee; e{3,5} expands to eeee?e?, and e{3,} expands to eee+.
@@ -620,6 +625,8 @@ class CharacterScalar(CharacterGroupItem, MatchItem):
 
     def match(self, text, position, flags) -> bool:
         if position < len(text):
+            if flags & RegexFlag.IGNORECASE:
+                return self.char.casefold() == text[position].casefold()
             return self.char == text[position]
         return False
 
@@ -684,12 +691,19 @@ class CharacterRange(CharacterGroupItem, Matchable):
 
     def match(self, text, position, flags) -> bool:
         if position < len(text):
-            return self.start <= text[position] <= self.end
+            if flags & RegexFlag.IGNORECASE:
+                return (
+                    self.start.casefold()
+                    <= text[position].casefold()
+                    <= self.end.casefold()
+                )
+            else:
+                return self.start <= text[position] <= self.end
         return False
 
     def __post_init__(self):
         if self.start > self.end:
-            raise ValueError(f"[{self.start}-{self.end}] is not ordered")
+            raise InvalidCharacterRange(f"[{self.start}-{self.end}] is not ordered")
 
     def __hash__(self):
         return hash((self.start, self.end))
@@ -809,6 +823,7 @@ class RegexParser:
     def __init__(self, regex: str):
         self._regex = regex
         self._pos = 0
+        self._flags = RegexFlag.NOFLAG
         self._root = self.parse_regex()
         if self._pos < len(self._regex):
             raise ValueError(
@@ -819,16 +834,16 @@ class RegexParser:
     def root(self):
         return self._root
 
-    def consume(self, char):
+    def consume(self, char: str):
         if self._pos >= len(self._regex):
             raise ValueError("index out of bounds")
-        if self.current() != char:
+        if not self.remainder().startswith(char):
             raise ValueError(
                 f"expected {char} got {self.current()}\n"
                 f"regexp = {self._regex!r}\n"
                 f"left = {(' ' * (self._pos + 4) + self.remainder())!r}"
             )
-        self._pos += 1
+        self._pos += len(char)
 
     def consume_and_return(self):
         char = self.current()
@@ -849,9 +864,35 @@ class RegexParser:
     def remainder(self):
         return "" if self._pos >= len(self._regex) else self._regex[self._pos :]
 
+    def parse_inline_modifiers(self):
+        modifiers = []
+        allowed = ("i", "m", "s", "x")
+
+        while self.remainder().startswith("(?"):
+            # parse just one
+            if not self.matches_any(allowed, 2):
+                break
+            self.consume("(?")
+            while self.matches_any(allowed):
+                modifiers.append(self.consume_and_return())
+            self.consume(")")
+        for modifier in modifiers:
+            match modifier:
+                case "i":
+                    self._flags |= RegexFlag.IGNORECASE
+                case "s":
+                    self._flags |= RegexFlag.DOTALL
+                case "m":
+                    self._flags |= RegexFlag.MULTILINE
+                case "x":
+                    self._flags |= RegexFlag.FREESPACING
+                case "_":
+                    raise ValueError()
+
     def parse_regex(self) -> RegexNode:
         if self._regex == "":
-            raise ValueError(f"regex is empty")
+            return Anchor.empty_string()
+        self.parse_inline_modifiers()
 
         if self.matches("^"):
             anchor = Anchor(self._pos, AnchorType.get(self.consume_and_return()))
@@ -1015,6 +1056,7 @@ class RegexParser:
             raise ValueError(f"unrecognized character class{self.current()}")
 
     def parse_character_range(self, char: str) -> CharacterRange:
+        #
         self.consume("-")
         to = self.parse_char()
         assert to.char != "]"
@@ -1032,7 +1074,7 @@ class RegexParser:
             # For example [-AZ] matches '-' or 'A' or 'Z' .
             # And tag[-]line matches "tag-line" and "tag line" as in a previous example.
 
-            if self.matches_any(no_escape_in_group):
+            if self.matches_any(UNESCAPED_IN_CHAR_GROUP):
                 if self.matches("\\"):
                     self.consume("\\")
                 return CharacterScalar(self._pos, self.consume_and_return())
@@ -1042,6 +1084,9 @@ class RegexParser:
             else:
                 return char
 
+    def save_state(self) -> tuple[int, RegexFlag]:
+        return self._pos, self.flags
+
     def parse_character_group(self):
         # CharacterGroup ::= "[" CharacterGroupNegativeModifier? CharacterGroupItem+ "]"
         self.consume("[")
@@ -1049,24 +1094,35 @@ class RegexParser:
         if self.matches("^"):
             self.consume("^")
             negated = True
+        state = self.save_state()
         items = []
-        group_pos = self._pos
-        while self.can_parse_char() or self.matches_any(no_escape_in_group):
-            items.append(self.parse_character_group_item())
+        try:
+            while self.can_parse_char() or self.matches("\\"):
+                items.append(self.parse_character_group_item())
+            self.consume("]")
+        except ValueError:
+            self._pos, self._flags = state
+            while self.can_parse_char() or self.matches_any(UNESCAPED_IN_CHAR_GROUP):
+                items.append(CharacterScalar(self._pos, self.consume_and_return()))
+            self.consume("]")
+
         if not items:
             raise ValueError(
-                f"failed parsing from {group_pos}: {self._regex[group_pos:]}"
+                f"failed parsing from {state[0]}\n"
+                f"regexp = {self._regex}\n"
+                f"left   = {' ' * self._pos + self._regex[self._pos:]}"
             )
-        self.consume("]")
-        return CharacterGroup(group_pos, tuple(items), negated)
+
+        return CharacterGroup(state[0], tuple(items), negated)
 
     def parse_char(self):
         if self.can_parse_escaped():
             return self.parse_escaped()
         if not self.can_parse_char():
             raise ValueError(
-                f"expected a char: found "
-                f'{"EOF" if self._pos >= len(self._regex) else self.current()} at index {self._pos}'
+                f"expected a char: found {self.current() if self.inbound() else 'EOF'}\n"
+                f"regexp = {self._regex}\n"
+                f"{' ' * (self._pos + 9) + '^' * (len(self._regex) - self._pos)}"
             )
         return CharacterScalar(self._pos - 1, self.consume_and_return())
 
@@ -1109,3 +1165,7 @@ class RegexParser:
 
     def __repr__(self):
         return f"Parser({self._regex})"
+
+    @property
+    def flags(self):
+        return self._flags

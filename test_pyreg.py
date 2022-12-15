@@ -1,10 +1,11 @@
 import re
+from random import randint, random, seed
 
 import pytest
 
+from core import InvalidCharacterRange
 from match import RegexMatcher
 from simplify import simplify
-from random import randint, seed, random
 
 
 def test_simply_maintains_simple_constructs():
@@ -29,11 +30,7 @@ def _test_cases_suite(cases: list[tuple[str, str]]):
     for i, (pattern, text) in enumerate(cases):
         expected = [m.group(0) for m in re.finditer(pattern, text)]
         actual = [m.substr for m in RegexMatcher(pattern, text)]
-        try:
-            assert expected == actual, (i, pattern, text)
-        except AssertionError as e:
-            print()
-            raise e
+        assert expected == actual, (i, pattern, text)
 
 
 def test_repetition():
@@ -242,6 +239,7 @@ def test_edges_cases():
         ("d[ex][fy]$", "abcdeff"),
         ("[dz][ex][fy]$", "abcdef"),
         ("[dz][ex][fy]$", "abcdeff"),
+        ("", ""),  # empty string
     ]
 
     _test_cases_suite(cases)
@@ -282,12 +280,22 @@ def test_raises_exception():
         ("(*)b", "-"),
         ("a**", ""),
         (r"^*", ""),
+        ("(?i)a[b-a]", "-"),
+        ("(?i)a[]b", "-"),
+        ("(?i)a[", "-"),
+        ("(?i)*a", "-"),
+        ("(?i)(*)b", "-"),
+        ("(?i)a\\", "-"),
+        ("(?i)abc)", "-"),
+        ("(?i)(abc", "-"),
+        ("(?i)a**", "-"),
+        ("(?i))(", "-"),
     ]
 
     for pattern, text in cases:
         with pytest.raises(re.error):
             _ = [m.group(0) for m in re.finditer(pattern, text) if m.group(0) != ""]
-        with pytest.raises(ValueError):
+        with pytest.raises((ValueError, InvalidCharacterRange)):
             _ = [m.substr for m in RegexMatcher(pattern, text) if m.substr != ""]
 
 
@@ -438,6 +446,7 @@ def test_greedy_vs_lazy():
         ("a.*?c", "abcabc"),
         ("a.{0,5}?c", "abcabc"),
         ("a{2,3}?", "aaaaa"),
+        # ("(a+|b){0,1}?", "ab"),
     ]
 
     _test_cases_suite(cases)
@@ -485,5 +494,161 @@ def test_point_float():
 
 def test_unicode_simple():
     cases = [("🇺🇸+", "🇺🇸🇺🇸🇺🇸🇺🇸🇺🇸")]
+
+    _test_cases_suite(cases)
+
+
+def test_ignorecase():
+    cases = [
+        ("(?i)abc", "ABC"),
+        ("(?i)abc", "XBC"),
+        ("(?i)abc", "AXC"),
+        ("(?i)abc", "ABX"),
+        ("(?i)abc", "XABCY"),
+        ("(?i)abc", "XABCY"),
+        ("(?i)ab*c", "ABC"),
+        ("(?i)abc", "ABABC"),
+        ("(?i)ab{1,}?bc", "ABBBBC"),
+        ("(?i)ab*c", "ABC"),
+        ("(?i)ab*bc", "ABC"),
+        ("(?i)ab*bc", "ABBC"),
+        ("(?i)ab*?bc", "ABBBBC"),
+        ("(?i)ab{0,}?bc", "ABBBBC"),
+        ("(?i)ab+?bc", "ABBC"),
+        ("(?i)ab+bc", "ABC"),
+        ("(?i)ab+bc", "ABQ"),
+        ("(?i)ab{1,}bc", "ABQ"),
+        ("(?i)ab+bc", "ABBBBC"),
+        ("(?i)ab{1,}?bc", "ABBBBC"),
+        ("(?i)ab{1,3}?bc", "ABBBBC"),
+        ("(?i)ab{3,4}?bc", "ABBBBC"),
+        ("(?i)ab{4,5}?bc", "ABBBBC"),
+        ("(?i)ab??bc", "ABBC"),
+        ("(?i)ab??bc", "ABC"),
+        ("(?i)ab{0,1}?bc", "ABC"),
+        ("(?i)ab??bc", "ABBBBC"),
+        ("(?i)ab??c", "ABC"),
+        ("(?i)ab{0,1}?c", "ABC"),
+        ("(?i)^abc$", "ABC"),
+        ("(?i)^abc$", "ABCC"),
+        ("(?i)^abc", "ABCC"),
+        ("(?i)^abc$", "AABC"),
+        ("(?i)abc$", "AABC"),
+        ("(?i)^", "ABC"),
+        ("(?i)$", "ABC"),
+        ("(?i)a.c", "ABC"),
+        ("(?i)a.c", "AXC"),
+        ("(?i)a.*?c", "AXYZC"),
+        ("(?i)ab*c", "ABC"),
+        ("(?i)ab*bc", "ABC"),
+        ("(?i)ab*bc", "ABBC"),
+        ("(?i)ab*?bc", "ABBBBC"),
+        ("(?i)ab{0,}?bc", "ABBBBC"),
+        ("(?i)ab+?bc", "ABBC"),
+        ("(?i)ab+bc", "ABC"),
+        ("(?i)ab+bc", "ABQ"),
+        ("(?i)ab{1,}bc", "ABQ"),
+        ("(?i)ab+bc", "ABBBBC"),
+        ("(?i)ab{1,}?bc", "ABBBBC"),
+        ("(?i)ab{1,3}?bc", "ABBBBC"),
+        ("(?i)ab{3,4}?bc", "ABBBBC"),
+        ("(?i)ab{4,5}?bc", "ABBBBC"),
+        ("(?i)ab??bc", "ABBC"),
+        ("(?i)ab??bc", "ABC"),
+        ("(?i)ab{0,1}?bc", "ABC"),
+        ("(?i)ab??bc", "ABBBBC"),
+        ("(?i)ab??c", "ABC"),
+        ("(?i)ab{0,1}?c", "ABC"),
+        ("(?i)^abc$", "ABC"),
+        ("(?i)^abc$", "ABCC"),
+        ("(?i)^abc", "ABCC"),
+        ("(?i)^abc$", "AABC"),
+        ("(?i)abc$", "AABC"),
+        ("(?i)^", "ABC"),
+        ("(?i)$", "ABC"),
+        ("(?i)a.c", "ABC"),
+        ("(?i)a.c", "AXC"),
+        ("(?i)a.*?c", "AXYZC"),
+        ("(?i)a.*c", "AXYZD"),
+        ("(?i)a[bc]d", "ABC"),
+        ("(?i)a[bc]d", "ABD"),
+        ("(?i)a[b-d]e", "ABD"),
+        ("(?i)a[b-d]e", "ACE"),
+        ("(?i)a[b-d]", "AAC"),
+        ("(?i)a[-b]", "A-"),
+        ("(?i)a[b-]", "A-"),
+        ("(?i)[^ab]*", "CDE"),
+        ("(?i)abc", ""),
+        ("(?i)a*", ""),
+        ("(?i)([abc])*d", "ABBBCD"),
+        ("(?i)([abc])*bcd", "ABCD"),
+        ("(?i)a|b|c|d|e", "E"),
+        ("(?i)(a|b|c|d|e)f", "EF"),
+        ("(?i)abcd*efg", "ABCDEFG"),
+        ("(?i)ab*", "XABYABBBZ"),
+        ("(?i)ab*", "XAYABBBZ"),
+        ("(?i)(ab|cd)e", "ABCDE"),
+        ("(?i)[abhgefdc]ij", "HIJ"),
+        ("(?i)^(ab|cd)e", "ABCDE"),
+        ("(?i)(abc|)ef", "ABCDEF"),
+        ("(?i)(a|b)c*d", "ABCD"),
+        ("(?i)(ab|ab*)bc", "ABC"),
+        ("(?i)a([bc]*)c*", "ABC"),
+        ("(?i)a([bc]*)(c*d)", "ABCD"),
+        ("(?i)a([bc]+)(c*d)", "ABCD"),
+        ("(?i)a([bc]*)(c+d)", "ABCD"),
+        ("(?i)a[bcd]*dcdcde", "ADCDCDE"),
+        ("(?i)a[bcd]+dcdcde", "ADCDCDE"),
+        ("(?i)(ab|a)b*c", "ABC"),
+        ("(?i)((a)(b)c)(d)", "ABCD"),
+        ("(?i)a\\]", "A]"),
+        ("(?i)a[\\]]b", "A]B"),
+        ("(?i)a[^bc]d", "AED"),
+        ("(?i)a[^bc]d", "ABD"),
+        ("(?i)a[^-b]c", "ADC"),
+        ("(?i)a[^-b]c", "A-C"),
+        ("(?i)a[^\\]b]c", "A]C"),
+        ("(?i)a[^\\]b]c", "ADC"),
+        ("(?i)ab|cd", "ABC"),
+        ("(?i)ab|cd", "ABCD"),
+        ("(?i)()ef", "DEF"),
+        ("(?i)a\\(b", "A(B"),
+        ("(?i)a\\(*b", "AB"),
+        ("(?i)a\\(*b", "A((B"),
+        ("(?i)a\\\\b", "A\\B"),
+        ("(?i)a.+?c", "ABCABC"),
+        ("(?i)a.*?c", "ABCABC"),
+        ("(?i)a.{0,5}?c", "ABCABC"),
+        ("(?i)(a+|b)*", "AB"),
+        ("(?i)(a+|b){0,}", "AB"),
+        ("(?i)(a+|b)+", "AB"),
+        ("(?i)(a+|b){1,}", "AB"),
+        ("(?i)(a+|b)?", "AB"),
+        ("(?i)(a+|b){0,1}", "AB"),
+        # ("(?i)(a+|b){0,1}?", "AB"),
+        ("(?i)$b", "B"),
+        ("(?i)(((((((((a)))))))))", "A"),
+        ("(?i)(?:(?:(?:(?:(?:(?:(?:(?:(?:(a))))))))))", "A"),
+        ("(?i)(?:(?:(?:(?:(?:(?:(?:(?:(?:(a|b|c))))))))))", "C"),
+        ("(?i)multiple words of text", "UH-UH"),
+        ("(?i)multiple words", "MULTIPLE WORDS, YEAH"),
+        ("(?i)(.*)c(.*)", "ABCDE"),
+        ("(?i)\\((.*), (.*)\\)", "(A, B)"),
+        ("(?i)[k]", "AB"),
+        ("(?i)abcd", "ABCD"),
+        ("(?i)a(bc)d", "ABCDE"),
+        ("(?i)a[-]?c", "AC"),
+        ("(?i)((a))", "ABC"),
+        ("(?i)(a)b(c)", "ABC"),
+        ("(?i)a+b+c", "AABBABC"),
+        ("(?i)a{1,}b{1,}c", "AABBABC"),
+        ("(?i)^a(bc+|b[eh])g|.h$", "ABH"),
+        ("(?i)(bc+d$|ef*g.|h?i(j|k))", "EFFGZ"),
+        ("(?i)(bc+d$|ef*g.|h?i(j|k))", "IJ"),
+        ("(?i)(bc+d$|ef*g.|h?i(j|k))", "EFFG"),
+        ("(?i)(bc+d$|ef*g.|h?i(j|k))", "BCDD"),
+        ("(?i)(bc+d$|ef*g.|h?i(j|k))", "REFFGZ"),
+        ("(?i)((((((((((a))))))))))", "A"),
+    ]
 
     _test_cases_suite(cases)

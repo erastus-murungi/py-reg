@@ -1,5 +1,6 @@
 import re
 from dataclasses import dataclass
+from time import perf_counter
 from typing import Optional
 
 from core import Anchor, RegexFlag, State
@@ -29,7 +30,7 @@ class RegexMatcher:
         self.text = text
         self.regexp = regexp
         self.compiled_regex = CompiledRegex(regexp)
-        self.flags = RegexFlag.NOFLAG
+        # self.compiled_regex.graph()
 
     def _try_match_from_index(self, state: State, index: int) -> Optional[int]:
         if state is not None:
@@ -38,7 +39,9 @@ class RegexMatcher:
             if state in self.compiled_regex.accept:
                 matching_indices.append(index)
 
-            transitions = self.compiled_regex.match(state, self.text, index, self.flags)
+            transitions = self.compiled_regex.match(
+                state, self.text, index, self.compiled_regex.flags
+            )
 
             for matchable, end_state in transitions:
                 next_index = self._try_match_from_index(
@@ -71,10 +74,7 @@ class RegexMatcher:
 
 
 if __name__ == "__main__":
-    regex, t = (
-        "([0-9](_?[0-9])*\\.([0-9](_?[0-9])*)?|\\.[0-9](_?[0-9])*)([eE][-+]?[0-9](_?[0-9])*)?",
-        "0.1",
-    )
+    regex, t = ("", "")
     matcher = RegexMatcher(regex, t)
 
     for span in re.finditer(regex, t):
