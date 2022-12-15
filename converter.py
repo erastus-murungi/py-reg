@@ -1,13 +1,13 @@
 from itertools import product
 from typing import Iterable
 
-from core import DFA, NFA, FiniteStateAutomaton, State, Transition
+from core import DFA, NFA, State, Transition
 
 
 def _remove_unreachable_states(
     start_state: State,
     states: Iterable[State],
-    transitions: FiniteStateAutomaton,
+    transitions: NFA,
 ):
     # remove unreachable states
     seen = set()
@@ -69,8 +69,8 @@ def remove_epsilon_transitions(nfa: NFA) -> DFA:
     state2closure = _compute_state_2_closure_mapping(nfa)
     dfa = DFA()
     _fill_transitions_and_gen_states(nfa, state2closure, dfa)
-    _remove_unreachable_states(nfa.start_state, dfa.states, dfa)
+    _remove_unreachable_states(nfa.start, dfa.states, dfa)
     accept_states = _mutate_and_gen_accept_states(dfa.states, state2closure)
     dfa.accept.update(accept_states)
-    dfa.set_start(nfa.start_state)
+    dfa.set_start(nfa.start)
     return dfa

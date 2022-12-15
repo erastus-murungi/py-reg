@@ -3,18 +3,64 @@ from collections import defaultdict
 from copy import copy
 from dataclasses import astuple, dataclass, field
 from enum import Enum, IntFlag, auto
-from functools import cache, reduce
+from functools import reduce
 from itertools import chain, combinations, count, product
-from math import inf
 from string import ascii_uppercase
 from sys import maxsize
-from typing import (ClassVar, Collection, Final, Iterable, Iterator, Optional,
-                    Union)
+from typing import Iterable, Iterator, Optional, Union
 
 import graphviz
-from more_itertools import minmax, pairwise
+from more_itertools import first_true, minmax, pairwise
 
 from unionfind import UnionFind
+
+State = Union[int, str]
+
+
+def reset():
+    return (
+        count(0),
+        map(
+            lambda t: "".join(t),
+            chain.from_iterable(
+                (product(ascii_uppercase, repeat=i) for i in range(10))
+            ),
+        ),
+        {},
+    )
+
+
+counter, strcounter, sourcescache = reset()
+
+
+def gen_state() -> int:
+    return next(counter)
+
+
+def gen_dfa_state(
+    sources: Iterable[State],
+    *,
+    prev_fsm: Optional["NFA"] = None,
+    fsm: Optional["NFA"] = None,
+) -> str:
+
+    sources = tuple(sorted(sources))
+    if sources in sourcescache:
+        return sourcescache[sources]
+
+    new_id = next(strcounter)
+    if prev_fsm is not None and fsm is not None:
+        if any(s == prev_fsm.start for s in sources):
+            fsm.start = new_id
+        if any(s in prev_fsm.accept for s in sources):
+            fsm.accept.add(new_id)
+        if any(s in prev_fsm.lazy for s in sources):
+            fsm.lazy.add(new_id)
+    sourcescache[sources] = new_id
+    return new_id
+
+
+_ = gen_dfa_state(())
 
 
 class RegexFlag(IntFlag):
@@ -30,92 +76,17 @@ class Matchable(ABC):
         ...
 
 
-def yield_letters():
-    it = map(
-        lambda t: "".join(t),
-        chain.from_iterable((product(ascii_uppercase, repeat=i) for i in range(10))),
-    )
-    _ = next(it)
-    yield from it
-
-
-class State:
-    ids: ClassVar = count(-1)
-
-    def __init__(self, *, lazy: bool = False):
-        self.id = self._gen_id()
-        self.lazy = lazy
-
-    def _gen_id(self):
-        return next(self.ids)
-
-    def __repr__(self):
-        return f"{self.id}"
-
-    def __hash__(self):
-        return hash(self.id)
-
-    def __eq__(self, other):
-        return self.id == other.id
-
-    def __lt__(self, other):
-        return self.id < other.id
-
-    def is_null(self):
-        return self is NullState
-
-
-NullState: Final[State] = State()
-
-
-class DFAState(State):
-    _labels_gen = yield_letters()
-
-    def __init__(
-        self,
-        sources: Iterable[State],
-        *,
-        prev_fsm: Optional["FiniteStateAutomaton"] = None,
-        fsm: Optional["FiniteStateAutomaton"] = None,
-    ):
-        self.sources = tuple(sorted(sources))
-        super().__init__()
-        if prev_fsm is not None and fsm is not None:
-            if any(s == prev_fsm.start_state for s in sources):
-                fsm.start_state = self
-            if any(s in prev_fsm.accept for s in sources):
-                fsm.accept.add(self)
-            self.lazy = any(s.lazy for s in sources)
-
-    def _gen_id(self):
-        return self._gen_label(self.sources)
-
-    def __hash__(self):
-        return hash(self.sources)
-
-    @staticmethod
-    @cache
-    def _gen_label(_frozen):
-        return next(DFAState._labels_gen)
-
-    def is_null(self):
-        return self is NullDfaState
-
-
-NullDfaState: Final[State] = DFAState((None,))
-
-
 @dataclass(frozen=True)
 class Fragment:
-    start: State = field(default_factory=State)
-    end: State = field(default_factory=State)
+    start: State = field(default_factory=gen_state)
+    end: State = field(default_factory=gen_state)
 
     def __iter__(self):
         yield from astuple(self)
 
 
 @dataclass(frozen=True)
-class Transition(Matchable):
+class Transition:
     matchable: Matchable
     end: State
 
@@ -135,18 +106,23 @@ class Transition(Matchable):
         yield from (self.matchable, self.end)
 
 
-class FiniteStateAutomaton(
-    defaultdict[State, set[Transition]],
-    ABC,
-):
-    states: set[State]
-    start_state: State
-    accept: set[State]
-    symbols: set[Matchable]
+class NFA(defaultdict[State, set[Transition]]):
+    """Formally, an NFA is a 5-tuple (Q, Σ, q0, T, δ) where
+        • Q is finite set of states;
+        • Σ is alphabet of input symbols;
+        • q0 is start state;
+        • T is subset of Q giving the ``accept`` states;
+        and
+        • δ is the transition function.
+    Now the transition function specifies a set of states rather than a state: it maps Q × Σ to { subsets of Q }."""
 
-    @abstractmethod
-    def transition(self, state: State, symbol: Matchable) -> Collection[State] | State:
-        pass
+    def __init__(self):
+        super(NFA, self).__init__(set)
+        self.symbols: set[Matchable] = set()
+        self.states: set[State] = set()
+        self.accept: set[State] = set()
+        self.start: State = -1
+        self.lazy: set[State] = set()
 
     def graph(self):
         dot = graphviz.Digraph(
@@ -161,44 +137,44 @@ class FiniteStateAutomaton(
         for start, transitions in self.items():
             for symbol, end in transitions:
                 if start not in seen:
-                    if start == self.start_state:
+                    if start == self.start:
                         dot.node(
-                            str(start.id),
+                            str(start),
                             color="green",
                             shape="doublecircle" if start in self.accept else "circle",
                             style="filled",
                         )
-                    elif start.lazy:
+                    elif start in self.lazy:
                         dot.node(
-                            str(start.id),
+                            str(start),
                             color="red",
                             shape="doublecircle" if start in self.accept else "circle",
                             style="filled",
                         )
                     else:
                         dot.node(
-                            f"{start.id}",
+                            f"{start}",
                             shape="doublecircle" if start in self.accept else "circle",
                         )
                     seen.add(start)
                 if end not in seen:
                     seen.add(end)
-                    if end.lazy:
+                    if end in self.lazy:
                         dot.node(
-                            f"{end.id}",
+                            f"{end}",
                             color="gray",
                             style="filled",
                             shape="doublecircle" if end in self.accept else "circle",
                         )
                     else:
                         dot.node(
-                            f"{end.id}",
+                            f"{end}",
                             shape="doublecircle" if end in self.accept else "circle",
                         )
-                dot.edge(str(start.id), str(end.id), label=str(symbol))
+                dot.edge(str(start), str(end), label=str(symbol))
 
         dot.node("start", shape="none")
-        dot.edge("start", f"{self.start_state.id}", arrowhead="vee")
+        dot.edge("start", f"{self.start}", arrowhead="vee")
         dot.render(view=True, directory="graphs", filename=str(id(self)))
 
     def update_symbols_and_states(self):
@@ -221,27 +197,7 @@ class FiniteStateAutomaton(
         return d
 
     def set_start(self, state: State):
-        self.start_state = state
-
-    @abstractmethod
-    def create_transition(self, start: State, end: State, matchable: Matchable) -> None:
-        pass
-
-
-class NFA(FiniteStateAutomaton):
-    """Formally, an NFA is a 5-tuple (Q, Σ, q0, T, δ) where
-        • Q is finite set of states;
-        • Σ is alphabet of input symbols;
-        • q0 is start state;
-        • T is subset of Q giving the ``accept`` states;
-        and
-        • δ is the transition function.
-    Now the transition function specifies a set of states rather than a state: it maps Q × Σ to { subsets of Q }."""
-
-    def __init__(self):
-        super(FiniteStateAutomaton, self).__init__(set)
-        self.symbols = set()
-        self.states = set()
+        self.start = state
 
     def set_accept(self, accept: State):
         self.accept = {accept}
@@ -252,7 +208,7 @@ class NFA(FiniteStateAutomaton):
             if sym == symbol:
                 states.append(state)
         if not states:
-            states = [NullState]
+            states = [-1]
         return states
 
     def create_transition(self, start: State, end: State, matchable: Matchable):
@@ -265,11 +221,11 @@ class NFA(FiniteStateAutomaton):
         return (
             f"FSM(states={self.states}, "
             f"symbols={self.symbols}, "
-            f"start_state={self.start_state}, "
+            f"start_state={self.start}, "
             f"accept_states={self.accept}) "
         )
 
-    def filter(self, start: State, matchable: Matchable) -> tuple[Transition, ...]:
+    def filter(self, start: State, matchable: Matchable) -> tuple[State, ...]:
         return tuple(state for symbol, state in self[start] if symbol == matchable)
 
     def epsilon_closure(self, states: Iterable[State]) -> tuple[State, ...]:
@@ -303,7 +259,7 @@ class NFA(FiniteStateAutomaton):
 
     def find_state(self, state_id: int) -> Optional[State]:
         for state in self.states:
-            if state_id == state.id:
+            if state_id == state:
                 return state
         return None
 
@@ -317,20 +273,23 @@ class NFA(FiniteStateAutomaton):
 
         empty_fragment = self.base(Anchor.empty_string())
         self.concatenate(empty_fragment, new_fragment)
-        fragment.start.lazy = fragment.end.lazy = lazy
-        return new_fragment
+        if lazy:
+            self.lazy.update(fragment)
+        return Fragment(empty_fragment.start, new_fragment.end)
 
     def one_or_more(self, fragment: Fragment, lazy: bool) -> Fragment:
         source, sink = fragment
         self.epsilon(sink, source)
-        source.lazy = sink.lazy = lazy
+        if lazy:
+            self.lazy.update(fragment)
         return fragment
 
     def zero_or_one(self, fragment: Fragment, lazy: bool) -> Fragment:
         self.epsilon(fragment.start, fragment.end)
         base_fragment = self.base(Anchor.empty_string())
         self.concatenate(base_fragment, fragment)
-        fragment.start.lazy = fragment.end.lazy = lazy
+        if lazy:
+            self.lazy.update(fragment)
         return Fragment(base_fragment.start, fragment.end)
 
     def alternation(self, lower: Fragment, upper: Fragment) -> Fragment:
@@ -355,36 +314,32 @@ class NFA(FiniteStateAutomaton):
         return fragment
 
 
-class DFA(FiniteStateAutomaton):
+class DFA(NFA):
     def __init__(self, nfa: Optional[NFA] = None):
-        super(FiniteStateAutomaton, self).__init__(set)
-
-        self.states: set[DFAState] = set()
-        self.symbols: set[Matchable] = set()
-        self.accept: set[DFAState] = set()
+        super(DFA, self).__init__()
         if nfa is not None:
             self.subset_construction(nfa)
 
-    def transition(self, state: State, symbol: Matchable) -> State:
-        for sym, state in self[state]:
-            if sym == symbol:
-                return state
-        return NullDfaState
+    def transition(self, state: State, symbol: Matchable):
+        return first_true(
+            self[state],
+            Transition(Epsilon, ""),
+            lambda transition: transition.matchable == symbol,
+        ).end
 
     def subset_construction(self, nfa: NFA):
-        seen, stack = set(), [(nfa.start_state,)]
+        seen, stack = set(), [(nfa.start,)]
 
         finished = []
 
         while stack:
             sources = stack.pop()  # what is the epsilon closure of the dfa_states
             closure = nfa.epsilon_closure(sources)
-            start = DFAState(closure, prev_fsm=nfa, fsm=self)
+            start = gen_dfa_state(closure, prev_fsm=nfa, fsm=self)
             # next we want to see which states are reachable from each of the states in the epsilon closure
             for symbol in nfa.symbols:
-                move = nfa.epsilon_closure(nfa.move(closure, symbol))
-                if move:
-                    end = DFAState(move, prev_fsm=nfa, fsm=self)
+                if move := nfa.epsilon_closure(nfa.move(closure, symbol)):
+                    end = gen_dfa_state(move, prev_fsm=nfa, fsm=self)
                     self.create_transition(start, end, symbol)
                     if move not in seen:
                         seen.add(move)
@@ -393,7 +348,7 @@ class DFA(FiniteStateAutomaton):
 
         self.states.update(finished)
         self.update_symbols()
-        self.start_state = finished[0]
+        self.start = finished[0]
 
     def gen_equivalence_states(self) -> Iterator[set[State]]:
         """
@@ -425,10 +380,7 @@ class DFA(FiniteStateAutomaton):
                 # indistinguishable
                 for a in self.symbols:
                     km = minmax(self.transition(p, a), self.transition(q, a))
-                    if (
-                        km != (NullDfaState, NullDfaState)
-                        and km not in indistinguishable
-                    ):
+                    if km != ("", "") and km not in indistinguishable:
                         removed.add((p, q))
                         changed = True
             indistinguishable = indistinguishable - removed
@@ -446,19 +398,16 @@ class DFA(FiniteStateAutomaton):
 
     def minimize(self):
         accept_states = self.accept.copy()
-        self.states: set[DFAState] = set(
-            (
-                DFAState(sources, prev_fsm=self, fsm=self)
-                for sources in self.gen_equivalence_states()
-            )
-        )
-        self.accept = self.accept - accept_states
+        states = set()
+        lost = {}
+        for sources in self.gen_equivalence_states():
+            compound = gen_dfa_state(sources, prev_fsm=self, fsm=self)
+            states.add(compound)
+            for original in sources:
+                lost[original] = compound
 
-        lost = {
-            original: compound
-            for compound in self.states
-            for original in compound.sources
-        }
+        self.states = states
+        self.accept = self.accept - accept_states
 
         for start in list(self.keys()):
             if start in lost:
@@ -480,8 +429,6 @@ class DFA(FiniteStateAutomaton):
 
 
 ESCAPED = set(". \\ + * ? [ ^ ] $ ( ) { } = ! < > | -".split())
-
-anchors = {"$", "^"}
 
 character_classes = {"w", "W", "s", "S", "d", "D"}
 
@@ -547,7 +494,7 @@ class Quantifier(Operator):
 
 @dataclass
 class RangeQuantifier(QuantifierItem):
-    start: Optional[int]
+    start: int
     end: Optional[int] = None
 
     def __post_init__(self):
@@ -562,7 +509,7 @@ class RangeQuantifier(QuantifierItem):
                 raise ValueError(
                     f"for {{n, m}} quantifier, {{m}} must be >= {{n}}: not {self.end}"
                 )
-        elif isinstance(self.start, int) and self.end == inf:
+        elif isinstance(self.start, int) and self.end == maxsize:
             if self.start < 0:
                 raise ValueError(
                     f"for {{n,}} quantifier, {{n}} must be >= 0: not {self.start}"
@@ -583,7 +530,7 @@ class RangeQuantifier(QuantifierItem):
         seq = [copy(item) for _ in range(self.start)]
 
         if self.end is not None:
-            if self.end == inf:
+            if self.end == maxsize:
                 if self.start > 0:
                     item = seq.pop()
                     seq.append(
@@ -1031,15 +978,15 @@ class RegexParser:
         # RangeQuantifier ::= "{" RangeQuantifierLowerBound ( "," RangeQuantifierUpperBound? )? "}"
         self.consume("{")
         # RangeQuantifierLowerBound = Integer
-        lower_bound = 0 if self.matches(",") else self.parse_int()
-        upper_bound = None
+        lower = 0 if self.matches(",") else self.parse_int()
+        upper = None
         while self.current() == ",":
-            upper_bound = inf
+            upper = maxsize
             self.consume_and_return()
             if self.current().isdigit():
-                upper_bound = self.parse_int()
+                upper = self.parse_int()
         self.consume("}")
-        return RangeQuantifier(lower_bound, upper_bound)
+        return RangeQuantifier(lower, upper)
 
     def parse_match(self):
         # Match ::= MatchItem Quantifier?

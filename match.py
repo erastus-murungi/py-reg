@@ -48,16 +48,18 @@ class RegexMatcher:
                     matching_indices.append(next_index)
 
             if matching_indices:
-                return min(matching_indices) if state.lazy else max(matching_indices)
+                return (
+                    min(matching_indices)
+                    if state in self.compiled_regex.lazy
+                    else max(matching_indices)
+                )
 
         return None
 
     def __iter__(self):
         index = 0
         while index <= len(self.text):
-            position = self._try_match_from_index(
-                self.compiled_regex.start_state, index
-            )
+            position = self._try_match_from_index(self.compiled_regex.start, index)
             if position is not None:
                 yield Match(index, position, self.text[index:position])
                 index = position + 1 if position == index else position
@@ -69,7 +71,7 @@ class RegexMatcher:
 
 
 if __name__ == "__main__":
-    regex, t = ("(bc+d$|ef*g.|h?i(j|k))", "effgz")
+    regex, t = ("(a+|b){0,}", "ab")
     matcher = RegexMatcher(regex, t)
 
     for span in re.finditer(regex, t):
