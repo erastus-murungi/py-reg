@@ -17,20 +17,20 @@ from unionfind import UnionFind
 State = Union[int, str]
 
 
-def reset():
+def reset_state_gens():
     return (
         count(0),
-        map(
-            lambda t: "".join(t),
-            chain.from_iterable(
+        (
+            "".join(t)
+            for t in chain.from_iterable(
                 (product(ascii_uppercase, repeat=i) for i in range(10))
-            ),
+            )
         ),
         {},
     )
 
 
-counter, strcounter, sourcescache = reset()
+counter, strcounter, sourcescache = reset_state_gens()
 
 
 def gen_state() -> int:
@@ -155,11 +155,11 @@ class NFA(defaultdict[State, set[Transition]]):
             if transition.matchable == symbol
         )
 
-    def create_transition(self, start: State, end: State, matchable: Matchable):
+    def add_transition(self, start: State, end: State, matchable: Matchable):
         self[start].add(Transition(matchable, end))
 
     def epsilon(self, start: State, end: State):
-        self.create_transition(start, end, TemporaryEpsilon)
+        self.add_transition(start, end, TemporaryEpsilon)
 
     def __repr__(self):
         return (
@@ -247,7 +247,7 @@ class NFA(defaultdict[State, set[Transition]]):
         matchable: Matchable,
     ) -> Fragment:
         fragment = Fragment()
-        self.create_transition(fragment.start, fragment.end, matchable)
+        self.add_transition(fragment.start, fragment.end, matchable)
         return fragment
 
     def graph(self):
@@ -321,7 +321,7 @@ class DFA(NFA):
             for symbol in nfa.symbols:
                 if move := nfa.epsilon_closure(nfa.move(closure, symbol)):
                     end = gen_dfa_state(move, src_fsm=nfa, dst_fsm=self)
-                    self.create_transition(start, end, symbol)
+                    self.add_transition(start, end, symbol)
                     if move not in seen:
                         seen.add(move)
                         stack.append(move)
@@ -400,7 +400,7 @@ class DFA(NFA):
                     new_transitions.add(transition)
             self[start] = new_transitions
 
-    def create_transition(self, start: State, end: State, matchable: Matchable) -> None:
+    def add_transition(self, start: State, end: State, matchable: Matchable) -> None:
         self[start].add(Transition(matchable, end))
 
 
@@ -615,7 +615,7 @@ class CharacterScalar(CharacterGroupItem, MatchItem):
 
     def fsm(self, nfa: NFA) -> Fragment:
         fragment = Fragment()
-        nfa.create_transition(fragment.start, fragment.end, self)
+        nfa.add_transition(fragment.start, fragment.end, self)
         return fragment
 
     def match(self, text, position, flags) -> bool:
@@ -652,7 +652,7 @@ class CharacterGroup(MatchCharacterClass, Matchable):
 
     def fsm(self, nfa: NFA) -> Fragment:
         fragment = Fragment()
-        nfa.create_transition(fragment.start, fragment.end, self)
+        nfa.add_transition(fragment.start, fragment.end, self)
         return fragment
 
     def match(self, text, position, flags) -> bool:
@@ -923,8 +923,9 @@ class RegexParser:
     def parse_group(self) -> Group | Expression:
         self.consume("(")
         is_capturing = True
-        if self._regex.startswith("?:"):
-            self.consume("?:")
+        if self.remainder().startswith("?:"):
+            self.consume("?")
+            self.consume(":")
             is_capturing = False
         expr = self.parse_expression()
         self.consume(")")

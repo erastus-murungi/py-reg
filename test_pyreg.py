@@ -467,9 +467,9 @@ def test_point_float():
     def maybe(*choices):
         return group(*choices) + "?"
 
-    exponent = r"[eE][-+]?[0-9](_?[0-9])*"
+    exponent = r"[eE][-+]?[0-9](?:_?[0-9])*"
     pointfloat = group(
-        r"[0-9](_?[0-9])*\.([0-9](_?[0-9])*)?", r"\.[0-9](_?[0-9])*"
+        r"[0-9](?:_?[0-9])*\.(?:[0-9](?:_?[0-9])*)?", r"\.[0-9](?:_?[0-9])*"
     ) + maybe(exponent)
 
     cases = (
