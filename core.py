@@ -40,24 +40,23 @@ def gen_state() -> int:
 def gen_dfa_state(
     sources: Iterable[State],
     *,
-    prev_fsm: Optional["NFA"] = None,
-    fsm: Optional["NFA"] = None,
+    src_fsm: Optional["NFA"] = None,
+    dst_fsm: Optional["NFA"] = None,
 ) -> str:
-
     sources = tuple(sorted(sources))
     if sources in sourcescache:
         return sourcescache[sources]
 
-    new_id = next(strcounter)
-    if prev_fsm is not None and fsm is not None:
-        if any(s == prev_fsm.start for s in sources):
-            fsm.start = new_id
-        if any(s in prev_fsm.accept for s in sources):
-            fsm.accept.add(new_id)
-        if any(s in prev_fsm.lazy for s in sources):
-            fsm.lazy.add(new_id)
-    sourcescache[sources] = new_id
-    return new_id
+    strid = next(strcounter)
+    if src_fsm is not None and dst_fsm is not None:
+        if any(s == src_fsm.start for s in sources):
+            dst_fsm.start = strid
+        if any(s in src_fsm.accept for s in sources):
+            dst_fsm.accept.add(strid)
+        if any(s in src_fsm.lazy for s in sources):
+            dst_fsm.lazy.add(strid)
+    sourcescache[sources] = strid
+    return strid
 
 
 _ = gen_dfa_state(())
@@ -124,77 +123,24 @@ class NFA(defaultdict[State, set[Transition]]):
         self.start: State = -1
         self.lazy: set[State] = set()
 
-    def graph(self):
-        dot = graphviz.Digraph(
-            self.__class__.__name__ + ", ".join(map(str, self.states)),
-            format="pdf",
-            engine="dot",
-        )
-        dot.attr("graph", rankdir="LR")
-
-        seen = set()
-
-        for start, transitions in self.items():
-            for symbol, end in transitions:
-                if start not in seen:
-                    if start == self.start:
-                        dot.node(
-                            str(start),
-                            color="green",
-                            shape="doublecircle" if start in self.accept else "circle",
-                            style="filled",
-                        )
-                    elif start in self.lazy:
-                        dot.node(
-                            str(start),
-                            color="red",
-                            shape="doublecircle" if start in self.accept else "circle",
-                            style="filled",
-                        )
-                    else:
-                        dot.node(
-                            f"{start}",
-                            shape="doublecircle" if start in self.accept else "circle",
-                        )
-                    seen.add(start)
-                if end not in seen:
-                    seen.add(end)
-                    if end in self.lazy:
-                        dot.node(
-                            f"{end}",
-                            color="gray",
-                            style="filled",
-                            shape="doublecircle" if end in self.accept else "circle",
-                        )
-                    else:
-                        dot.node(
-                            f"{end}",
-                            shape="doublecircle" if end in self.accept else "circle",
-                        )
-                dot.edge(str(start), str(end), label=str(symbol))
-
-        dot.node("start", shape="none")
-        dot.edge("start", f"{self.start}", arrowhead="vee")
-        dot.render(view=True, directory="graphs", filename=str(id(self)))
-
     def update_symbols_and_states(self):
         for start, transitions in self.items():
             self.states.add(start)
             for symbol, end in transitions:
                 self.states.add(end)
                 self.symbols.add(symbol)
-        self.symbols.discard(Epsilon)
+        self.symbols.discard(TemporaryEpsilon)
 
     def update_symbols(self):
         for transition in chain.from_iterable(self.values()):
             self.symbols.add(transition.matchable)
-        self.symbols.discard(Epsilon)
+        self.symbols.discard(TemporaryEpsilon)
 
     def _dict(self) -> defaultdict[State, set[Transition]]:
-        d = defaultdict(set)
+        t = defaultdict(set)
         for state, transitions in self.items():
-            d[state] = transitions.copy()
-        return d
+            t[state] = transitions.copy()
+        return t
 
     def set_start(self, state: State):
         self.start = state
@@ -202,20 +148,18 @@ class NFA(defaultdict[State, set[Transition]]):
     def set_accept(self, accept: State):
         self.accept = {accept}
 
-    def transition(self, state: State, symbol: Matchable) -> list[State]:
-        states = []
-        for sym, state in self[state]:
-            if sym == symbol:
-                states.append(state)
-        if not states:
-            states = [-1]
-        return states
+    def transition(self, state: State, symbol: Matchable) -> tuple[State, ...]:
+        return tuple(
+            transition.end
+            for transition in self[state]
+            if transition.matchable == symbol
+        )
 
     def create_transition(self, start: State, end: State, matchable: Matchable):
         self[start].add(Transition(matchable, end))
 
     def epsilon(self, start: State, end: State):
-        self.create_transition(start, end, Epsilon)
+        self.create_transition(start, end, TemporaryEpsilon)
 
     def __repr__(self):
         return (
@@ -224,9 +168,6 @@ class NFA(defaultdict[State, set[Transition]]):
             f"start_state={self.start}, "
             f"accept_states={self.accept}) "
         )
-
-    def filter(self, start: State, matchable: Matchable) -> tuple[State, ...]:
-        return tuple(state for symbol, state in self[start] if symbol == matchable)
 
     def epsilon_closure(self, states: Iterable[State]) -> tuple[State, ...]:
         """
@@ -242,26 +183,22 @@ class NFA(defaultdict[State, set[Transition]]):
         closure = set()
 
         while stack:
-            u = stack.pop()
-            if u in seen:
+            start = stack.pop()
+            if start in seen:
                 continue
-            seen.add(u)
 
-            stack.extend(self.filter(u, Epsilon))
-            closure.add(u)
+            seen.add(start)
+            stack.extend(self.transition(start, TemporaryEpsilon))
+            closure.add(start)
 
         return tuple(closure)
 
     def move(self, states: Iterable[State], symbol: Matchable) -> frozenset[State]:
         return frozenset(
-            reduce(set.union, (self.filter(state, symbol) for state in states), set())
+            reduce(
+                set.union, (self.transition(state, symbol) for state in states), set()
+            )
         )
-
-    def find_state(self, state_id: int) -> Optional[State]:
-        for state in self.states:
-            if state_id == state:
-                return state
-        return None
 
     def zero_or_more(self, fragment: Fragment, lazy: bool) -> Fragment:
         new_fragment = Fragment()
@@ -313,6 +250,50 @@ class NFA(defaultdict[State, set[Transition]]):
         self.create_transition(fragment.start, fragment.end, matchable)
         return fragment
 
+    def graph(self):
+        dot = graphviz.Digraph(
+            self.__class__.__name__ + ", ".join(map(str, self.states)),
+            format="pdf",
+            engine="dot",
+        )
+        dot.attr("graph", rankdir="LR")
+        dot.attr("node", fontname="Palatino")
+        dot.attr("edge", fontname="Palatino")
+
+        seen = set()
+
+        for state, transitions in self.items():
+            for symbol, end in transitions:
+                if state not in seen:
+                    color = (
+                        "green"
+                        if state == self.start
+                        else "cadetblue1"
+                        if state in self.lazy
+                        else "gray"
+                    )
+                    dot.node(
+                        str(state),
+                        color=color,
+                        shape="doublecircle" if state in self.accept else "circle",
+                        style="filled",
+                    )
+                    seen.add(state)
+                if end not in seen:
+                    color = "cadetblue1" if end in self.lazy else "gray"
+                    dot.node(
+                        f"{end}",
+                        color=color,
+                        shape="doublecircle" if end in self.accept else "circle",
+                        style="filled",
+                    )
+                    seen.add(end)
+                dot.edge(str(state), str(end), label=str(symbol))
+
+        dot.node("start", shape="none")
+        dot.edge("start", f"{self.start}", arrowhead="vee")
+        dot.render(view=True, directory="graphs", filename=str(id(self)))
+
 
 class DFA(NFA):
     def __init__(self, nfa: Optional[NFA] = None):
@@ -323,7 +304,7 @@ class DFA(NFA):
     def transition(self, state: State, symbol: Matchable):
         return first_true(
             self[state],
-            Transition(Epsilon, ""),
+            Transition(TemporaryEpsilon, ""),
             lambda transition: transition.matchable == symbol,
         ).end
 
@@ -335,11 +316,11 @@ class DFA(NFA):
         while stack:
             sources = stack.pop()  # what is the epsilon closure of the dfa_states
             closure = nfa.epsilon_closure(sources)
-            start = gen_dfa_state(closure, prev_fsm=nfa, fsm=self)
+            start = gen_dfa_state(closure, src_fsm=nfa, dst_fsm=self)
             # next we want to see which states are reachable from each of the states in the epsilon closure
             for symbol in nfa.symbols:
                 if move := nfa.epsilon_closure(nfa.move(closure, symbol)):
-                    end = gen_dfa_state(move, prev_fsm=nfa, fsm=self)
+                    end = gen_dfa_state(move, src_fsm=nfa, dst_fsm=self)
                     self.create_transition(start, end, symbol)
                     if move not in seen:
                         seen.add(move)
@@ -390,18 +371,13 @@ class DFA(NFA):
 
         return union_find.to_sets()
 
-    def clear(self):
-        super(DFA, self).clear()
-        self.states.clear()
-        self.accept.clear()
-        self.symbols.clear()
-
     def minimize(self):
         accept_states = self.accept.copy()
         states = set()
         lost = {}
+
         for sources in self.gen_equivalence_states():
-            compound = gen_dfa_state(sources, prev_fsm=self, fsm=self)
+            compound = gen_dfa_state(sources, src_fsm=self, dst_fsm=self)
             states.add(compound)
             for original in sources:
                 lost[original] = compound
@@ -409,13 +385,13 @@ class DFA(NFA):
         self.states = states
         self.accept = self.accept - accept_states
 
-        for start in list(self.keys()):
+        for start in tuple(self):
             if start in lost:
                 self[lost.get(start)] = self.pop(start)
 
         for start in self:
             new_transitions = set()
-            for transition in self[start].copy():
+            for transition in tuple(self[start]):
                 if transition.end in lost:
                     new_transitions.add(
                         Transition(transition.matchable, lost.get(transition.end))
@@ -432,7 +408,7 @@ ESCAPED = set(". \\ + * ? [ ^ ] $ ( ) { } = ! < > | -".split())
 
 character_classes = {"w", "W", "s", "S", "d", "D"}
 
-no_escape_in_group = {"\\", "-", "[", ":", ".", ">", ">"}
+no_escape_in_group = {"\\", "-", "[", ":", ".", ">", ">", "+"}
 
 
 @dataclass
@@ -662,7 +638,7 @@ class CharacterScalar(CharacterGroupItem, MatchItem):
         return hash(self.char)
 
 
-Epsilon = CharacterScalar(-maxsize, "ε")
+TemporaryEpsilon = CharacterScalar(-maxsize, "ε")
 
 
 class MatchCharacterClass(MatchItem, ABC):
@@ -692,7 +668,7 @@ class CharacterGroup(MatchCharacterClass, Matchable):
         return False
 
     def __repr__(self):
-        return f"[{('^' if self.negated else '')}{', '.join(map(repr, self.items))}]"
+        return f"[{('^' if self.negated else '')}{''.join(map(repr, self.items))}]"
 
     def __lt__(self, other):
         return id(self) < id(other)
@@ -723,9 +699,9 @@ class CharacterRange(CharacterGroupItem, Matchable):
 
 
 class AnchorType(Enum):
-    StartOfString = "^"
-    EndOfString = "$"
-    EmptyString = "nothing to see here"
+    Start = "^"
+    End = "$"
+    Empty = "nothing to see here"
 
     # must be escaped
     WordBoundary = "b"
@@ -739,9 +715,9 @@ class AnchorType(Enum):
     def get(char):
         match char:
             case "^":
-                return AnchorType.StartOfString
+                return AnchorType.Start
             case "$":
-                return AnchorType.EndOfString
+                return AnchorType.End
             case "b":
                 return AnchorType.WordBoundary
             case "B":
@@ -798,16 +774,16 @@ class Anchor(SubExpressionItem, Matchable):
 
     @staticmethod
     def empty_string(pos: int = maxsize) -> "Anchor":
-        return Anchor(pos, AnchorType.EmptyString)
+        return Anchor(pos, AnchorType.Empty)
 
     def match(self, text, position, flags) -> bool:
         match self.anchor_type:
-            case AnchorType.StartOfString:
+            case AnchorType.Start:
                 # assert that this is the beginning of the string
                 return (
                     position == 0
                 )  # or the previous char is a \n if MULTILINE mode enabled
-            case AnchorType.EndOfString:
+            case AnchorType.End:
                 return (
                     position >= len(text)
                     or position == len(text) - 1
@@ -817,7 +793,7 @@ class Anchor(SubExpressionItem, Matchable):
                 return is_word_boundary(text, position)
             case AnchorType.NonWordBoundary:
                 return text and not is_word_boundary(text, position)
-            case AnchorType.EmptyString:
+            case AnchorType.Empty:
                 return True
 
         raise NotImplementedError
@@ -847,7 +823,11 @@ class RegexParser:
         if self._pos >= len(self._regex):
             raise ValueError("index out of bounds")
         if self.current() != char:
-            raise ValueError(f"expected {char} got {self.current()}")
+            raise ValueError(
+                f"expected {char} got {self.current()}\n"
+                f"regexp = {self._regex!r}\n"
+                f"left = {(' ' * (self._pos + 4) + self.remainder())!r}"
+            )
         self._pos += 1
 
     def consume_and_return(self):

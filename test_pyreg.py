@@ -4,6 +4,7 @@ import pytest
 
 from match import RegexMatcher
 from simplify import simplify
+from random import randint, seed, random
 
 
 def test_simply_maintains_simple_constructs():
@@ -438,6 +439,46 @@ def test_greedy_vs_lazy():
         ("a.{0,5}?c", "abcabc"),
         ("a{2,3}?", "aaaaa"),
     ]
+
+    _test_cases_suite(cases)
+
+
+seed(10)
+
+
+def test_hex():
+    pattern = r"0[xX](_?[0-9a-fA-F])+"
+    cases = [(pattern, hex(randint(0, 100000))) for _ in range(20)]
+
+    _test_cases_suite(cases)
+
+
+def test_dec():
+    pattern = r"(0(_?0)*|[1-9](_?[0-9])*)"
+    cases = [(pattern, str(randint(0, 100000))) for _ in range(20)]
+
+    _test_cases_suite(cases)
+
+
+def test_point_float():
+    def group(*choices):
+        return "(" + "|".join(choices) + ")"
+
+    def maybe(*choices):
+        return group(*choices) + "?"
+
+    exponent = r"[eE][-+]?[0-9](_?[0-9])*"
+    pointfloat = group(
+        r"[0-9](_?[0-9])*\.([0-9](_?[0-9])*)?", r"\.[0-9](_?[0-9])*"
+    ) + maybe(exponent)
+
+    cases = (
+        [(pointfloat, str(random())) for _ in range(20)]
+        + [(pointfloat, f"{random():.2E}") for _ in range(20)]
+        + [(pointfloat, f"{-random():.2E}") for _ in range(20)]
+        + [(pointfloat, f"{-random()}") for _ in range(20)]
+        + [(pointfloat, f"{10 + random()}") for _ in range(20)]
+    )
 
     _test_cases_suite(cases)
 

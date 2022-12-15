@@ -71,7 +71,10 @@ class RegexMatcher:
 
 
 if __name__ == "__main__":
-    regex, t = ("(a+|b){0,}", "ab")
+    regex, t = (
+        "([0-9](_?[0-9])*\\.([0-9](_?[0-9])*)?|\\.[0-9](_?[0-9])*)([eE][-+]?[0-9](_?[0-9])*)?",
+        "0.1",
+    )
     matcher = RegexMatcher(regex, t)
 
     for span in re.finditer(regex, t):
