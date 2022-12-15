@@ -51,7 +51,7 @@ def _mutate_and_gen_accept_states(
 def _fill_transitions_and_gen_states(
     nfa: NFA,
     state2closure: dict[State, frozenset[State]],
-    fsm: FiniteStateAutomaton,
+    fsm: NFA,
 ) -> None:
     #  Construct transitions between `i` and `j` if there is some intermediary state k where
     # • there’s an ε-path i -> k
