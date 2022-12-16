@@ -3,14 +3,13 @@ from collections import defaultdict
 from copy import copy
 from dataclasses import astuple, dataclass, field
 from enum import Enum, IntFlag, auto
-from functools import reduce
 from itertools import chain, combinations, count, product
 from string import ascii_uppercase
 from sys import maxsize
-from typing import Iterable, Iterator, Optional, Union
+from typing import Hashable, Iterable, Iterator, Optional, Union
 
 import graphviz
-from more_itertools import first_true, minmax, pairwise
+from more_itertools import first, first_true, minmax, pairwise
 
 from unionfind import UnionFind
 
@@ -73,10 +72,74 @@ class RegexFlag(IntFlag):
     FREESPACING = auto()
 
 
-class Matchable(ABC):
+class TagType(Enum):
+    Epsilon = "ε"
+    GroupEntry = "GroupEntry"
+    GroupExit = "GroupExit"
+    GroupLink = ""
+    Fence = "Fence"
+
+
+class Matchable(Hashable):
     @abstractmethod
     def match(self, text: str, position: int, flags: RegexFlag) -> bool:
         ...
+
+    def opening_group(self):
+        return isinstance(self, Tag) and self.tag_type == TagType.GroupEntry
+
+    def closing_group(self):
+        return isinstance(self, Tag) and self.tag_type == TagType.GroupExit
+
+
+class Virtual(Matchable, ABC):
+    ...
+
+
+@dataclass
+class Tag(Virtual):
+    tag_type: TagType
+    group_index: int
+    substr: str
+
+    @staticmethod
+    def entry(group_index: int, substr: str) -> "Tag":
+        return Tag(TagType.GroupEntry, group_index, substr)
+
+    @staticmethod
+    def exit(group_index: int, substr: str) -> "Tag":
+        return Tag(TagType.GroupExit, group_index, substr)
+
+    @staticmethod
+    def link() -> "Tag":
+        return Tag(TagType.GroupLink, maxsize, "")
+
+    @staticmethod
+    def barrier() -> "Tag":
+        return Tag(TagType.Fence, maxsize, "")
+
+    @staticmethod
+    def epsilon() -> "Tag":
+        return Tag(TagType.Epsilon, maxsize, "")
+
+    def match(self, text: str, position: int, flags: RegexFlag) -> bool:
+        if self.tag_type == TagType.GroupLink:
+            return False
+        return True
+
+    def __hash__(self):
+        return hash((self.tag_type, self.group_index, self.substr))
+
+    def __repr__(self):
+        match self.tag_type:
+            case TagType.Fence | TagType.Epsilon:
+                return TagType.Fence.value
+            case TagType.GroupLink:
+                return ""
+            case TagType.GroupEntry | TagType.GroupExit:
+                return f"{self.tag_type.name}({self.group_index})"
+            case _:
+                raise NotImplementedError
 
 
 @dataclass(frozen=True)
@@ -133,12 +196,12 @@ class NFA(defaultdict[State, set[Transition]]):
             for symbol, end in transitions:
                 self.states.add(end)
                 self.symbols.add(symbol)
-        self.symbols.discard(TemporaryEpsilon)
+        self.symbols.discard(Tag.epsilon())
 
     def update_symbols(self):
         for transition in chain.from_iterable(self.values()):
             self.symbols.add(transition.matchable)
-        self.symbols.discard(TemporaryEpsilon)
+        self.symbols.discard(Tag.epsilon())
 
     def _dict(self) -> defaultdict[State, set[Transition]]:
         t = defaultdict(set)
@@ -152,18 +215,21 @@ class NFA(defaultdict[State, set[Transition]]):
     def set_accept(self, accept: State):
         self.accept = {accept}
 
-    def transition(self, state: State, symbol: Matchable) -> tuple[State, ...]:
-        return tuple(
+    def transition(
+        self, state: State, symbol: Matchable, wrapped: bool = False
+    ) -> tuple[State, ...]:
+        result = tuple(
             transition.end
             for transition in self[state]
             if transition.matchable == symbol
         )
+        return result
 
     def add_transition(self, start: State, end: State, matchable: Matchable):
         self[start].add(Transition(matchable, end))
 
     def epsilon(self, start: State, end: State):
-        self.add_transition(start, end, TemporaryEpsilon)
+        self.add_transition(start, end, Tag.epsilon())
 
     def __repr__(self):
         return (
@@ -173,7 +239,9 @@ class NFA(defaultdict[State, set[Transition]]):
             f"accept_states={self.accept}) "
         )
 
-    def epsilon_closure(self, states: Iterable[State]) -> tuple[State, ...]:
+    def symbol_closure(
+        self, states: Iterable[State], collapsed: "Tag"
+    ) -> tuple[State, ...]:
         """
         This is the set of all the nodes which can be reached by following epsilon labeled edges
         This is done here using a depth first search
@@ -191,17 +259,25 @@ class NFA(defaultdict[State, set[Transition]]):
                 continue
 
             seen.add(state)
-            stack.extend(self.transition(state, TemporaryEpsilon))
+            stack.extend(self.transition(state, collapsed, True))
             closure.add(state)
 
         return tuple(closure)
 
     def move(self, states: Iterable[State], symbol: Matchable) -> frozenset[State]:
-        return frozenset(
-            reduce(
-                set.union, (self.transition(state, symbol) for state in states), set()
-            )
-        )
+        # return frozenset(
+        #     reduce(
+        #         set.union, (self.transition(state, symbol) for state in states), set()
+        #     )
+        # )
+        s = set()
+        for state in states:
+            item = self.transition(state, symbol)
+            if item and isinstance(item, str):
+                s.update({item})
+            else:
+                s.update(item)
+        return frozenset(s)
 
     def zero_or_more(self, fragment: Fragment, lazy: bool) -> Fragment:
         new_fragment = Fragment()
@@ -246,10 +322,10 @@ class NFA(defaultdict[State, set[Transition]]):
         self.epsilon(fragment1.end, fragment2.start)
 
     def base(
-        self,
-        matchable: Matchable,
+        self, matchable: Matchable, fragment: Optional[Fragment] = None
     ) -> Fragment:
-        fragment = Fragment()
+        if fragment is None:
+            fragment = Fragment()
         self.add_transition(fragment.start, fragment.end, matchable)
         return fragment
 
@@ -266,7 +342,8 @@ class NFA(defaultdict[State, set[Transition]]):
         seen = set()
 
         for state, transitions in self.items():
-            for symbol, end in transitions:
+            for transition in transitions:
+                symbol, end = transition
                 if state not in seen:
                     color = (
                         "green"
@@ -291,7 +368,10 @@ class NFA(defaultdict[State, set[Transition]]):
                         style="filled",
                     )
                     seen.add(end)
-                dot.edge(str(state), str(end), label=str(symbol))
+                if isinstance(symbol, Tag) and symbol.tag_type == TagType.GroupLink:
+                    dot.edge(str(state), str(end), color="blue", style="dotted")
+                else:
+                    dot.edge(str(state), str(end), label=str(symbol), color="black")
 
         dot.node("start", shape="none")
         dot.edge("start", f"{self.start}", arrowhead="vee")
@@ -302,27 +382,43 @@ class DFA(NFA):
     def __init__(self, nfa: Optional[NFA] = None):
         super(DFA, self).__init__()
         if nfa is not None:
-            self.subset_construction(nfa)
+            self.subset_construction(nfa, Tag.epsilon())
 
-    def transition(self, state: State, symbol: Matchable):
-        return first_true(
+    def transition(
+        self, state: State, symbol: Matchable, wrapped: bool = False
+    ) -> State:
+        result = first_true(
             self[state],
-            Transition(TemporaryEpsilon, ""),
+            None,
             lambda transition: transition.matchable == symbol,
-        ).end
+        )
+        if result is None:
+            return () if wrapped else ""
+        return (result.end,) if wrapped else result.end
 
-    def subset_construction(self, nfa: NFA):
+    def copy(self):
+        cp = DFA()
+        for state, transitions in self.items():
+            cp[state] = transitions.copy()
+        cp.symbols = self.symbols.copy()
+        cp.start = self.start
+        cp.accept = self.accept.copy()
+        cp.lazy = self.lazy.copy()
+        cp.states = self.states.copy()
+        return cp
+
+    def subset_construction(self, nfa: NFA, collapsed):
         seen, stack = set(), [(nfa.start,)]
 
         finished = []
 
         while stack:
             sources = stack.pop()  # what is the epsilon closure of the dfa_states
-            closure = nfa.epsilon_closure(sources)
+            closure = nfa.symbol_closure(sources, collapsed)
             start = gen_dfa_state(closure, src_fsm=nfa, dst_fsm=self)
             # next we want to see which states are reachable from each of the states in the epsilon closure
-            for symbol in nfa.symbols:
-                if move := nfa.epsilon_closure(nfa.move(closure, symbol)):
+            for symbol in nfa.symbols - {collapsed}:
+                if move := nfa.symbol_closure(nfa.move(closure, symbol), collapsed):
                     end = gen_dfa_state(move, src_fsm=nfa, dst_fsm=self)
                     self.add_transition(start, end, symbol)
                     if move not in seen:
@@ -332,7 +428,7 @@ class DFA(NFA):
 
         self.states.update(finished)
         self.update_symbols()
-        self.start = finished[0]
+        self.start = first(finished)
 
     def gen_equivalence_states(self) -> Iterator[set[State]]:
         """
@@ -402,6 +498,18 @@ class DFA(NFA):
                 else:
                     new_transitions.add(transition)
             self[start] = new_transitions
+
+        cp = self.copy()
+        self.clear()
+        self.subset_construction(cp, Tag.barrier())
+
+    def clear(self) -> None:
+        super().clear()
+        self.symbols.clear()
+        self.lazy.clear()
+        self.start = -1
+        self.accept.clear()
+        self.states.clear()
 
     def add_transition(self, start: State, end: State, matchable: Matchable) -> None:
         self[start].add(Transition(matchable, end))
@@ -519,6 +627,8 @@ class RangeQuantifier(QuantifierItem):
                             item.pos,
                             Expression(item.pos, [item]),
                             Quantifier(QuantifierChar(QuantifierType.OneOrMore), lazy),
+                            group_index=maxsize,
+                            substr=None,
                         )
                     )
                 else:
@@ -527,6 +637,8 @@ class RangeQuantifier(QuantifierItem):
                             item.pos,
                             Expression(item.pos, [item]),
                             Quantifier(QuantifierChar(QuantifierType.ZeroOrMore), lazy),
+                            group_index=maxsize,
+                            substr=None,
                         )
                     )
 
@@ -537,6 +649,8 @@ class RangeQuantifier(QuantifierItem):
                             item.pos,
                             Expression(item.pos, [item]),
                             Quantifier(QuantifierChar(QuantifierType.ZeroOrOne), lazy),
+                            group_index=maxsize,
+                            substr=None,
                         )
                     )
         return Expression(item.pos, seq)
@@ -565,12 +679,30 @@ class Expression(RegexNode):
 class Group(SubExpressionItem):
     expression: Expression
     quantifier: Optional[Quantifier]
-    capturing: bool = False
+    group_index: Optional[int]
+    substr: Optional[None]
+
+    def capturing(self):
+        return self.group_index is not None
 
     def fsm(self, nfa: NFA) -> Fragment:
         fragment = self.expression.fsm(nfa)
+        if self.capturing:
+            f1 = Fragment()
+            nfa.base(
+                Tag.entry(self.group_index, self.substr),
+                Fragment(f1.start, fragment.start),
+            )
+            nfa.base(
+                Tag.exit(self.group_index, self.substr),
+                Fragment(fragment.end, f1.end),
+            )
+            s1 = gen_state()
+            nfa.add_transition(f1.end, s1, Tag.barrier())
+            nfa.add_transition(f1.end, fragment.start, Tag.link())
+            fragment = Fragment(f1.start, s1)
         if self.quantifier:
-            return self.quantifier.apply(fragment, nfa)
+            fragment = self.quantifier.apply(fragment, nfa)
         return fragment
 
 
@@ -643,9 +775,6 @@ class CharacterScalar(CharacterGroupItem, MatchItem):
 
     def __hash__(self):
         return hash(self.char)
-
-
-TemporaryEpsilon = CharacterScalar(-maxsize, "ε")
 
 
 class MatchCharacterClass(MatchItem, ABC):
@@ -759,6 +888,7 @@ def is_word_boundary(text: str, position: int) -> bool:
     # 2. After the last character in the string, if the last character is a word character.
     # 3. Between two characters in the string,
     #           where one is a word character and the other is not a word character.
+
     case1 = len(text) > 0 and position == 0 and is_word_character(text[position])
     case2 = (1 <= len(text) <= position and is_word_character(text[position - 1])) or (
         len(text) >= 2
@@ -780,7 +910,7 @@ def is_word_boundary(text: str, position: int) -> bool:
 
 
 @dataclass(slots=True)
-class Anchor(SubExpressionItem, Matchable):
+class Anchor(SubExpressionItem, Virtual):
     anchor_type: AnchorType
 
     def fsm(self, nfa: NFA) -> Fragment:
@@ -794,9 +924,8 @@ class Anchor(SubExpressionItem, Matchable):
         match self.anchor_type:
             case AnchorType.Start:
                 # assert that this is the beginning of the string
-                return (
-                    position == 0
-                )  # or the previous char is a \n if MULTILINE mode enabled
+                return position == 0
+                # or the previous char is a \n if MULTILINE mode enabled
             case AnchorType.End:
                 return (
                     position >= len(text)
@@ -824,6 +953,7 @@ class RegexParser:
         self._regex = regex
         self._pos = 0
         self._flags = RegexFlag.NOFLAG
+        self._group_count = 0
         self._root = self.parse_regex()
         if self._pos < len(self._regex):
             raise ValueError(
@@ -869,13 +999,13 @@ class RegexParser:
         allowed = ("i", "m", "s", "x")
 
         while self.remainder().startswith("(?"):
-            # parse just one
             if not self.matches_any(allowed, 2):
                 break
             self.consume("(?")
             while self.matches_any(allowed):
                 modifiers.append(self.consume_and_return())
             self.consume(")")
+
         for modifier in modifiers:
             match modifier:
                 case "i":
@@ -962,21 +1092,24 @@ class RegexParser:
             return self.parse_match()
 
     def parse_group(self) -> Group | Expression:
+        start = self._pos
         self.consume("(")
-        is_capturing = True
+        index = self._group_count
+        self._group_count += 1
         if self.remainder().startswith("?:"):
-            self.consume("?")
-            self.consume(":")
-            is_capturing = False
+            self.consume("?:")
+            index = None
+            self._group_count -= 1
         expr = self.parse_expression()
         self.consume(")")
+        end = self._pos
         quantifier = None
         if self.can_parse_quantifier():
             quantifier = self.parse_quantifier()
             # handle range qualifies and return a list of matches instead
             if isinstance(quantifier.item, RangeQuantifier):
                 return quantifier.item.expand(expr, quantifier.lazy)
-        return Group(self._pos, expr, quantifier, is_capturing)
+        return Group(self._pos, expr, quantifier, index, self._regex[start:end])
 
     def can_parse_quantifier(self):
         return self.matches_any(("*", "+", "?", "{"))
