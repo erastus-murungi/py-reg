@@ -4,7 +4,7 @@ from random import randint, random, seed
 import pytest
 
 from core import InvalidCharacterRange
-from match import RegexMatcher
+from match import Regexp
 from simplify import simplify
 
 
@@ -29,28 +29,28 @@ def test_simply_maintains_simple_constructs():
 def _test_cases_suite(cases: list[tuple[str, str]]):
     for i, (pattern, text) in enumerate(cases):
         expected = [m.group(0) for m in re.finditer(pattern, text)]
-        actual = [m.substr for m in RegexMatcher(pattern, text)]
+        actual = [m.substr for m in Regexp(pattern).finditer(text)]
         assert expected == actual, (i, pattern, text)
 
 
 def test_repetition():
     cases = [
         ("ab{0,}bc", "abbbbc"),
-        # ("ab{1,}bc", "abbbbc"),
-        # ("ab{1,3}bc", "abbbbc"),
-        # ("ab{3,4}bc", "abbbbc"),
-        # ("ab{4,5}bc", "abbbbc"),
-        # ("ab{0,1}bc", "abc"),
-        # ("ab{0,1}c", "abc"),
-        # ("^", "abc"),
-        # ("$", "abc"),
-        # ("ab{1,}bc", "abq"),
-        # ("a{1,}b{1,}c", "aabbabc"),
-        # ("(a+|b){0,}", "ab"),
-        # ("(a+|b){1,}", "ab"),
-        # ("(a+|b){0,1}", "ab"),
-        # ("([abc])*d", "abbbcd"),
-        # ("([abc])*bcd", "abcd"),
+        ("ab{1,}bc", "abbbbc"),
+        ("ab{1,3}bc", "abbbbc"),
+        ("ab{3,4}bc", "abbbbc"),
+        ("ab{4,5}bc", "abbbbc"),
+        ("ab{0,1}bc", "abc"),
+        ("ab{0,1}c", "abc"),
+        ("^", "abc"),
+        ("$", "abc"),
+        ("ab{1,}bc", "abq"),
+        ("a{1,}b{1,}c", "aabbabc"),
+        ("(a+|b){0,}", "ab"),
+        ("(a+|b){1,}", "ab"),
+        ("(a+|b){0,1}", "ab"),
+        ("([abc])*d", "abbbcd"),
+        ("([abc])*bcd", "abcd"),
     ]
     _test_cases_suite(cases)
 
@@ -296,7 +296,7 @@ def test_raises_exception():
         with pytest.raises(re.error):
             _ = [m.group(0) for m in re.finditer(pattern, text) if m.group(0) != ""]
         with pytest.raises((ValueError, InvalidCharacterRange)):
-            _ = [m.substr for m in RegexMatcher(pattern, text) if m.substr != ""]
+            _ = [m.substr for m in Regexp(pattern).finditer(text) if m.substr != ""]
 
 
 def test_failures():

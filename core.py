@@ -212,6 +212,10 @@ class NFA(defaultdict[State, set[Transition]]):
     def set_start(self, state: State):
         self.start = state
 
+    def set_terminals(self, fragment: Fragment):
+        self.set_start(fragment.start)
+        self.set_accept(fragment.end)
+
     def set_accept(self, accept: State):
         self.accept = {accept}
 
