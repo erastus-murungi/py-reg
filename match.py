@@ -1,5 +1,6 @@
 import re
 from dataclasses import dataclass
+from operator import itemgetter
 from typing import Optional
 
 from core import State, Virtual
@@ -31,6 +32,20 @@ class Match:
         return self._groups[index]
 
 
+@dataclass(slots=True)
+class CapturedGroup:
+    start: Optional[int] = None
+    end: Optional[int] = None
+
+    def copy(self):
+        return CapturedGroup(self.start, self.end)
+
+    def string(self, text: str):
+        if self.start is not None and self.end is not None:
+            return text[self.start : self.end]
+        return None
+
+
 class RegexMatcher:
     def __init__(self, regexp: str, text: str):
         self.text = text
@@ -38,65 +53,67 @@ class RegexMatcher:
         self.compiled_regex = CompiledRegex(regexp)
         # self.compiled_regex.graph()
 
-    def _try_match_from_index(self, state: State, index: int) -> Optional[int]:
+    def gen_groups(
+        self,
+        start_index: int,
+        end_index: Optional[int],
+        captured_groups: list[CapturedGroup],
+    ) -> list[Optional[str]]:
+        groups = [self.text[start_index:end_index] if end_index is not None else None]
+        for captured_group in captured_groups:
+            groups.append(captured_group.string(self.text))
+        return groups
+
+    def _try_match_from_index(
+        self, state: State, index: int, captured_groups: list[CapturedGroup]
+    ) -> Optional[int]:
         if state is not None:
             matching_indices = []
 
             if state in self.compiled_regex.accept:
-                matching_indices.append(index)
+                matching_indices.append((index, captured_groups))
 
             transitions = self.compiled_regex.match(
                 state, self.text, index, self.compiled_regex.flags
             )
 
             for matchable, end_state in transitions:
+                groups_copy = [value.copy() for value in captured_groups]
+                if matchable.opening_group():
+                    groups_copy[matchable.group_index].start = index
+                if matchable.closing_group():
+                    groups_copy[matchable.group_index].end = index
                 next_index = self._try_match_from_index(
-                    end_state, index + (not isinstance(matchable, Virtual))
+                    end_state, index + (not isinstance(matchable, Virtual)), groups_copy
                 )
                 if next_index is not None:
                     matching_indices.append(next_index)
 
             if matching_indices:
                 return (
-                    min(matching_indices)
+                    min(matching_indices, key=itemgetter(0))
                     if state in self.compiled_regex.lazy
-                    else max(matching_indices)
+                    else max(matching_indices, key=itemgetter(0))
                 )
 
         return None
 
-    def gen_groups(
-        self,
-        start_index: int,
-        end_index: Optional[int],
-        captured_groups,
-        start2index: dict[State, int],
-    ) -> list[Optional[str]]:
-        groups = []
-        if end_index is None:
-            groups.append(None)
-        else:
-            groups.append(self.text[start_index:end_index])
-
-        for group_index, group_entry in start2index.items():
-            group_exit = captured_groups[group_index]
-            if group_exit is None:
-                groups.append(None)
-            else:
-                groups.append(self.text[group_entry:group_exit])
-
-        return groups
-
     def __iter__(self):
         index = 0
         while index <= len(self.text):
-            position = self._try_match_from_index(self.compiled_regex.start, index)
+            captured_groups = [
+                CapturedGroup() for _ in range(self.compiled_regex.group_count)
+            ]
+            position = self._try_match_from_index(
+                self.compiled_regex.start, index, captured_groups
+            )
             if position is not None:
+                position, path = position
                 yield Match(
                     index,
                     position,
                     self.text[index:position],
-                    self.gen_groups(index, position, {}, {}),
+                    self.gen_groups(index, position, path),
                 )
                 index = position + 1 if position == index else position
             else:
@@ -107,17 +124,17 @@ class RegexMatcher:
 
 
 if __name__ == "__main__":
-    regex, t = ("((a)*|b)(ab|b)", "aaab")
-    # regex, t = ('((a)*|b)', 'aaa')
+    # regex, t = ("ab{0,}bc", "abbbbc")
+    regex, t = ("((a)*|b)(ab)", "aaab")
     matcher = RegexMatcher(regex, t)
     print(matcher)
-    matcher.compiled_regex.graph()
+    # matcher.compiled_regex.graph()
 
     # for span in re.finditer(regex, t):
     #     print(span)
 
     print(re.match(regex, t).groups())
-    print(re.match(regex, t).group(0))
+    # print(re.match(regex, t).group(0))
 
     for span in matcher:
         print(span.groups())

@@ -16,6 +16,7 @@ class CompiledRegex(DFA):
         super().__init__(nfa=nfa)
         self.minimize()
         self.flags = parser.flags
+        self.group_count = parser.group_count
 
     def match(
         self, state: State, text: str, position: int, flags: RegexFlag

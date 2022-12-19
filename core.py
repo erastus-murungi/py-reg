@@ -530,6 +530,10 @@ class RegexNode(ABC):
     def fsm(self, nfa: NFA) -> Fragment:
         ...
 
+    @abstractmethod
+    def string(self):
+        ...
+
 
 class Operator(ABC):
     pass
@@ -575,6 +579,18 @@ class Quantifier(Operator):
                 return nfa.zero_or_more(fragment, self.lazy)
             case QuantifierType.ZeroOrOne:
                 return nfa.zero_or_one(fragment, self.lazy)
+            case _:
+                raise NotImplementedError
+
+    def string(self):
+        lazy = "?" if self.lazy else ""
+        match self.item.type:
+            case QuantifierType.OneOrMore:
+                return "+" + lazy
+            case QuantifierType.ZeroOrMore:
+                return "*" + lazy
+            case QuantifierType.ZeroOrOne:
+                return "?" + lazy
             case _:
                 raise NotImplementedError
 
@@ -627,7 +643,7 @@ class RangeQuantifier(QuantifierItem):
                             item.pos,
                             Expression(item.pos, [item]),
                             Quantifier(QuantifierChar(QuantifierType.OneOrMore), lazy),
-                            group_index=maxsize,
+                            group_index=None,
                             substr=None,
                         )
                     )
@@ -637,7 +653,7 @@ class RangeQuantifier(QuantifierItem):
                             item.pos,
                             Expression(item.pos, [item]),
                             Quantifier(QuantifierChar(QuantifierType.ZeroOrMore), lazy),
-                            group_index=maxsize,
+                            group_index=None,
                             substr=None,
                         )
                     )
@@ -649,7 +665,7 @@ class RangeQuantifier(QuantifierItem):
                             item.pos,
                             Expression(item.pos, [item]),
                             Quantifier(QuantifierChar(QuantifierType.ZeroOrOne), lazy),
-                            group_index=maxsize,
+                            group_index=None,
                             substr=None,
                         )
                     )
@@ -674,6 +690,11 @@ class Expression(RegexNode):
             return fragment
         return nfa.alternation(fragment, self.alternate.fsm(nfa))
 
+    def string(self):
+        seq = "".join(item.string() for item in self.seq)
+        if self.alternate is not None:
+            return f"{seq}|{self.alternate.string()}"
+
 
 @dataclass
 class Group(SubExpressionItem):
@@ -687,23 +708,28 @@ class Group(SubExpressionItem):
 
     def fsm(self, nfa: NFA) -> Fragment:
         fragment = self.expression.fsm(nfa)
-        if self.capturing:
-            f1 = Fragment()
+        if self.capturing():
+            s1, s2, s3 = gen_state(), gen_state(), gen_state()
             nfa.base(
                 Tag.entry(self.group_index, self.substr),
-                Fragment(f1.start, fragment.start),
+                Fragment(s2, fragment.start),
             )
             nfa.base(
                 Tag.exit(self.group_index, self.substr),
-                Fragment(fragment.end, f1.end),
+                Fragment(fragment.end, s3),
             )
-            s1 = gen_state()
-            nfa.add_transition(f1.end, s1, Tag.barrier())
-            nfa.add_transition(f1.end, fragment.start, Tag.link())
-            fragment = Fragment(f1.start, s1)
+            nfa.add_transition(s3, s1, Tag.barrier())
+            nfa.add_transition(s3, fragment.start, Tag.link())
+            fragment = Fragment(s2, s1)
         if self.quantifier:
             fragment = self.quantifier.apply(fragment, nfa)
         return fragment
+
+    def string(self):
+        expression = f"({self.expression.string()})"
+        if self.quantifier is not None:
+            return f"{expression}{self.quantifier.string()}"
+        return expression
 
 
 class MatchItem(SubExpressionItem, ABC):
@@ -720,6 +746,9 @@ class Match(SubExpressionItem):
         if self.quantifier is None:
             return fragment
         return self.quantifier.apply(fragment, nfa)
+
+    def string(self):
+        return f'{self.item.string()}{self.quantifier if self.quantifier else ""}'
 
 
 @dataclass
@@ -740,6 +769,9 @@ class MatchAnyCharacter(MatchItem, Matchable):
 
     def __hash__(self):
         return hash(".")
+
+    def string(self):
+        return "."
 
 
 class CharacterGroupItem(Matchable, ABC):
@@ -775,6 +807,9 @@ class CharacterScalar(CharacterGroupItem, MatchItem):
 
     def __hash__(self):
         return hash(self.char)
+
+    def string(self):
+        return self.char
 
 
 class MatchCharacterClass(MatchItem, ABC):
@@ -812,6 +847,9 @@ class CharacterGroup(MatchCharacterClass, Matchable):
     def __hash__(self):
         return hash((self.items, self.negated))
 
+    def string(self):
+        return self.__repr__()
+
 
 @dataclass
 class CharacterRange(CharacterGroupItem, Matchable):
@@ -844,15 +882,15 @@ class CharacterRange(CharacterGroupItem, Matchable):
 class AnchorType(Enum):
     Start = "^"
     End = "$"
-    Empty = "nothing to see here"
+    Empty = ""
 
     # must be escaped
-    WordBoundary = "b"
-    NonWordBoundary = "B"
-    AnchorStartOfStringOnly = "A"
-    AnchorEndOfStringOnlyNotNewline = "z"
-    AnchorEndOfStringOnly = "Z"
-    AnchorPreviousMatchEnd = "G"
+    WordBoundary = "\\b"
+    NonWordBoundary = "\\B"
+    AnchorStartOfStringOnly = "\\A"
+    AnchorEndOfStringOnlyNotNewline = "\\z"
+    AnchorEndOfStringOnly = "\\Z"
+    AnchorPreviousMatchEnd = "\\G"
 
     @staticmethod
     def get(char):
@@ -941,6 +979,9 @@ class Anchor(SubExpressionItem, Virtual):
 
         raise NotImplementedError
 
+    def string(self):
+        return self.anchor_type.value
+
     def __hash__(self):
         return hash(self.anchor_type)
 
@@ -959,6 +1000,10 @@ class RegexParser:
             raise ValueError(
                 f"could not finish parsing regex, left = {self._regex[self._pos:]}"
             )
+
+    @property
+    def group_count(self):
+        return self._group_count
 
     @property
     def root(self):
