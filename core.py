@@ -6,7 +6,7 @@ from enum import Enum, IntFlag, auto
 from itertools import chain, combinations, count, product
 from string import ascii_uppercase
 from sys import maxsize
-from typing import Hashable, Iterable, Iterator, Optional, Union
+from typing import Hashable, Iterable, Iterator, Optional, Union, Self
 
 import graphviz
 from more_itertools import first, first_true, minmax, pairwise
@@ -60,6 +60,9 @@ def gen_dfa_state(
     return strid
 
 
+INLINE_MODIFIER_START = "(?"
+
+
 class InvalidCharacterRange(Exception):
     ...
 
@@ -103,23 +106,23 @@ class Tag(Virtual):
     substr: str
 
     @staticmethod
-    def entry(group_index: int, substr: str) -> "Tag":
+    def entry(group_index: int, substr: str) -> Self:
         return Tag(TagType.GroupEntry, group_index, substr)
 
     @staticmethod
-    def exit(group_index: int, substr: str) -> "Tag":
+    def exit(group_index: int, substr: str) -> Self:
         return Tag(TagType.GroupExit, group_index, substr)
 
     @staticmethod
-    def link() -> "Tag":
+    def link() -> Self:
         return Tag(TagType.GroupLink, maxsize, "")
 
     @staticmethod
-    def barrier() -> "Tag":
+    def barrier() -> Self:
         return Tag(TagType.Fence, maxsize, "")
 
     @staticmethod
-    def epsilon() -> "Tag":
+    def epsilon() -> Self:
         return Tag(TagType.Epsilon, maxsize, "")
 
     def match(self, text: str, position: int, flags: RegexFlag) -> bool:
@@ -633,7 +636,7 @@ class RangeQuantifier(QuantifierItem):
         else:
             raise InvalidCharacterRange(f"invalid range {{{self.start}, {self.end}}}")
 
-    def expand(self, item: Union["SubExpressionItem", "Expression"], lazy: bool):
+    def expand(self, item: Union["SubExpressionItem", "Expression"], lazy: bool) -> "Expression":
         # e{3} expands to eee; e{3,5} expands to eeee?e?, and e{3,} expands to eee+.
 
         seq = [copy(item) for _ in range(self.start)]
@@ -705,7 +708,7 @@ class Group(SubExpressionItem):
     expression: Expression
     quantifier: Optional[Quantifier]
     group_index: Optional[int]
-    substr: Optional[None]
+    substr: Optional[str]
 
     def capturing(self):
         return self.group_index is not None
@@ -1047,10 +1050,10 @@ class RegexParser:
         modifiers = []
         allowed = ("i", "m", "s", "x")
 
-        while self.remainder().startswith("(?"):
-            if not self.matches_any(allowed, 2):
+        while self.remainder().startswith(INLINE_MODIFIER_START):
+            if not self.matches_any(allowed, len(INLINE_MODIFIER_START)):
                 break
-            self.consume("(?")
+            self.consume(INLINE_MODIFIER_START)
             while self.matches_any(allowed):
                 modifiers.append(self.consume_and_return())
             self.consume(")")
@@ -1192,7 +1195,7 @@ class RegexParser:
         self.consume("}")
         return RangeQuantifier(lower, upper)
 
-    def parse_match(self):
+    def parse_match(self) -> Match | Expression:
         # Match ::= MatchItem Quantifier?
         pos = self._pos
         match_item = self.parse_match_item()
