@@ -1,37 +1,21 @@
 import re
 from dataclasses import dataclass
 from operator import itemgetter
-from typing import Optional
+from typing import Collection, Optional
 
-from more_itertools import first_true
+from more_itertools import first_true, flatten
 
 from core import DFA, NFA, RegexFlag, RegexParser, State, Transition, Virtual
-from simplify import simplify
 
 
-@dataclass(frozen=True, slots=True)
-class Match:
-    start: int
-    end: int
-    substr: str
-    _groups: []
+def all_min(items: Collection):
+    minimum = min(items, key=itemgetter(0))[0]
+    return minimum, list(flatten([value for key, value in items]))
 
-    @property
-    def span(self):
-        return self.start, self.end
 
-    def __repr__(self):
-        return (
-            f"{self.__class__.__name__}"
-            f"(span={self.span}, "
-            f"match={self.substr!r})"
-        )
-
-    def groups(self):
-        return self._groups[1:]
-
-    def group(self, index):
-        return self._groups[index]
+def all_max(items: Collection):
+    maximum = max(items, key=itemgetter(0))[0]
+    return maximum, list(flatten([value for key, value in items]))
 
 
 @dataclass(slots=True)
@@ -48,10 +32,47 @@ class CapturedGroup:
         return None
 
 
+@dataclass(frozen=True, slots=True)
+class Match:
+    start: int
+    end: int
+    text: str
+    captured_groups: list[tuple[CapturedGroup]]
+
+    @property
+    def span(self):
+        return self.start, self.end
+
+    def __repr__(self):
+        return (
+            f"{self.__class__.__name__}"
+            f"(span={self.span}, "
+            f"match={self.text[self.start:self.end]!r})"
+        )
+
+    def all_groups(self):
+        return tuple(self.groups(index) for index in range(len(self.captured_groups)))
+
+    def groups(self, index=0) -> tuple[str, ...]:
+        return tuple(
+            captured_group.string(self.text)
+            for captured_group in self.captured_groups[index]
+        )
+
+    def group(self, index=0, which=0) -> Optional[str]:
+        if index < 0 or index > len(self.captured_groups[index]):
+            raise IndexError(
+                f"index should be 0 <= {len(self.captured_groups[which][index]) + 1}"
+            )
+        if index == 0:
+            return self.text[self.start : self.end]
+        return self.captured_groups[which][index - 1].string(self.text)
+
+
 class Regexp(DFA):
     def __init__(self, pattern: str):
         self.pattern = pattern
-        self.parser = RegexParser(simplify(pattern))
+        self.parser = RegexParser(pattern)
         nfa = NFA()
         nfa.set_terminals(self.parser.root.fsm(nfa))
         nfa.update_symbols_and_states()
@@ -67,33 +88,21 @@ class Regexp(DFA):
             if transition.match(text, position, flags) is not None
         ]
 
-    @staticmethod
-    def gen_groups(
-        text,
-        start_index: int,
-        end_index: Optional[int],
-        captured_groups: list[CapturedGroup],
-    ) -> list[Optional[str]]:
-        groups = [text[start_index:end_index] if end_index is not None else None]
-        for captured_group in captured_groups:
-            groups.append(captured_group.string(text))
-        return groups
-
     def _try_match_from_index(
-        self, text: str, state: State, index: int, captured_groups: list[CapturedGroup]
-    ) -> Optional[tuple[int, list[CapturedGroup]]]:
+        self, text: str, state: State, index: int, captured_groups: tuple[CapturedGroup]
+    ) -> Optional[tuple[int, list[tuple[CapturedGroup, ...]]]]:
         if state is not None:
             matching_indices = []
 
             if state in self.accept:
-                matching_indices.append((index, captured_groups))
+                matching_indices.append((index, [captured_groups]))
 
             transitions = self._match(state, text, index, self.parser.flags)
 
             for matchable, end_state in transitions:
-                captured_groups_copy = [
+                captured_groups_copy = tuple(
                     captured_group.copy() for captured_group in captured_groups
-                ]
+                )
 
                 if matchable.opening_group():
                     captured_groups_copy[matchable.group_index].start = index
@@ -113,9 +122,9 @@ class Regexp(DFA):
 
             if matching_indices:
                 return (
-                    min(matching_indices, key=itemgetter(0))
+                    all_min(matching_indices)
                     if state in self.lazy
-                    else max(matching_indices, key=itemgetter(0))
+                    else all_max(matching_indices)
                 )
 
         return None
@@ -128,7 +137,9 @@ class Regexp(DFA):
     def finditer(self, text: str):
         index = 0
         while index <= len(text):
-            captured_groups = [CapturedGroup() for _ in range(self.parser.group_count)]
+            captured_groups = tuple(
+                CapturedGroup() for _ in range(self.parser.group_count)
+            )
             if (
                 result := self._try_match_from_index(
                     text, self.start, index, captured_groups
@@ -138,8 +149,8 @@ class Regexp(DFA):
                 yield Match(
                     index,
                     position,
-                    text[index:position],
-                    self.gen_groups(text, index, position, captured_groups),
+                    text,
+                    captured_groups,
                 )
                 index = position + 1 if position == index else position
             else:
@@ -154,17 +165,20 @@ class Regexp(DFA):
 
 if __name__ == "__main__":
     # regex, t = ("ab{0,}bc", "abbbbc")
-    # regex, t = ("((a)*|b)(ab)", "aaab")
-    regex, t = ("(a|bcdef|g|ab|c|d|e|efg|fg)*", "abcdefg")
+    # regex, t = ("((a)*|b)(ab|b)", "aaab")
+    # regex, t = ("(a|bcdef|g|ab|c|d|e|efg|fg)*", "abcdefg")
+    regex, t = ("()ef", "def")
     print(Regexp(regex).findall(t))
     print(list(re.finditer(regex, t)))
 
     # for span in re.finditer(regex, t):
     #     print(span)
 
-    print(re.match(regex, t))
-    print(Regexp(regex).match(t))
-    # print(re.match(regex, t).group(0))
+    # print(re.match(regex, t))
+    # print(Regexp(regex).match(t))
+
+    print([m.groups() for m in re.finditer(regex, t)])
+    print(Regexp(regex).match(t).all_groups())
 
     # for span in matcher:
     #     print(span.groups())

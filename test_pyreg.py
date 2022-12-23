@@ -5,22 +5,6 @@ import pytest
 
 from core import InvalidCharacterRange
 from match import Regexp
-from simplify import simplify
-
-
-def test_simply_maintains_simple_constructs():
-    cases = [
-        (r"a", "a"),
-        (r"ab", "ab"),
-        (r"ab|cd", "ab|cd"),
-        (r"(ab)*", "(ab)*"),
-        (r".", "."),
-        (r"^", "^"),
-        (r"$", "$"),
-        (r"ABC[a-x]\d", "ABC[a-x]\\d"),
-    ]
-    for test_input, expected in cases:
-        assert simplify(test_input) == expected, (test_input, expected)
 
 
 # acquired from re2: https://github.com/google/re2/blob/main/re2/testing/search_test.cc
@@ -29,8 +13,14 @@ def test_simply_maintains_simple_constructs():
 def _test_cases_suite(cases: list[tuple[str, str]]):
     for i, (pattern, text) in enumerate(cases):
         expected = [m.group(0) for m in re.finditer(pattern, text)]
-        actual = [m.substr for m in Regexp(pattern).finditer(text)]
+        actual = [m.group(0) for m in Regexp(pattern).finditer(text)]
         assert expected == actual, (i, pattern, text)
+
+        expected_groups = [m.groups() for m in re.finditer(pattern, text)]
+        actual_groups = [m.all_groups() for m in Regexp(pattern).finditer(text)]
+        print((i, pattern, text, expected_groups, actual_groups))
+        for group, all_groups in zip(expected_groups, actual_groups):
+            assert group in all_groups, (i, pattern, text)
 
 
 def test_repetition():
@@ -62,6 +52,14 @@ def test_interesting_cases():
         (r"[a-zABC]", "cc{0x41-0x43 0x61-0x7a}"),
         (r"[^a]", "cc{0-0x60 0x62-0x10ffff}"),
         ("a*\\{", "cat{star{lit{a}}lit{{}}"),
+        (r"a", "a"),
+        (r"ab", "ab"),
+        (r"ab|cd", "ab|cd"),
+        (r"(ab)*", "(ab)*"),
+        (r".", "."),
+        (r"^", "^"),
+        (r"$", "$"),
+        (r"ABC[a-x]\d", "ABC[a-x]\\d"),
     ]
 
     _test_cases_suite(cases)

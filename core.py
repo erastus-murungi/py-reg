@@ -6,7 +6,7 @@ from enum import Enum, IntFlag, auto
 from itertools import chain, combinations, count, product
 from string import ascii_uppercase
 from sys import maxsize
-from typing import Hashable, Iterable, Iterator, Optional, Union, Self
+from typing import Hashable, Iterable, Iterator, Optional, Self, Union
 
 import graphviz
 from more_itertools import first, first_true, minmax, pairwise
@@ -106,23 +106,23 @@ class Tag(Virtual):
     substr: str
 
     @staticmethod
-    def entry(group_index: int, substr: str) -> Self:
+    def entry(group_index: int, substr: str) -> "Tag":
         return Tag(TagType.GroupEntry, group_index, substr)
 
     @staticmethod
-    def exit(group_index: int, substr: str) -> Self:
+    def exit(group_index: int, substr: str) -> "Tag":
         return Tag(TagType.GroupExit, group_index, substr)
 
     @staticmethod
-    def link() -> Self:
+    def link() -> "Tag":
         return Tag(TagType.GroupLink, maxsize, "")
 
     @staticmethod
-    def barrier() -> Self:
+    def barrier() -> "Tag":
         return Tag(TagType.Fence, maxsize, "")
 
     @staticmethod
-    def epsilon() -> Self:
+    def epsilon() -> "Tag":
         return Tag(TagType.Epsilon, maxsize, "")
 
     def match(self, text: str, position: int, flags: RegexFlag) -> bool:
@@ -136,7 +136,7 @@ class Tag(Virtual):
     def __repr__(self):
         match self.tag_type:
             case TagType.Fence | TagType.Epsilon:
-                return TagType.Fence.value
+                return self.tag_type.value
             case TagType.GroupLink:
                 return ""
             case TagType.GroupEntry | TagType.GroupExit:
@@ -636,7 +636,12 @@ class RangeQuantifier(QuantifierItem):
         else:
             raise InvalidCharacterRange(f"invalid range {{{self.start}, {self.end}}}")
 
-    def expand(self, item: Union["SubExpressionItem", "Expression"], lazy: bool) -> "Expression":
+    def expand(
+        self,
+        item: Union["SubExpressionItem", "Expression"],
+        lazy: bool,
+        group_index: Optional[int] = None,
+    ) -> "Expression":
         # e{3} expands to eee; e{3,5} expands to eeee?e?, and e{3,} expands to eee+.
 
         seq = [copy(item) for _ in range(self.start)]
@@ -650,7 +655,7 @@ class RangeQuantifier(QuantifierItem):
                             item.pos,
                             Expression(item.pos, [item]),
                             Quantifier(QuantifierChar(QuantifierType.OneOrMore), lazy),
-                            group_index=None,
+                            group_index=group_index,
                             substr=None,
                         )
                     )
@@ -660,7 +665,7 @@ class RangeQuantifier(QuantifierItem):
                             item.pos,
                             Expression(item.pos, [item]),
                             Quantifier(QuantifierChar(QuantifierType.ZeroOrMore), lazy),
-                            group_index=None,
+                            group_index=group_index,
                             substr=None,
                         )
                     )
@@ -672,7 +677,7 @@ class RangeQuantifier(QuantifierItem):
                             item.pos,
                             Expression(item.pos, [item]),
                             Quantifier(QuantifierChar(QuantifierType.ZeroOrOne), lazy),
-                            group_index=None,
+                            group_index=group_index,
                             substr=None,
                         )
                     )
@@ -1152,7 +1157,10 @@ class RegexParser:
             self.consume("?:")
             index = None
             self._group_count -= 1
-        expr = self.parse_expression()
+        if self.matches(")"):
+            expr = Anchor.empty_string()
+        else:
+            expr = self.parse_expression()
         self.consume(")")
         end = self._pos
         quantifier = None
@@ -1160,7 +1168,7 @@ class RegexParser:
             quantifier = self.parse_quantifier()
             # handle range qualifies and return a list of matches instead
             if isinstance(quantifier.item, RangeQuantifier):
-                return quantifier.item.expand(expr, quantifier.lazy)
+                return quantifier.item.expand(expr, quantifier.lazy, index)
         return Group(self._pos, expr, quantifier, index, self._regex[start:end])
 
     def can_parse_quantifier(self):
