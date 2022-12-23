@@ -1,6 +1,7 @@
 import re
 from dataclasses import dataclass
 from operator import itemgetter
+from pprint import pprint
 from typing import Collection, Optional
 
 from more_itertools import first_true, flatten
@@ -10,12 +11,12 @@ from core import DFA, NFA, RegexFlag, RegexParser, State, Transition, Virtual
 
 def all_min(items: Collection):
     minimum = min(items, key=itemgetter(0))[0]
-    return minimum, list(flatten([value for key, value in items]))
+    return minimum, list(flatten([value for key, value in items if key == minimum]))
 
 
 def all_max(items: Collection):
     maximum = max(items, key=itemgetter(0))[0]
-    return maximum, list(flatten([value for key, value in items]))
+    return maximum, list(flatten([value for key, value in items if key == maximum]))
 
 
 @dataclass(slots=True)
@@ -167,9 +168,12 @@ if __name__ == "__main__":
     # regex, t = ("ab{0,}bc", "abbbbc")
     # regex, t = ("((a)*|b)(ab|b)", "aaab")
     # regex, t = ("(a|bcdef|g|ab|c|d|e|efg|fg)*", "abcdefg")
-    regex, t = ("()ef", "def")
-    print(Regexp(regex).findall(t))
-    print(list(re.finditer(regex, t)))
+    # regex, t = ("(0(_?0)*|[1-9](_?[0-9])*)", "17429")
+    regex, t = (r"(a?)((ab)?)", "ab")
+    pattern = Regexp(regex)
+    pattern.graph()
+    pprint(pattern.findall(t))
+    pprint(list(re.finditer(regex, t)))
 
     # for span in re.finditer(regex, t):
     #     print(span)
@@ -178,7 +182,7 @@ if __name__ == "__main__":
     # print(Regexp(regex).match(t))
 
     print([m.groups() for m in re.finditer(regex, t)])
-    print(Regexp(regex).match(t).all_groups())
+    print(pattern.match(t).all_groups())
 
     # for span in matcher:
     #     print(span.groups())

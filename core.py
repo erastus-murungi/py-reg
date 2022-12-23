@@ -272,11 +272,6 @@ class NFA(defaultdict[State, set[Transition]]):
         return tuple(closure)
 
     def move(self, states: Iterable[State], symbol: Matchable) -> frozenset[State]:
-        # return frozenset(
-        #     reduce(
-        #         set.union, (self.transition(state, symbol) for state in states), set()
-        #     )
-        # )
         s = set()
         for state in states:
             item = self.transition(state, symbol)
@@ -653,7 +648,7 @@ class RangeQuantifier(QuantifierItem):
                     seq.append(
                         Group(
                             item.pos,
-                            Expression(item.pos, [item]),
+                            item,
                             Quantifier(QuantifierChar(QuantifierType.OneOrMore), lazy),
                             group_index=group_index,
                             substr=None,
@@ -663,7 +658,7 @@ class RangeQuantifier(QuantifierItem):
                     seq.append(
                         Group(
                             item.pos,
-                            Expression(item.pos, [item]),
+                            item,
                             Quantifier(QuantifierChar(QuantifierType.ZeroOrMore), lazy),
                             group_index=group_index,
                             substr=None,
@@ -675,7 +670,7 @@ class RangeQuantifier(QuantifierItem):
                     seq.append(
                         Group(
                             item.pos,
-                            Expression(item.pos, [item]),
+                            item,
                             Quantifier(QuantifierChar(QuantifierType.ZeroOrOne), lazy),
                             group_index=group_index,
                             substr=None,
@@ -721,18 +716,18 @@ class Group(SubExpressionItem):
     def fsm(self, nfa: NFA) -> Fragment:
         fragment = self.expression.fsm(nfa)
         if self.capturing():
-            s1, s2, s3 = gen_state(), gen_state(), gen_state()
+            state1, state2, state3 = gen_state(), gen_state(), gen_state()
             nfa.base(
                 Tag.entry(self.group_index, self.substr),
-                Fragment(s2, fragment.start),
+                Fragment(state1, fragment.start),
             )
             nfa.base(
                 Tag.exit(self.group_index, self.substr),
-                Fragment(fragment.end, s3),
+                Fragment(fragment.end, state2),
             )
-            nfa.add_transition(s3, s1, Tag.barrier())
-            nfa.add_transition(s3, fragment.start, Tag.link())
-            fragment = Fragment(s2, s1)
+            nfa.add_transition(state2, state3, Tag.barrier())
+            nfa.add_transition(state2, fragment.start, Tag.link())
+            fragment = Fragment(state1, state3)
         if self.quantifier:
             fragment = self.quantifier.apply(fragment, nfa)
         return fragment

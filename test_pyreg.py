@@ -1,3 +1,4 @@
+import logging
 import re
 from random import randint, random, seed
 
@@ -5,6 +6,8 @@ import pytest
 
 from core import InvalidCharacterRange
 from match import Regexp
+
+logging.basicConfig(filename="test.log", level=logging.NOTSET, encoding="utf-8")
 
 
 # acquired from re2: https://github.com/google/re2/blob/main/re2/testing/search_test.cc
@@ -21,6 +24,9 @@ def _test_cases_suite(cases: list[tuple[str, str]]):
         print((i, pattern, text, expected_groups, actual_groups))
         for group, all_groups in zip(expected_groups, actual_groups):
             assert group in all_groups, (i, pattern, text)
+            logging.info(
+                f"{i: 0f} pattern = {pattern!r}, text = {text!r}, groups={group}, all_groups={all_groups}"
+            )
 
 
 def test_repetition():
@@ -647,6 +653,93 @@ def test_ignorecase():
         ("(?i)(bc+d$|ef*g.|h?i(j|k))", "BCDD"),
         ("(?i)(bc+d$|ef*g.|h?i(j|k))", "REFFGZ"),
         ("(?i)((((((((((a))))))))))", "A"),
+    ]
+
+    _test_cases_suite(cases)
+
+
+@pytest.mark.skip
+def test_groups1():
+    cases = [
+        ("a+", "xaax"),
+        ("(a?)((ab)?)", "ab"),
+        ("(a?)((ab)?)(b?)", "ab"),
+        ("((a?)((ab)?))(b?)", "ab"),
+        ("(a?)(((ab)?)(b?))", "ab"),
+        ("(.?)", "x"),
+        ("(.?){1}", "x"),
+        ("(.?)(.?)", "x"),
+        ("(.?){2}", "x"),
+        ("(.?)*", "x"),
+        ("(.?.?)", "xxx"),
+        ("(.?.?){1}", "xxx"),
+        ("(.?.?)(.?.?)", "xxx"),
+        ("(.?.?){2}", "xxx"),
+        ("(.?.?)(.?.?)(.?.?)", "xxx"),
+        ("(.?.?){3}", "xxx"),
+        ("(.?.?)*", "xxx"),
+        ("a?((ab)?)(b?)", "ab"),
+        ("(a?)((ab)?)b?", "ab"),
+        ("a?((ab)?)b?", "ab"),
+        ("(a*){2}", "xxxxx"),
+        ("(ab?)(b?a)", "aba"),
+        ("(a|ab)(ba|a)", "aba"),
+        ("(a|ab|ba)", "aba"),
+        ("(a|ab|ba)(a|ab|ba)", "aba"),
+        ("(a|ab|ba)*", "aba"),
+        ("(aba|a*b)", "ababa"),
+        ("(aba|a*b)(aba|a*b)", "ababa"),
+        ("(aba|a*b)(aba|a*b)(aba|a*b)", "ababa"),
+        ("(aba|a*b)*", "ababa"),
+        ("(aba|ab|a)", "ababa"),
+        ("(aba|ab|a)(aba|ab|a)", "ababa"),
+        ("(aba|ab|a)(aba|ab|a)(aba|ab|a)", "ababa"),
+        ("(aba|ab|a)*", "ababa"),
+        ("(a(b)?)", "aba"),
+        ("(a(b)?)(a(b)?)", "aba"),
+        ("(a(b)?)+", "aba"),
+        ("(.*)(.*)", "xx"),
+        (".*(.*)", "xx"),
+        ("(a.*z|b.*y)", "azbazby"),
+        ("(a.*z|b.*y)(a.*z|b.*y)", "azbazby"),
+        ("(a.*z|b.*y)*", "azbazby"),
+        ("(.|..)(.*)", "ab"),
+        ("((..)*(...)*)", "xxx"),
+        ("((..)*(...)*)((..)*(...)*)", "xxx"),
+        ("((..)*(...)*)*", "xxx"),
+        ("(aa(b(b))?)+", "aabbaa"),
+        ("(a(b)?)+", "aba"),
+        ("([ab]+)([bc]+)([cd]*)", "abcd"),
+        ("^(A([^B]*))?(B(.*))?", "Aa"),
+        ("^(A([^B]*))?(B(.*))?", "Bb"),
+        ("(^){03}", "a"),
+        ("($){03}", "a"),
+        ("(^){13}", "a"),
+        ("($){13}", "a"),
+        ("((s^)|(s)|(^)|($)|(^.))*", "searchme"),
+        ("s(()|^)e", "searchme"),
+        ("s(^|())e", "searchme"),
+        ("s(^|())e", "searchme"),
+        ("s()?e", "searchme"),
+        ("s(^)?e", "searchme"),
+        ("((s)|(e)|(a))*", "searchme"),
+        ("((s)|(e)|())*", "searchme"),
+        ("((b*)|c(c*))*", "cbb"),
+        ("(yyy|(x?)){24}", "yyyyyy"),
+        ("($)|()", "xxx"),
+        ("$()|^()", "ac\\n"),
+        ("^()|$()", "ac\\n"),
+        ("($)?(.)", "__"),
+        ("(.|()|())*", "c"),
+        ("((a)|(b)){2}", "ab"),
+        (".()|((.)?)", "NULL"),
+        ("(.|$){2}", "xx"),
+        ("(.|$){22}", "xx"),
+        ("(.){2}", "xx"),
+        ("(a|())(b|())(c|())", "abc"),
+        ("ab()c|ab()c()", "abc"),
+        ("(b(c)|d(e))*", "bcde"),
+        ("(a(b)*)*", "aba"),
     ]
 
     _test_cases_suite(cases)
