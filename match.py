@@ -3,18 +3,11 @@ from dataclasses import dataclass
 from itertools import chain
 from pprint import pprint
 from typing import Collection, Optional
+from time import monotonic
 
 from more_itertools import first_true
 
-from core import (
-    NFA,
-    RegexFlag,
-    RegexpParser,
-    State,
-    Transition,
-    Virtual,
-    Tag,
-)
+from core import DFA, NFA, RegexFlag, RegexpParser, State, Tag, Transition, Virtual
 
 
 @dataclass(slots=True)
@@ -79,7 +72,6 @@ class Regexp(NFA):
         self.parser = RegexpParser(regexp)
         self.set_terminals(self.parser.root.fsm(self))
         self.update_symbols_and_states()
-        # nfa.graph()
 
     def _match(
         self, state: State, text: str, position: int, flags: RegexFlag
@@ -90,81 +82,42 @@ class Regexp(NFA):
             if transition.match(text, position, flags) is not None
         ]
 
-    def frontier(self, state, visited):
-        if trans := self.transition(state, Tag.epsilon()):
-            for eps_state in trans:
-                if eps_state not in visited:
-                    visited.add(eps_state)
-                    yield from self.frontier(eps_state, visited)
-        else:
-            yield state
+    def step(
+        self, states: Collection[State], text, index
+    ) -> tuple[list[State], list[Transition]]:
 
-    def step(self, states: Collection[State], text, index):
-        move = tuple(chain.from_iterable(self.frontier(s, set()) for s in states))
+        explored = set()
+        stack = [(False, state) for state in states]
+        closure = []
         transitions = []
-        for state in move:
-            transitions.extend(self._match(state, text, index, self.parser.flags))
-        return move, transitions
 
-    # def _try_match_from_index(
-    #     self, text: str, state: State, index: int, captured_groups: CapturedGroups
-    # ) -> Optional[MatchResult]:
-    #     """
-    #     int
-    #     match(DState *start, char *s)
-    #     {
-    #         int c;
-    #         DState *d, *next;
-    #
-    #         d = start;
-    #         for(; *s; s++){
-    #             c = *s & 0xFF;
-    #             if((next = d->next[c]) == NULL)
-    #                 next = nextstate(d, c);
-    #             d = next;
-    #         }
-    #         return ismatch(&d->l);
-    #     }
-    #     """
-    #
-    #     dfa: defaultdict[State, list[Transition]] = defaultdict(list)
-    #     sources: dict[State, tuple[State, ...]] = {}
-    #     accepts = set()
-    #
-    #     cache = {}
+        while stack:
+            completed, state = stack.pop()
+            if completed:
+                closure.append(state)
+                # once we are done with this state
+                for transition in self[state]:
+                    if (
+                        transition.matchable == Tag.epsilon()
+                        and transition.end in self.accept
+                    ) or (
+                        transition.matchable != Tag.epsilon()
+                        and transition.match(text, index, self.parser.flags)
+                    ):
+                        transitions.append(transition)
 
-    # def start_state(srcs: Collection[State]) -> State:
-    #     srcs = tuple(sorted(srcs))
-    #     d_state = gen_dfa_state(srcs)
-    #     if any(s in self.accept for s in srcs):
-    #         accepts.add(d_state)
-    #     sources[d_state] = srcs
-    #     cache[srcs] = d_state
-    #     return d_state
-    #
-    # def next_state(state: State, srcs: Collection[State]) -> State:
-    #     srcs = tuple(sorted(srcs))
-    #     d_state = gen_dfa_state(srcs)
-    #     if any(s in self.accept for s in srcs):
-    #         accepts.add(d_state)
-    #     sources[d_state] = srcs
-    #     cache[srcs] = d_state
-    #     dfa[state].append(d_state)
-    #     return d_state
-    #
-    # d = start_state(tuple(self.frontier(self.start, set())))
-    # stack = [d]
-    # while stack:
-    #     d = stack.pop()
-    #     if d in dfa:
-    #         ...
-    #     move, trans = self.step(sources[d], text, index)
-    #
-    #     print(move, trans)
+            if state in explored:
+                continue
 
-    # get all the closure and create a dfa state out of it.
+            explored.add(state)
 
-    # move from
+            stack.append((True, state))
+            # explore the states in the order which they are in
+            stack.extend(
+                (False, nxt)
+                for nxt in self.transition(state, Tag.epsilon(), True)[::-1]
+            )
+        return closure, transitions
 
     def _try_match_from_index(
         self, text: str, state: State, index: int, captured_groups: CapturedGroups
@@ -172,7 +125,8 @@ class Regexp(NFA):
         if state in self.accept:
             return index, [captured_groups]
 
-        transitions = self._match(state, text, index, self.parser.flags)
+        states, transitions = self.step([state], text, index)
+        # print(states, transitions)
 
         for matchable, end_state in transitions:
             captured_groups_copy = tuple(
@@ -231,18 +185,6 @@ class Regexp(NFA):
         return f"{self.__class__.__name__}(regex={self.pattern!r})"
 
 
-# class Regexpff(DFA):
-#     def __init__(self, pattern: str):
-#         self.pattern = pattern
-#         self.parser = RegexpParser(pattern)
-#         nfa = NFA()
-#         nfa.set_terminals(self.parser.root.fsm(nfa))
-#         nfa.update_symbols_and_states()
-#         nfa.graph()
-#         super().__init__(nfa=nfa)
-#         self.minimize()
-
-
 if __name__ == "__main__":
     # regex, t = ("ab{0,}bc", "abbbbc")
     # regex, t = ("((a)*|b)(ab|b)", "aaab")
@@ -253,13 +195,17 @@ if __name__ == "__main__":
     # regex, t = "a.+?c", "abcabc"
     # regex, t = "a?", "a"
     # regex, t = r"([0a-z][a-z0-9]*,)+", r"a5,b7,c9,"
+    # regex, t = "(?:ab)+", "ababa"
     # regex, t = "(a*)*", "-",
+    regex, t = ("([^.]*)\\.([^:]*):[T ]+(.*)", "track1.title:TBlah blah blah")
 
-    regex, t = "(?i)(a+|b){0,1}?", "AB"
+    # regex, t = "(?i)(a+|b){0,1}?", "AB"
     pattern = Regexp(regex)
     pattern.graph()
     # DFA(pattern).graph()
+    start = monotonic()
     pprint(pattern.findall(t))
+    print(f'findall took {monotonic() - start} seconds ...')
     pprint(list(re.finditer(regex, t)))
 
     # for span in re.finditer(regex, t):

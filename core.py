@@ -10,6 +10,7 @@ from typing import Hashable, Iterable, Iterator, Optional, Union
 
 import graphviz
 from more_itertools import first, first_true, minmax, pairwise
+from ordered_set import OrderedSet
 
 from unionfind import UnionFind
 
@@ -152,7 +153,7 @@ class Fragment:
         yield from astuple(self)
 
 
-@dataclass(frozen=True)
+@dataclass()
 class Transition:
     matchable: Matchable
     end: State
@@ -258,14 +259,16 @@ class NFA(defaultdict[State, list[Transition]]):
 
         seen = set()
         stack = list(states)
-        closure = set()
+        closure = OrderedSet()
 
         while stack:
             if (state := stack.pop()) in seen:
                 continue
 
             seen.add(state)
-            stack.extend(self.transition(state, collapsed, True))
+            # explore the states in the order which they are in
+            nxt = self.transition(state, collapsed, True)[::-1]
+            stack.extend(nxt)
             closure.add(state)
 
         return tuple(closure)
