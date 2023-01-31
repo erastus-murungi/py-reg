@@ -119,9 +119,10 @@ class Regexp(NFA):
             )
         return closure, transitions
 
-    def _try_match_from_index(
+    def _match_at_index(
         self, text: str, state: State, index: int, captured_groups: CapturedGroups
     ) -> Optional[MatchResult]:
+
         if state in self.accept:
             return index, [captured_groups]
 
@@ -139,7 +140,7 @@ class Regexp(NFA):
             elif matchable.is_closing_group():
                 captured_groups_copy[matchable.group_index].end = index
 
-            result = self._try_match_from_index(
+            result = self._match_at_index(
                 text,
                 end_state,
                 index + (not isinstance(matchable, Virtual)),
@@ -163,9 +164,7 @@ class Regexp(NFA):
                 CapturedGroup() for _ in range(self.parser.group_count)
             )
             if (
-                result := self._try_match_from_index(
-                    text, self.start, index, captured_groups
-                )
+                result := self._match_at_index(text, self.start, index, captured_groups)
             ) is not None:
                 position, captured_groups = result
                 yield Match(
@@ -205,7 +204,7 @@ if __name__ == "__main__":
     # DFA(pattern).graph()
     start = monotonic()
     pprint(pattern.findall(t))
-    print(f'findall took {monotonic() - start} seconds ...')
+    print(f"findall took {monotonic() - start} seconds ...")
     pprint(list(re.finditer(regex, t)))
 
     # for span in re.finditer(regex, t):
