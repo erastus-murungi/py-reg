@@ -21,11 +21,10 @@ def _test_cases_suite(cases: list[tuple[str, str]]):
 
         expected_groups = [m.groups() for m in re.finditer(pattern, text)]
         actual_groups = [m.all_groups() for m in Regexp(pattern).finditer(text)]
-        print((i, pattern, text, expected_groups, actual_groups))
         for group, all_groups in zip(expected_groups, actual_groups):
             assert group in all_groups, (i, pattern, text)
             logging.info(
-                f"{i: 0f} pattern = {pattern!r}, text = {text!r}, groups={group}, all_groups={all_groups}"
+                f"{i:04d} pattern = {pattern!r}, text = {text!r}, groups={group}, all_groups={all_groups}"
             )
 
 
@@ -740,6 +739,219 @@ def test_groups1():
         ("ab()c|ab()c()", "abc"),
         ("(b(c)|d(e))*", "bcde"),
         ("(a(b)*)*", "aba"),
+    ]
+
+    _test_cases_suite(cases)
+
+
+def test_basic3():
+    cases = [
+        (r"\)", "()"),
+        (r"\}", "}"),
+        (r"\]", "]"),  # escaped
+        ("$^", "NULL"),
+        ("a($)", "aa"),
+        ("a*(^a)", "aa"),
+        ("(..)*(...)*", "a"),
+        ("(..)*(...)*", "abcd"),
+        ("(ab|a)(bc|c)", "abc"),
+        ("(ab)c|abc", "abc"),
+        ("a{0}b", "ab"),
+        ("(a*)(b?)(b+)b{3}", "aaabbbbbbb"),
+        ("(a*)(b{0,1})(b{1,})b{3}", "aaabbbbbbb"),
+        ("((a|a)|a)", "a"),
+        ("(a*)(a|aa)", "aaaa"),
+        ("a*(a.|aa)", "aaaa"),
+        ("a(b)|c(d)|a(e)f", "aef"),
+        ("(a|b)?.*", "b"),
+        ("(a|b)c|a(b|c)", "ac"),
+        ("(a|b)c|a(b|c)", "ab"),
+        ("(a|b)*c|(a|ab)*c", "abc"),
+        ("(a|b)*c|(a|ab)*c", "xc"),
+        ("(.a|.b).*|.*(.a|.b)", "xa"),
+        ("a?(ab|ba)ab", "abab"),
+        ("((((((((((((((((((((((((((((((x))))))))))))))))))))))))))))))", "x"),
+        ("((((((((((((((((((((((((((((((x))))))))))))))))))))))))))))))*", "xx"),
+        ("a?(ac{0}b|ba)ab", "abab"),
+        ("ab|abab", "abbabab"),
+        ("aba|bab|bba", "baaabbbaba"),
+        ("aba|bab", "baaabbbaba"),
+        ("(aa|aaa)*|(a|aaaaa)", "aa"),
+        ("(a.|.a.)*|(a|.a...)", "aa"),
+        ("ab|a", "xabc"),
+        ("ab|a", "xxabc"),
+        ("(Ab|cD)*", "aBcD"),
+        (":::1:::0:|:::1:1:0:", ":::0:::1:::1:::0:"),
+        (":::1:::0:|:::1:1:1:", ":::0:::1:::1:::0:"),
+        ("(a)(b)(c)", "abc"),
+        (
+            "a?(ab|ba)*",
+            "ababababababababababababababababababababababababababababababababababababababababa",
+        ),
+        ("abaa|abbaa|abbbaa|abbbbaa", "ababbabbbabbbabbbbabbbbaa"),
+        ("abaa|abbaa|abbbaa|abbbbaa", "ababbabbbabbbabbbbabaa"),
+        ("aaac|aabc|abac|abbc|baac|babc|bbac|bbbc", "baaabbbabac"),
+        (
+            "aaaa|bbbb|cccc|ddddd|eeeeee|fffffff|gggg|hhhh|iiiii|jjjjj|kkkkk|llll",
+            "XaaaXbbbXcccXdddXeeeXfffXgggXhhhXiiiXjjjXkkkXlllXcbaXaaaa",
+        ),
+        ("a*a*a*a*a*b", "aaaaaaaaab"),
+        ("ab+bc", "abbc"),
+        ("ab+bc", "abbbbc"),
+        ("ab?bc", "abbc"),
+        ("ab?bc", "abc"),
+        ("ab?c", "abc"),
+        ("ab|cd", "abc"),
+        ("ab|cd", "abcd"),
+        ("a\\(b", "a(b"),
+        ("a\\(*b", "ab"),
+        ("a\\(*b", "a((b"),
+        ("((a))", "abc"),
+        ("(a)b(c)", "abc"),
+        ("a+b+c", "aabbabc"),
+        ("a*", "aaa"),
+        ("(a+|b)*", "ab"),
+        ("(a+|b)+", "ab"),
+        ("(a+|b)?", "ab"),
+        ("([abc])*d", "abbbcd"),
+        ("([abc])*bcd", "abcd"),
+        ("a|b|c|d|e", "e"),
+        ("(a|b|c|d|e)f", "ef"),
+        ("(ab|cd)e", "abcde"),
+        ("(a|b)c*d", "abcd"),
+        ("(ab|ab*)bc", "abc"),
+        ("a([bc]*)c*", "abc"),
+        ("a([bc]*)(c*d)", "abcd"),
+        ("a([bc]+)(c*d)", "abcd"),
+        ("a([bc]*)(c+d)", "abcd"),
+        ("a[bcd]*dcdcde", "adcdcde"),
+        ("(ab|a)b*c", "abc"),
+        ("((a)(b)c)(d)", "abcd"),
+        ("^a(bc+|b[eh])g|.h$", "abh"),
+        ("(bc+d$|ef*g.|h?i(j|k))", "effgz"),
+        ("(bc+d$|ef*g.|h?i(j|k))", "ij"),
+        ("(bc+d$|ef*g.|h?i(j|k))", "reffgz"),
+        ("(((((((((a)))))))))", "a"),
+        ("(.*)c(.*)", "abcde"),
+        ("a(bc)d", "abcd"),
+        ("a[\x01-\x03]?c", "a\x02c"),
+        (
+            "M[ou]'?am+[ae]r_.*([AEae]l[-_])?[GKQ]h?[aeu]+([dtz][dhz]?)+af[iy]",
+            "Muammar_Qaddafi",
+        ),
+        (
+            "M[ou]'?am+[ae]r_.*([AEae]l[-_])?[GKQ]h?[aeu]+([dtz][dhz]?)+af[iy]",
+            "Mo'ammar_Gadhafi",
+        ),
+        (
+            "M[ou]'?am+[ae]r_.*([AEae]l[-_])?[GKQ]h?[aeu]+([dtz][dhz]?)+af[iy]",
+            "Muammar_Kaddafi",
+        ),
+        (
+            "M[ou]'?am+[ae]r_.*([AEae]l[-_])?[GKQ]h?[aeu]+([dtz][dhz]?)+af[iy]",
+            "Muammar_Qadhafi",
+        ),
+        (
+            "M[ou]'?am+[ae]r_.*([AEae]l[-_])?[GKQ]h?[aeu]+([dtz][dhz]?)+af[iy]",
+            "Muammar_Gadafi",
+        ),
+        (
+            "M[ou]'?am+[ae]r_.*([AEae]l[-_])?[GKQ]h?[aeu]+([dtz][dhz]?)+af[iy]",
+            "Mu'ammar_Qadafi",
+        ),
+        (
+            "M[ou]'?am+[ae]r_.*([AEae]l[-_])?[GKQ]h?[aeu]+([dtz][dhz]?)+af[iy]",
+            "Moamar_Gaddafi",
+        ),
+        (
+            "M[ou]'?am+[ae]r_.*([AEae]l[-_])?[GKQ]h?[aeu]+([dtz][dhz]?)+af[iy]",
+            "Mu'ammar_Qadhdhafi",
+        ),
+        (
+            "M[ou]'?am+[ae]r_.*([AEae]l[-_])?[GKQ]h?[aeu]+([dtz][dhz]?)+af[iy]",
+            "Muammar_Khaddafi",
+        ),
+        (
+            "M[ou]'?am+[ae]r_.*([AEae]l[-_])?[GKQ]h?[aeu]+([dtz][dhz]?)+af[iy]",
+            "Muammar_Ghaddafy",
+        ),
+        (
+            "M[ou]'?am+[ae]r_.*([AEae]l[-_])?[GKQ]h?[aeu]+([dtz][dhz]?)+af[iy]",
+            "Muammar_Ghadafi",
+        ),
+        (
+            "M[ou]'?am+[ae]r_.*([AEae]l[-_])?[GKQ]h?[aeu]+([dtz][dhz]?)+af[iy]",
+            "Muammar_Ghaddafi",
+        ),
+        (
+            "M[ou]'?am+[ae]r_.*([AEae]l[-_])?[GKQ]h?[aeu]+([dtz][dhz]?)+af[iy]",
+            "Muamar_Kaddafi",
+        ),
+        (
+            "M[ou]'?am+[ae]r_.*([AEae]l[-_])?[GKQ]h?[aeu]+([dtz][dhz]?)+af[iy]",
+            "Muammar_Quathafi",
+        ),
+        (
+            "M[ou]'?am+[ae]r_.*([AEae]l[-_])?[GKQ]h?[aeu]+([dtz][dhz]?)+af[iy]",
+            "Muammar_Gheddafi",
+        ),
+        (
+            "M[ou]'?am+[ae]r_.*([AEae]l[-_])?[GKQ]h?[aeu]+([dtz][dhz]?)+af[iy]",
+            "Moammar_Khadafy",
+        ),
+        (
+            "M[ou]'?am+[ae]r_.*([AEae]l[-_])?[GKQ]h?[aeu]+([dtz][dhz]?)+af[iy]",
+            "Moammar_Qudhafi",
+        ),
+        ("a+(b|c)*d+", "aabcdd"),
+        ("^.+$", "vivi"),
+        ("^(.+)$", "vivi"),
+        ("^([^!.]+).att.com!(.+)$", "gryphon.att.com!eby"),
+        ("^([^!]+!)?([^!]+)$", "bas"),
+        ("^([^!]+!)?([^!]+)$", "bar!bas"),
+        ("^([^!]+!)?([^!]+)$", "foo!bas"),
+        ("^.+!([^!]+!)([^!]+)$", "foo!bar!bas"),
+        ("((foo)|(bar))!bas", "bar!bas"),
+        ("((foo)|(bar))!bas", "foo!bar!bas"),
+        ("((foo)|(bar))!bas", "foo!bas"),
+        ("((foo)|bar)!bas", "bar!bas"),
+        ("((foo)|bar)!bas", "foo!bar!bas"),
+        ("((foo)|bar)!bas", "foo!bas"),
+        ("(foo|(bar))!bas", "bar!bas"),
+        ("(foo|(bar))!bas", "foo!bar!bas"),
+        ("(foo|(bar))!bas", "foo!bas"),
+        ("(foo|bar)!bas", "bar!bas"),
+        ("(foo|bar)!bas", "foo!bar!bas"),
+        ("(foo|bar)!bas", "foo!bas"),
+        ("^(([^!]+!)?([^!]+)|.+!([^!]+!)([^!]+))$", "foo!bar!bas"),
+        ("^([^!]+!)?([^!]+)$|^.+!([^!]+!)([^!]+)$", "bas"),
+        ("^([^!]+!)?([^!]+)$|^.+!([^!]+!)([^!]+)$", "bar!bas"),
+        ("^([^!]+!)?([^!]+)$|^.+!([^!]+!)([^!]+)$", "foo!bar!bas"),
+        ("^([^!]+!)?([^!]+)$|^.+!([^!]+!)([^!]+)$", "foo!bas"),
+        ("^(([^!]+!)?([^!]+)|.+!([^!]+!)([^!]+))$", "bas"),
+        ("^(([^!]+!)?([^!]+)|.+!([^!]+!)([^!]+))$", "bar!bas"),
+        ("^(([^!]+!)?([^!]+)|.+!([^!]+!)([^!]+))$", "foo!bar!bas"),
+        ("^(([^!]+!)?([^!]+)|.+!([^!]+!)([^!]+))$", "foo!bas"),
+        (".*(/XXX).*", "/XXX"),
+        (".*(\\\\XXX).*", "\\XXX"),
+        ("\\\\XXX", "\\XXX"),
+        (".*(/000).*", "/000"),
+        (".*(\\\\000).*", "\\000"),
+        ("\\\\000", "\\000"),
+    ]
+    _test_cases_suite(cases)
+
+
+@pytest.mark.skip
+def test_infinite_loops():
+    cases = [
+        ("(a*)*", "-"),
+        ("(a*)+", "-"),
+        ("(a*|b)*", "-"),
+        ("(^)*", "-"),
+        ("((a*|b))*", "-"),
+        ("[[:lower:]]+", "`az{"),
+        ("[[:upper:]]+", "@AZ["),
     ]
 
     _test_cases_suite(cases)
