@@ -1,16 +1,12 @@
 import re
-from collections import defaultdict
-from dataclasses import dataclass, field
-from itertools import chain, product
-from operator import itemgetter
+from dataclasses import dataclass
+from itertools import chain
 from pprint import pprint
-from string import ascii_uppercase
 from typing import Collection, Optional
 
-from more_itertools import first_true, flatten
+from more_itertools import first_true
 
 from core import (
-    DFA,
     NFA,
     RegexFlag,
     RegexpParser,
@@ -18,18 +14,7 @@ from core import (
     Transition,
     Virtual,
     Tag,
-    gen_dfa_state,
 )
-
-
-def all_min(items: Collection):
-    minimum = min(items, key=itemgetter(0))[0]
-    return minimum, list(flatten([value for key, value in items if key == minimum]))
-
-
-def all_max(items: Collection):
-    maximum = max(items, key=itemgetter(0))[0]
-    return maximum, list(flatten([value for key, value in items if key == maximum]))
 
 
 @dataclass(slots=True)
