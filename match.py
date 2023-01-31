@@ -73,14 +73,7 @@ class Regexp(NFA):
         self.set_terminals(self.parser.root.fsm(self))
         self.update_symbols_and_states()
 
-    def _match(
-        self, state: State, text: str, position: int, flags: RegexFlag
-    ) -> list[Transition]:
-        return [
-            transition
-            for transition in self[state]
-            if transition.match(text, position, flags) is not None
-        ]
+        # DFA cache
 
     def step(
         self, states: Collection[State], text, index
@@ -200,7 +193,7 @@ if __name__ == "__main__":
 
     # regex, t = "(?i)(a+|b){0,1}?", "AB"
     pattern = Regexp(regex)
-    pattern.graph()
+    # pattern.graph()
     # DFA(pattern).graph()
     start = monotonic()
     pprint(pattern.findall(t))

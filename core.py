@@ -10,7 +10,6 @@ from typing import Hashable, Iterable, Iterator, Optional, Union
 
 import graphviz
 from more_itertools import first, first_true, minmax, pairwise
-from ordered_set import OrderedSet
 
 from unionfind import UnionFind
 
@@ -259,7 +258,7 @@ class NFA(defaultdict[State, list[Transition]]):
 
         seen = set()
         stack = list(states)
-        closure = OrderedSet()
+        closure = set()
 
         while stack:
             if (state := stack.pop()) in seen:
