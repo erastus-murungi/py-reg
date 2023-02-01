@@ -1,13 +1,19 @@
 import re
 from dataclasses import dataclass
-from itertools import chain
 from pprint import pprint
-from typing import Collection, Optional
+from typing import Optional
 from time import monotonic
 
 from more_itertools import first_true
 
-from core import DFA, NFA, RegexFlag, RegexpParser, State, Tag, Transition, Virtual
+from core import (
+    NFA,
+    RegexpParser,
+    State,
+    Tag,
+    Transition,
+    Virtual,
+)
 
 
 @dataclass(slots=True)
@@ -65,6 +71,10 @@ class Match:
         return self.captured_groups[which][index - 1].string(self.text)
 
 
+wins = 0
+losses = 0
+
+
 class Regexp(NFA):
     def __init__(self, regexp: str):
         super().__init__()
@@ -73,14 +83,21 @@ class Regexp(NFA):
         self.set_terminals(self.parser.root.fsm(self))
         self.update_symbols_and_states()
 
-        # DFA cache
+    def matches(self, state, text, index):
+        for transition in self[state]:
+            if (
+                transition.matchable == Tag.epsilon() and transition.end in self.accept
+            ) or (
+                transition.matchable != Tag.epsilon()
+                and transition.match(text, index, self.parser.flags) is not None
+            ):
+                yield transition
 
-    def step(
-        self, states: Collection[State], text, index
+    def _compute_step(
+        self, state: State, text: str, index: int
     ) -> tuple[list[State], list[Transition]]:
-
         explored = set()
-        stack = [(False, state) for state in states]
+        stack = [(False, state)]
         closure = []
         transitions = []
 
@@ -89,15 +106,7 @@ class Regexp(NFA):
             if completed:
                 closure.append(state)
                 # once we are done with this state
-                for transition in self[state]:
-                    if (
-                        transition.matchable == Tag.epsilon()
-                        and transition.end in self.accept
-                    ) or (
-                        transition.matchable != Tag.epsilon()
-                        and transition.match(text, index, self.parser.flags)
-                    ):
-                        transitions.append(transition)
+                transitions.extend(self.matches(state, text, index))
 
             if state in explored:
                 continue
@@ -112,21 +121,28 @@ class Regexp(NFA):
             )
         return closure, transitions
 
+    def step(self, state: State, text: str, index: int) -> list[Transition]:
+        _, transitions = self._compute_step(state, text, index)
+        return transitions
+
     def _match_at_index(
-        self, text: str, state: State, index: int, captured_groups: CapturedGroups
+        self,
+        state: State,
+        text: str,
+        index: int,
+        captured_groups: CapturedGroups,
     ) -> Optional[MatchResult]:
 
         if state in self.accept:
             return index, [captured_groups]
 
-        states, transitions = self.step([state], text, index)
+        transitions = self.step(state, text, index)
         # print(states, transitions)
 
         for matchable, end_state in transitions:
             captured_groups_copy = tuple(
                 captured_group.copy() for captured_group in captured_groups
             )
-
             if matchable.is_opening_group():
                 captured_groups_copy[matchable.group_index].start = index
 
@@ -134,8 +150,8 @@ class Regexp(NFA):
                 captured_groups_copy[matchable.group_index].end = index
 
             result = self._match_at_index(
-                text,
                 end_state,
+                text,
                 index + (not isinstance(matchable, Virtual)),
                 captured_groups_copy,
             )
@@ -157,7 +173,12 @@ class Regexp(NFA):
                 CapturedGroup() for _ in range(self.parser.group_count)
             )
             if (
-                result := self._match_at_index(text, self.start, index, captured_groups)
+                result := self._match_at_index(
+                    self.start,
+                    text,
+                    index,
+                    captured_groups,
+                )
             ) is not None:
                 position, captured_groups = result
                 yield Match(
@@ -187,13 +208,14 @@ if __name__ == "__main__":
     # regex, t = "a.+?c", "abcabc"
     # regex, t = "a?", "a"
     # regex, t = r"([0a-z][a-z0-9]*,)+", r"a5,b7,c9,"
+    regex, t = "a*(^a)", "aa"
     # regex, t = "(?:ab)+", "ababa"
     # regex, t = "(a*)*", "-",
-    regex, t = ("([^.]*)\\.([^:]*):[T ]+(.*)", "track1.title:TBlah blah blah")
+    # regex, t = ("([^.]*)\\.([^:]*):[T ]+(.*)", "track1.title:TBlah blah blah")
 
     # regex, t = "(?i)(a+|b){0,1}?", "AB"
     pattern = Regexp(regex)
-    # pattern.graph()
+    pattern.graph()
     # DFA(pattern).graph()
     start = monotonic()
     pprint(pattern.findall(t))

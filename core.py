@@ -92,6 +92,9 @@ class Matchable(Hashable):
     def is_closing_group(self):
         return isinstance(self, Tag) and self.tag_type == TagType.GroupExit
 
+    def not_anchor(self):
+        return not isinstance(self, Anchor)
+
 
 class Virtual(Matchable, ABC):
     ...
@@ -152,7 +155,7 @@ class Fragment:
         yield from astuple(self)
 
 
-@dataclass()
+@dataclass(eq=True)
 class Transition:
     matchable: Matchable
     end: State
@@ -504,9 +507,6 @@ class DFA(NFA):
         self.start = -1
         self.accept.clear()
         self.states.clear()
-
-    def add_transition(self, start: State, end: State, matchable: Matchable) -> None:
-        self[start].append(Transition(matchable, end))
 
 
 ESCAPED = set(". \\ + * ? [ ^ ] $ ( ) { } = < > | -".split())

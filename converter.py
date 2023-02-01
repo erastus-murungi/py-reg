@@ -1,13 +1,13 @@
 from itertools import product
 from typing import Iterable
 
-from core import DFA, NFA, State, Transition
+from core import NFA, State, gen_state, Tag, Transition
 
 
 def _remove_unreachable_states(
     start_state: State,
     states: Iterable[State],
-    transitions: NFA,
+    nfa: NFA,
 ):
     # remove unreachable states
     seen = set()
@@ -21,13 +21,12 @@ def _remove_unreachable_states(
             continue
         seen.add(u)
 
-        for _, v in transitions[u]:
-            stack.extend(v)
+        stack.extend([transition.end for transition in nfa[u]])
         reachable.add(u)
 
     for state in states:
         if state not in reachable:
-            transitions.pop(state)
+            nfa.pop(state)
 
 
 def _compute_state_2_closure_mapping(nfa) -> dict[State, frozenset[State]]:
@@ -38,14 +37,24 @@ def _compute_state_2_closure_mapping(nfa) -> dict[State, frozenset[State]]:
 
 
 def _mutate_and_gen_accept_states(
-    states: Iterable[State], state2closure: dict[State, frozenset[State]]
-) -> set[State]:
-    accept_states = set()
-    for state in states:
-        if any(v.accepts for v in state2closure[state]):
-            state.accepts = True
-            accept_states.add(state)
-    return accept_states
+    old_nfa: NFA,
+    new_nfa: NFA,
+    state2closure: dict[State, frozenset[State]],
+):
+    final_accept = gen_state()
+    added_transitions = {}
+    for state in new_nfa.states:
+        if any(v in old_nfa.accept for v in state2closure[state]):
+            transition = Transition(Tag.epsilon(), final_accept)
+            added_transitions[state] = transition
+    if len(added_transitions) == 0:
+        raise RuntimeError(f"No accept states found in {old_nfa}")
+    if len(added_transitions) == 1:
+        new_nfa.accept.update(old_nfa.accept)
+    else:
+        for state, transition in added_transitions.items():
+            new_nfa[state].append(transition)
+        new_nfa.accept.add(final_accept)
 
 
 def _fill_transitions_and_gen_states(
@@ -61,16 +70,15 @@ def _fill_transitions_and_gen_states(
         for k in state2closure[i]:
             for symbol in nfa.symbols:
                 if j in nfa.transition(k, symbol):
-                    fsm[i].add(Transition(symbol, j))
+                    fsm.add_transition(i, j, symbol)
     fsm.update_symbols_and_states()
 
 
-def remove_epsilon_transitions(nfa: NFA) -> DFA:
+def reduce_epsilon_transitions(nfa: NFA) -> NFA:
     state2closure = _compute_state_2_closure_mapping(nfa)
-    dfa = DFA()
-    _fill_transitions_and_gen_states(nfa, state2closure, dfa)
-    _remove_unreachable_states(nfa.start, dfa.states, dfa)
-    accept_states = _mutate_and_gen_accept_states(dfa.states, state2closure)
-    dfa.accept.update(accept_states)
-    dfa.set_start(nfa.start)
-    return dfa
+    new_nfa = NFA()
+    _fill_transitions_and_gen_states(nfa, state2closure, new_nfa)
+    _remove_unreachable_states(nfa.start, new_nfa.states, new_nfa)
+    _mutate_and_gen_accept_states(nfa, new_nfa, state2closure)
+    new_nfa.set_start(nfa.start)
+    return new_nfa
