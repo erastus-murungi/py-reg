@@ -2,3 +2,6 @@ __pycache__
 .idea
 graphs
 .DS_Store
+data-dir/
+process.py
+test.log

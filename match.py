@@ -1,12 +1,13 @@
 import re
 from dataclasses import dataclass
+from parser import RegexpParser, Virtual
 from pprint import pprint
 from time import monotonic
 from typing import Optional
 
 from more_itertools import first_true
 
-from core import NFA, RegexpParser, State, Tag, Transition, Virtual
+from core import NFA, State, Tag, Transition
 
 
 @dataclass(slots=True)
@@ -65,7 +66,7 @@ class Regexp(NFA):
         super().__init__()
         self.pattern = regexp
         self.parser = RegexpParser(regexp)
-        self.set_terminals(self.parser.root.fsm(self))
+        self.set_terminals(self.parser.root.accept(self))
         self.update_symbols_and_states()
 
     def matches(self, state, text, index):

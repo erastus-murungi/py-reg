@@ -1,10 +1,10 @@
 import logging
 import re
+from parser import InvalidCharacterRange
 from random import randint, random, seed
 
 import pytest
 
-from core import InvalidCharacterRange
 from match import Regexp
 
 logging.basicConfig(filename="test.log", level=logging.NOTSET, encoding="utf-8")
