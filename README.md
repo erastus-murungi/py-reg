@@ -1,6 +1,6 @@
 # PyReg
 
-A simple NFA-based regular expression engine.
+A simple Backtracking NFA-based regular expression engine.
 
 ### Supports:
   1. ``|`` Alternation
