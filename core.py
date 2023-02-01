@@ -1,22 +1,10 @@
 from collections import defaultdict
 from dataclasses import astuple, dataclass, field
 from itertools import chain, combinations, count, product
-from parser import (
-    Anchor,
-    CharacterGroup,
-    CharacterScalar,
-    Expression,
-    Group,
-    Match,
-    Matchable,
-    MatchAnyCharacter,
-    Quantifier,
-    QuantifierType,
-    RegexFlag,
-    RegexpNodesVisitor,
-    Tag,
-    TagType,
-)
+from parser import (Anchor, CharacterGroup, CharacterScalar, Expression, Group,
+                    Match, Matchable, MatchAnyCharacter, Quantifier,
+                    QuantifierType, RegexFlag, RegexpNodesVisitor, Tag,
+                    TagType)
 from string import ascii_uppercase
 from typing import Iterable, Iterator, Optional, Union
 

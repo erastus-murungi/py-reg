@@ -943,7 +943,7 @@ def test_basic3():
     _test_cases_suite(cases)
 
 
-@pytest.mark.skip
+# @pytest.mark.skip
 def test_infinite_loops():
     cases = [
         ("(a*)*", "-"),
@@ -951,8 +951,15 @@ def test_infinite_loops():
         ("(a*|b)*", "-"),
         ("(^)*", "-"),
         ("((a*|b))*", "-"),
-        ("[[:lower:]]+", "`az{"),
-        ("[[:upper:]]+", "@AZ["),
+        ("(a|)*", "-"),
+        ("(?:a|)*", "-"),
+        ("(?:a*)*", "-"),
+        ("(?:a*)+", "-"),
+        ("(?:a*|b)*", "-"),
+        ("(?:^)*", "-"),
+        ("(?:(a*|b))*", "-"),
+        # ("[[:lower:]]+", "`az{"),
+        # ("[[:upper:]]+", "@AZ["),
     ]
 
     _test_cases_suite(cases)

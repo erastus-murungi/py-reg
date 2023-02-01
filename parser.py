@@ -17,7 +17,7 @@ class RegexFlag(IntFlag):
     FREESPACING = auto()
 
 
-class InvalidCharacterRange(Exception):
+class InvalidCharacterRange(ValueError):
     ...
 
 
@@ -118,6 +118,10 @@ class Matchable(Hashable):
 
     def is_closing_group(self):
         return isinstance(self, Tag) and self.tag_type == TagType.GroupExit
+
+    def increment(self, index: int) -> int:
+        """We keep the index the same only when we are a `Virtual` node"""
+        return index + (not isinstance(self, Virtual))
 
 
 class Virtual(Matchable, ABC):

@@ -1,6 +1,6 @@
 import re
 from dataclasses import dataclass
-from parser import RegexpParser, Virtual
+from parser import RegexpParser
 from pprint import pprint
 from time import monotonic
 from typing import Optional
@@ -24,7 +24,7 @@ class CapturedGroup:
         return None
 
 
-CapturedGroups = tuple[CapturedGroup, ...]
+CapturedGroups = list[CapturedGroup]
 MatchResult = tuple[int, CapturedGroups]
 
 
@@ -53,9 +53,7 @@ class Match:
 
     def group(self, index=0) -> Optional[str]:
         if index < 0 or index > len(self.captured_groups):
-            raise IndexError(
-                f"index should be 0 <= {len(self.captured_groups[index]) + 1}"
-            )
+            raise IndexError(f"index should be 0 <= {len(self.captured_groups)}")
         if index == 0:
             return self.text[self.start : self.end]
         return self.captured_groups[index - 1].string(self.text)
@@ -120,16 +118,19 @@ class Regexp(NFA):
         captured_groups = [CapturedGroup() for _ in range(self.parser.group_count)]
 
         # we only need to keep track of 3 state variables
-        work_list = [(self.start, index, captured_groups)]
+        work_list = [(self.start, index, captured_groups, ())]
 
         while work_list:
-            current_state, index, captured_groups = work_list.pop()
+            current_state, index, captured_groups, path = work_list.pop()
 
             if current_state in self.accept:
                 return index, captured_groups
 
             for matchable, end_state in reversed(self.step(current_state, text, index)):
                 # only create a copy of captured groups when a modification is made
+                if (current_state, end_state, index) in path:
+                    continue
+
                 if matchable.is_opening_group() or matchable.is_closing_group():
                     group_index = matchable.group_index
                     captured_group_copy = captured_groups[group_index].copy()
@@ -141,12 +142,10 @@ class Regexp(NFA):
                     captured_groups = captured_groups[:]
                     captured_groups[group_index] = captured_group_copy
 
+                path_copy = path + ((current_state, end_state, index),)
+
                 work_list.append(
-                    (
-                        end_state,
-                        index + (not isinstance(matchable, Virtual)),
-                        captured_groups,
-                    )
+                    (end_state, matchable.increment(index), captured_groups, path_copy)
                 )
 
         return None
@@ -157,19 +156,24 @@ class Regexp(NFA):
         index: int,
     ) -> Optional[int]:
         # we only need to keep track of 2 state variables
-        work_list = [(self.start, index)]
+        work_list = [(self.start, index, ())]
 
         while work_list:
-            current_state, index = work_list.pop()
+            current_state, index, path = work_list.pop()
 
             if current_state in self.accept:
                 return index
 
             work_list.extend(
-                (end_state, index + (not isinstance(matchable, Virtual)))
+                (
+                    end_state,
+                    matchable.increment(index),
+                    path + ((current_state, end_state, index),),
+                )
                 for matchable, end_state in reversed(
                     self.step(current_state, text, index)
                 )
+                if (current_state, end_state, index) not in path
             )
 
         return None
@@ -179,7 +183,7 @@ class Regexp(NFA):
             return self._match_at_index_with_groups(text, index)
         else:
             if (position := self._match_at_index_no_groups(text, index)) is not None:
-                return position, ()
+                return position, []
             return None
 
     def match(self, text: str):
@@ -218,10 +222,10 @@ if __name__ == "__main__":
     # regex, t = r"^ab|(abab)$", "abbabab"
     # regex, t = "a.+?c", "abcabc"
     # regex, t = "a?", "a"
-    # regex, t = r"([0a-z][a-z0-9]*,)+", r"a5,b7,c9,"
-    regex, t = r"ABC[a-x]\d", "a"
+    regex, t = r"([0a-z][a-z0-9]*,)+", r"a5,b7,c9,"
+    # regex, t = r"ABC[a-x]\d", "a"
     # regex, t = "(?:ab)+", "ababa"
-    # regex, t = "(a*)*", "-",
+    # regex, t = '(?:a|)*', ''
     # regex, t = ("([^.]*)\\.([^:]*):[T ]+(.*)", "track1.title:TBlah blah blah")
 
     # regex, t = "(?i)(a+|b){0,1}?", "AB"
