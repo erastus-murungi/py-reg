@@ -116,7 +116,7 @@ class Regexp(NFA):
         index: int,
     ) -> Optional[MatchResult]:
 
-        captured_groups = tuple(CapturedGroup() for _ in range(self.parser.group_count))
+        captured_groups = [CapturedGroup() for _ in range(self.parser.group_count)]
 
         # we only need to keep track of 3 state variables
         work_list = [(self.start, index, captured_groups)]
@@ -130,15 +130,15 @@ class Regexp(NFA):
             for matchable, end_state in reversed(self.step(current_state, text, index)):
                 # only create a copy of captured groups when a modification is made
                 if matchable.is_opening_group() or matchable.is_closing_group():
-                    captured_groups = tuple(
-                        captured_group.copy() for captured_group in captured_groups
-                    )
-
-                    captured_group = captured_groups[matchable.group_index]
+                    group_index = matchable.group_index
+                    captured_group_copy = captured_groups[group_index].copy()
                     if matchable.is_opening_group():
-                        captured_group.start = index
+                        captured_group_copy.start = index
                     else:
-                        captured_group.end = index
+                        captured_group_copy.end = index
+                    # must create a copy of the list
+                    captured_groups = captured_groups[:]
+                    captured_groups[group_index] = captured_group_copy
 
                 work_list.append(
                     (
