@@ -1,19 +1,12 @@
 import re
 from dataclasses import dataclass
 from pprint import pprint
-from typing import Optional
 from time import monotonic
+from typing import Optional
 
 from more_itertools import first_true
 
-from core import (
-    NFA,
-    RegexpParser,
-    State,
-    Tag,
-    Transition,
-    Virtual,
-)
+from core import NFA, RegexpParser, State, Tag, Transition, Virtual
 
 
 @dataclass(slots=True)
@@ -31,7 +24,7 @@ class CapturedGroup:
 
 
 CapturedGroups = tuple[CapturedGroup, ...]
-MatchResult = tuple[int, list[CapturedGroups]]
+MatchResult = tuple[int, CapturedGroups]
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,27 +45,19 @@ class Match:
             f"match={self.text[self.start:self.end]!r})"
         )
 
-    def all_groups(self):
-        return tuple(self.groups(index) for index in range(len(self.captured_groups)))
-
-    def groups(self, index: int = 0) -> tuple[str, ...]:
+    def groups(self) -> tuple[str, ...]:
         return tuple(
-            captured_group.string(self.text)
-            for captured_group in self.captured_groups[index]
+            captured_group.string(self.text) for captured_group in self.captured_groups
         )
 
-    def group(self, index=0, which=0) -> Optional[str]:
-        if index < 0 or index > len(self.captured_groups[index]):
+    def group(self, index=0) -> Optional[str]:
+        if index < 0 or index > len(self.captured_groups):
             raise IndexError(
-                f"index should be 0 <= {len(self.captured_groups[which][index]) + 1}"
+                f"index should be 0 <= {len(self.captured_groups[index]) + 1}"
             )
         if index == 0:
             return self.text[self.start : self.end]
-        return self.captured_groups[which][index - 1].string(self.text)
-
-
-wins = 0
-losses = 0
+        return self.captured_groups[index - 1].string(self.text)
 
 
 class Regexp(NFA):
@@ -125,41 +110,76 @@ class Regexp(NFA):
         _, transitions = self._compute_step(state, text, index)
         return transitions
 
-    def _match_at_index(
+    def _match_at_index_with_groups(
         self,
-        state: State,
         text: str,
         index: int,
-        captured_groups: CapturedGroups,
     ) -> Optional[MatchResult]:
 
-        if state in self.accept:
-            return index, [captured_groups]
+        captured_groups = tuple(CapturedGroup() for _ in range(self.parser.group_count))
 
-        transitions = self.step(state, text, index)
-        # print(states, transitions)
+        # we only need to keep track of 3 state variables
+        work_list = [(self.start, index, captured_groups)]
 
-        for matchable, end_state in transitions:
-            captured_groups_copy = tuple(
-                captured_group.copy() for captured_group in captured_groups
-            )
-            if matchable.is_opening_group():
-                captured_groups_copy[matchable.group_index].start = index
+        while work_list:
+            current_state, index, captured_groups = work_list.pop()
 
-            elif matchable.is_closing_group():
-                captured_groups_copy[matchable.group_index].end = index
+            if current_state in self.accept:
+                return index, captured_groups
 
-            result = self._match_at_index(
-                end_state,
-                text,
-                index + (not isinstance(matchable, Virtual)),
-                captured_groups_copy,
-            )
+            for matchable, end_state in reversed(self.step(current_state, text, index)):
+                # only create a copy of captured groups when a modification is made
+                if matchable.is_opening_group() or matchable.is_closing_group():
+                    captured_groups = tuple(
+                        captured_group.copy() for captured_group in captured_groups
+                    )
 
-            if result is not None:
-                return result
+                    captured_group = captured_groups[matchable.group_index]
+                    if matchable.is_opening_group():
+                        captured_group.start = index
+                    else:
+                        captured_group.end = index
+
+                work_list.append(
+                    (
+                        end_state,
+                        index + (not isinstance(matchable, Virtual)),
+                        captured_groups,
+                    )
+                )
 
         return None
+
+    def _match_at_index_no_groups(
+        self,
+        text: str,
+        index: int,
+    ) -> Optional[int]:
+        # we only need to keep track of 2 state variables
+        work_list = [(self.start, index)]
+
+        while work_list:
+            current_state, index = work_list.pop()
+
+            if current_state in self.accept:
+                return index
+
+            work_list.extend(
+                (end_state, index + (not isinstance(matchable, Virtual)))
+                for matchable, end_state in reversed(
+                    self.step(current_state, text, index)
+                )
+            )
+
+        return None
+
+    def _match_at_index(self, text: str, index: int) -> Optional[MatchResult]:
+        if self.parser.group_count > 0:
+            return self._match_at_index_with_groups(text, index)
+        else:
+            if (position := self._match_at_index_no_groups(text, index)) is not None:
+                return position, ()
+            return None
 
     def match(self, text: str):
         """Try to apply the pattern at the start of the string, returning
@@ -169,17 +189,7 @@ class Regexp(NFA):
     def finditer(self, text: str):
         index = 0
         while index <= len(text):
-            captured_groups = tuple(
-                CapturedGroup() for _ in range(self.parser.group_count)
-            )
-            if (
-                result := self._match_at_index(
-                    self.start,
-                    text,
-                    index,
-                    captured_groups,
-                )
-            ) is not None:
+            if (result := self._match_at_index(text, index)) is not None:
                 position, captured_groups = result
                 yield Match(
                     index,
@@ -229,7 +239,7 @@ if __name__ == "__main__":
     # print(Regexp(regex).match(t))
 
     print([m.groups() for m in re.finditer(regex, t)])
-    print(pattern.match(t).all_groups())
+    print(pattern.match(t).group())
 
     # for span in matcher:
     #     print(span.groups())

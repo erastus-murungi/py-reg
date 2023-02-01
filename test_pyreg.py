@@ -20,11 +20,12 @@ def _test_cases_suite(cases: list[tuple[str, str]]):
         assert expected == actual, (i, pattern, text)
 
         expected_groups = [m.groups() for m in re.finditer(pattern, text)]
-        actual_groups = [m.all_groups() for m in Regexp(pattern).finditer(text)]
-        for group, all_groups in zip(expected_groups, actual_groups):
-            assert group in all_groups, (i, pattern, text)
+        actual_groups = [m.groups() for m in Regexp(pattern).finditer(text)]
+        for expected_group, actual_group in zip(expected_groups, actual_groups):
+            assert expected_group == actual_group, (i, pattern, text)
             logging.info(
-                f"{i:04d} pattern = {pattern!r}, text = {text!r}, groups={group}, all_groups={all_groups}"
+                f"{i:04d} pattern = {pattern!r}, text = {text!r}, expected_group={expected_group}, "
+                f"actual_group={actual_group}"
             )
 
 
