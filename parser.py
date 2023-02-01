@@ -6,6 +6,8 @@ from enum import Enum, IntFlag, auto
 from sys import maxsize
 from typing import Generic, Hashable, Optional, TypeVar, Union
 
+T = TypeVar("T")
+
 
 class RegexFlag(IntFlag):
     NOFLAG = auto()
@@ -116,9 +118,6 @@ class Matchable(Hashable):
 
     def is_closing_group(self):
         return isinstance(self, Tag) and self.tag_type == TagType.GroupExit
-
-    def not_anchor(self):
-        return not isinstance(self, Anchor)
 
 
 class Virtual(Matchable, ABC):
@@ -231,6 +230,7 @@ class Expression(RegexNode):
         seq = "".join(item.string() for item in self.seq)
         if self.alternate is not None:
             return f"{seq}|{self.alternate.string()}"
+        return seq
 
 
 ESCAPED = set(". \\ + * ? [ ^ ] $ ( ) { } = < > | -".split())
@@ -238,10 +238,6 @@ ESCAPED = set(". \\ + * ? [ ^ ] $ ( ) { } = < > | -".split())
 CHARACTER_CLASSES = {"w", "W", "s", "S", "d", "D"}
 
 UNESCAPED_IN_CHAR_GROUP = ESCAPED - {"]"}
-
-
-class Operator(ABC):
-    pass
 
 
 class QuantifierItem(ABC):
@@ -272,23 +268,9 @@ class QuantifierChar(QuantifierItem):
 
 
 @dataclass
-class Quantifier(Operator):
+class Quantifier:
     item: QuantifierChar
     lazy: bool = False
-
-    def apply(self, fragment, nfa):
-        """
-        TODO: Extract this logic out of here
-        """
-        match self.item.type:
-            case QuantifierType.OneOrMore:
-                return nfa.one_or_more(fragment, self.lazy)
-            case QuantifierType.ZeroOrMore:
-                return nfa.zero_or_more(fragment, self.lazy)
-            case QuantifierType.ZeroOrOne:
-                return nfa.zero_or_one(fragment, self.lazy)
-            case _:
-                raise NotImplementedError
 
     def string(self):
         lazy = "?" if self.lazy else ""
@@ -401,13 +383,10 @@ class Group(SubExpressionItem):
         return self.group_index is not None
 
     def string(self):
-        expression = f"({self.expression.string()})"
+        expression = f"({'' if self.capturing() else '?:'}{self.expression.string()})"
         if self.quantifier is not None:
             return f"{expression}{self.quantifier.string()}"
         return expression
-
-
-T = TypeVar("T")
 
 
 class MatchItem(SubExpressionItem, ABC):
@@ -420,7 +399,9 @@ class Match(SubExpressionItem):
     quantifier: Optional[Quantifier]
 
     def string(self):
-        return f'{self.item.string()}{self.quantifier if self.quantifier else ""}'
+        return (
+            f'{self.item.string()}{self.quantifier.string() if self.quantifier else ""}'
+        )
 
 
 @dataclass
@@ -535,7 +516,7 @@ class CharacterRange(CharacterGroupItem, Matchable):
         return hash((self.start, self.end))
 
     def __repr__(self):
-        return f"[{self.start}-{self.end}]"
+        return f"{self.start}-{self.end}"
 
 
 class RegexpNodesVisitor(Generic[T], metaclass=ABCMeta):
@@ -799,7 +780,7 @@ class RegexpParser:
             )
         elif self.matches_any(("d", "D")):
             return CharacterGroup(
-                self._pos, (CharacterRange("0", "9"), self.matches("D"))
+                self._pos, (CharacterRange("0", "9"),), self.matches("D")
             )
         elif self.matches_any(("s", "S")):
             return CharacterGroup(

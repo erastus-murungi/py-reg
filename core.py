@@ -10,6 +10,8 @@ from parser import (
     Match,
     Matchable,
     MatchAnyCharacter,
+    Quantifier,
+    QuantifierType,
     RegexFlag,
     RegexpNodesVisitor,
     Tag,
@@ -298,6 +300,17 @@ class NFA(defaultdict[State, list[Transition]], RegexpNodesVisitor[Fragment]):
         dot.edge("start", f"{self.start}", arrowhead="vee")
         dot.render(view=True, directory="graphs", filename=str(id(self)))
 
+    def _apply_quantifier(self, quantifier: Quantifier, fragment: Fragment):
+        match quantifier.item.type:
+            case QuantifierType.OneOrMore:
+                return self.one_or_more(fragment, quantifier.lazy)
+            case QuantifierType.ZeroOrMore:
+                return self.zero_or_more(fragment, quantifier.lazy)
+            case QuantifierType.ZeroOrOne:
+                return self.zero_or_one(fragment, quantifier.lazy)
+            case _:
+                raise NotImplementedError
+
     def visit_anchor(self, anchor: Anchor):
         return self.base(anchor)
 
@@ -326,14 +339,14 @@ class NFA(defaultdict[State, list[Transition]], RegexpNodesVisitor[Fragment]):
             self.add_transition(state2, fragment.start, Tag.link())
             fragment = Fragment(state1, state3)
         if group.quantifier:
-            fragment = group.quantifier.apply(fragment, self)
+            fragment = self._apply_quantifier(group.quantifier, fragment)
         return fragment
 
     def visit_match(self, match: Match) -> Fragment:
         fragment = match.item.accept(self)
-        if match.quantifier is None:
-            return fragment
-        return match.quantifier.apply(fragment, self)
+        if match.quantifier:
+            return self._apply_quantifier(match.quantifier, fragment)
+        return fragment
 
     def visit_match_any_character(self, meta_char: MatchAnyCharacter) -> Fragment:
         return self.base(meta_char)

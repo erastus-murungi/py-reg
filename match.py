@@ -219,7 +219,7 @@ if __name__ == "__main__":
     # regex, t = "a.+?c", "abcabc"
     # regex, t = "a?", "a"
     # regex, t = r"([0a-z][a-z0-9]*,)+", r"a5,b7,c9,"
-    regex, t = "a*(^a)", "aa"
+    regex, t = r"ABC[a-x]\d", "a"
     # regex, t = "(?:ab)+", "ababa"
     # regex, t = "(a*)*", "-",
     # regex, t = ("([^.]*)\\.([^:]*):[T ]+(.*)", "track1.title:TBlah blah blah")
