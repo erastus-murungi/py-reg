@@ -1,12 +1,12 @@
 import re
 from dataclasses import dataclass
-from parser import RegexpParser
+from parser import RegexpParser, Epsilon, Matchable
 from pprint import pprint
 from typing import Optional
 
 from more_itertools import first_true
 
-from core import NFA, State, Tag, Transition, DFA
+from core import NFA, State, Transition, DFA
 
 
 @dataclass(slots=True)
@@ -76,10 +76,8 @@ class Regexp(NFA):
 
     def matches(self, state, text, index):
         for transition in self[state]:
-            if (
-                transition.matchable == Tag.epsilon() and transition.end in self.accept
-            ) or (
-                transition.matchable != Tag.epsilon()
+            if (transition.matchable is Epsilon and transition.end in self.accept) or (
+                transition.matchable is not Epsilon
                 and transition.match(text, index, self.parser.flags) is not None
             ):
                 yield transition
@@ -107,8 +105,7 @@ class Regexp(NFA):
             stack.append((True, state))
             # explore the states in the order which they are in
             stack.extend(
-                (False, nxt)
-                for nxt in self.transition(state, Tag.epsilon(), True)[::-1]
+                (False, nxt) for nxt in self.transition(state, Epsilon, True)[::-1]
             )
         return closure, transitions
 
@@ -118,7 +115,7 @@ class Regexp(NFA):
 
     @staticmethod
     def _update_captured_groups(
-        index: int, matchable: Tag, captured_groups: CapturedGroups
+        index: int, matchable: Matchable, captured_groups: CapturedGroups
     ) -> CapturedGroups:
         if matchable.is_opening_group() or matchable.is_closing_group():
             group_index = matchable.group_index
@@ -277,7 +274,7 @@ class Regexp(NFA):
 
 
 if __name__ == "__main__":
-    regex, t = ('(a*)*', 'a')
+    regex, t = ("(a*)*", "a")
 
     print(list(re.finditer(regex, t)))
     print([m.groups() for m in re.finditer(regex, t)])

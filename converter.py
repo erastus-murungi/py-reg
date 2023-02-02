@@ -32,7 +32,7 @@ def _remove_unreachable_states(
 def _compute_state_2_closure_mapping(nfa) -> dict[State, frozenset[State]]:
     state2closure = {}
     for state in nfa.states:
-        state2closure[state] = nfa.symbol_closure([state])
+        state2closure[state] = nfa.epsilon_closure([state])
     return state2closure
 
 

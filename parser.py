@@ -39,39 +39,6 @@ class RegexNode(ABC):
         ...
 
 
-class AnchorType(Enum):
-    StartOfString = "^"
-    EndOfString = "$"
-    EmptyString = ""
-
-    # must be escaped
-    WordBoundary = "\\b"
-    NonWordBoundary = "\\B"
-    StartOfStringOnly = "\\A"
-    EndOfStringOnlyNotNewline = "\\z"
-    EndOfStringOnlyMaybeNewLine = "\\Z"
-
-    @staticmethod
-    def get(char):
-        match char:
-            case "^":
-                return AnchorType.StartOfString
-            case "$":
-                return AnchorType.EndOfString
-            case "b":
-                return AnchorType.WordBoundary
-            case "B":
-                return AnchorType.NonWordBoundary
-            case "A":
-                return AnchorType.StartOfStringOnly
-            case "z":
-                return AnchorType.EndOfStringOnlyNotNewline
-            case "Z":
-                return AnchorType.EndOfStringOnlyMaybeNewLine
-            case _:
-                raise ValueError(f"unrecognized anchor {char}")
-
-
 def is_word_character(char: str) -> bool:
     return len(char) == 1 and char.isalpha() or char == "_"
 
@@ -110,81 +77,74 @@ class Matchable(Hashable):
         ...
 
     def is_opening_group(self):
-        return isinstance(self, Tag) and self.tag_type == TagType.GroupEntry
+        return isinstance(self, Anchor) and self.anchor_type == AnchorType.GroupEntry
 
     def is_closing_group(self):
-        return isinstance(self, Tag) and self.tag_type == TagType.GroupExit
+        return isinstance(self, Anchor) and self.anchor_type == AnchorType.GroupExit
 
     def increment(self, index: int) -> int:
         """We keep the index the same only when we are a `Virtual` node"""
-        return index + (not isinstance(self, Virtual))
-
-
-class Virtual(Matchable, ABC):
-    ...
-
-
-class TagType(Enum):
-    Epsilon = "ε"
-    GroupEntry = "GroupEntry"
-    GroupExit = "GroupExit"
-    GroupLink = ""
-    Fence = "Fence"
-
-
-@dataclass
-class Tag(Virtual):
-    tag_type: TagType
-    group_index: int
-    substr: str
-
-    @staticmethod
-    def entry(group_index: int, substr: str) -> "Tag":
-        return Tag(TagType.GroupEntry, group_index, substr)
-
-    @staticmethod
-    def exit(group_index: int, substr: str) -> "Tag":
-        return Tag(TagType.GroupExit, group_index, substr)
-
-    @staticmethod
-    def link() -> "Tag":
-        return Tag(TagType.GroupLink, maxsize, "")
-
-    @staticmethod
-    def epsilon() -> "Tag":
-        return Tag(TagType.Epsilon, maxsize, "")
-
-    def match(self, text: str, position: int, flags: RegexFlag) -> bool:
-        if self.tag_type == TagType.GroupLink:
-            return False
-        return True
-
-    def __hash__(self):
-        return hash((self.tag_type, self.group_index, self.substr))
-
-    def __repr__(self):
-        match self.tag_type:
-            case TagType.Fence | TagType.Epsilon:
-                return self.tag_type.value
-            case TagType.GroupLink:
-                return ""
-            case TagType.GroupEntry | TagType.GroupExit:
-                return f"{self.tag_type.name}({self.group_index})"
-            case _:
-                raise NotImplementedError
+        return index + (not isinstance(self, Anchor))
 
 
 class SubExpressionItem(RegexNode, ABC):
     pass
 
 
+class AnchorType(Enum):
+    Epsilon = "ε"
+    GroupLink = "Link"
+    GroupEntry = "GroupEntry"
+    GroupExit = "GroupExit"
+
+    StartOfString = "^"
+    EndOfString = "$"
+    EmptyString = ""
+
+    # must be escaped
+    WordBoundary = "\\b"
+    NonWordBoundary = "\\B"
+    StartOfStringOnly = "\\A"
+    EndOfStringOnlyNotNewline = "\\z"
+    EndOfStringOnlyMaybeNewLine = "\\Z"
+
+    @staticmethod
+    def get(char):
+        match char:
+            case "^":
+                return AnchorType.StartOfString
+            case "$":
+                return AnchorType.EndOfString
+            case "b":
+                return AnchorType.WordBoundary
+            case "B":
+                return AnchorType.NonWordBoundary
+            case "A":
+                return AnchorType.StartOfStringOnly
+            case "z":
+                return AnchorType.EndOfStringOnlyNotNewline
+            case "Z":
+                return AnchorType.EndOfStringOnlyMaybeNewLine
+            case _:
+                raise ValueError(f"unrecognized anchor {char}")
+
+
 @dataclass(slots=True)
-class Anchor(SubExpressionItem, Virtual):
+class Anchor(SubExpressionItem, Matchable):
     anchor_type: AnchorType
+    group_index: Optional[int] = None
 
     @staticmethod
     def empty_string(pos: int = maxsize) -> "Anchor":
         return Anchor(pos, AnchorType.EmptyString)
+
+    @staticmethod
+    def group_entry(group_index: int):
+        return Anchor(maxsize, AnchorType.GroupEntry, group_index)
+
+    @staticmethod
+    def group_exit(group_index: int):
+        return Anchor(maxsize, AnchorType.GroupExit, group_index)
 
     def match(self, text: str, position: int, flags: RegexFlag) -> bool:
         match self.anchor_type:
@@ -226,13 +186,19 @@ class Anchor(SubExpressionItem, Virtual):
                 return is_word_boundary(text, position)
             case AnchorType.NonWordBoundary:
                 return text and not is_word_boundary(text, position)
-            case AnchorType.EmptyString:
-                # empty string always matches
+            case AnchorType.EmptyString | AnchorType.Epsilon | AnchorType.GroupEntry | AnchorType.GroupExit:
                 return True
+            case AnchorType.GroupLink:
+                return False
 
         raise NotImplementedError
 
     def string(self):
+        if (
+            self.anchor_type == AnchorType.GroupEntry
+            or self.anchor_type == AnchorType.GroupExit
+        ):
+            return f"{self.anchor_type.name}({self.group_index})"
         return self.anchor_type.value
 
     def __hash__(self):
@@ -240,6 +206,10 @@ class Anchor(SubExpressionItem, Virtual):
 
     def __repr__(self):
         return self.anchor_type.name
+
+
+Epsilon = Anchor(maxsize, AnchorType.Epsilon)
+GroupLink = Anchor(maxsize, AnchorType.GroupLink)
 
 
 @dataclass
