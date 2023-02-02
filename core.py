@@ -1,5 +1,4 @@
 from collections import defaultdict
-from copy import copy
 from dataclasses import astuple, dataclass, field
 from itertools import chain, combinations, count, product
 from parser import (
@@ -11,7 +10,6 @@ from parser import (
     Match,
     Matchable,
     MatchAnyCharacter,
-    Quantifier,
     RegexFlag,
     RegexpNodesVisitor,
     Tag,
@@ -306,9 +304,10 @@ class NFA(defaultdict[State, list[Transition]], RegexpNodesVisitor[Fragment]):
             self.epsilon(fragment1.end, fragment2.start)
 
     def _apply_range_quantifier(
-        self, quantifier: Quantifier, fragment: Fragment, source_node: Group | Match
+        self, node: Group | Match, fragment: Fragment
     ) -> Fragment:
 
+        quantifier = node.quantifier
         start, end = quantifier.range_quantifier
 
         if start == 0:
@@ -320,11 +319,9 @@ class NFA(defaultdict[State, list[Transition]], RegexpNodesVisitor[Fragment]):
                 return self.base(Anchor.empty_string())
 
         gen_frag = (
-            lambda: self._add_capturing_markers(
-                source_node.expression.accept(self), source_node
-            )
-            if isinstance(source_node, Group)
-            else source_node.item.accept(self)
+            lambda: self._add_capturing_markers(node.expression.accept(self), node)
+            if isinstance(node, Group)
+            else node.item.accept(self)
         )
 
         if end is not None:
@@ -352,8 +349,13 @@ class NFA(defaultdict[State, list[Transition]], RegexpNodesVisitor[Fragment]):
         return Fragment(fragments[0].start, fragments[-1].end)
 
     def _apply_quantifier(
-        self, quantifier: Quantifier, fragment: Fragment, source_node: Group | Match
+        self,
+        node: Group | Match,
+        fragment: Fragment,
     ) -> Fragment:
+
+        quantifier = node.quantifier
+
         if quantifier.char is not None:
             match quantifier.char:
                 case "+":
@@ -363,7 +365,7 @@ class NFA(defaultdict[State, list[Transition]], RegexpNodesVisitor[Fragment]):
                 case "?":
                     return self.zero_or_one(fragment, quantifier.lazy)
         else:
-            return self._apply_range_quantifier(quantifier, fragment, source_node)
+            return self._apply_range_quantifier(node, fragment)
 
     def visit_anchor(self, anchor: Anchor):
         return self.base(anchor)
@@ -395,13 +397,13 @@ class NFA(defaultdict[State, list[Transition]], RegexpNodesVisitor[Fragment]):
     def visit_group(self, group: Group):
         fragment = self._add_capturing_markers(group.expression.accept(self), group)
         if group.quantifier:
-            fragment = self._apply_quantifier(group.quantifier, fragment, group)
+            fragment = self._apply_quantifier(group, fragment)
         return fragment
 
     def visit_match(self, match: Match) -> Fragment:
         fragment = match.item.accept(self)
         if match.quantifier:
-            return self._apply_quantifier(match.quantifier, fragment, match)
+            return self._apply_quantifier(match, fragment)
         return fragment
 
     def visit_match_any_character(self, meta_char: MatchAnyCharacter) -> Fragment:
@@ -528,14 +530,15 @@ class DFA(NFA):
                 self[lost.get(start)] = self.pop(start)
 
         for start in self:
-            new_transitions = set()
+            new_transitions = []
             for transition in tuple(self[start]):
                 if transition.end in lost:
-                    new_transitions.add(
+
+                    new_transitions.append(
                         Transition(transition.matchable, lost.get(transition.end))
                     )
                 else:
-                    new_transitions.add(transition)
+                    new_transitions.append(transition)
             self[start] = new_transitions
 
         cp = self.copy()

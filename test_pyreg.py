@@ -7,7 +7,6 @@ import pytest
 
 from match import Regexp
 
-
 # acquired from re2: https://github.com/google/re2/blob/main/re2/testing/search_test.cc
 
 
@@ -633,7 +632,6 @@ def test_ignorecase():
         ("(?i)(a+|b){1,}", "AB"),
         ("(?i)(a+|b)?", "AB"),
         ("(?i)(a+|b){0,1}", "AB"),
-        # ("(?i)(a+|b){0,1}?", "AB"),
         ("(?i)$b", "B"),
         ("(?i)(((((((((a)))))))))", "A"),
         ("(?i)(?:(?:(?:(?:(?:(?:(?:(?:(?:(a))))))))))", "A"),
