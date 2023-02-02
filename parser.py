@@ -17,7 +17,7 @@ class RegexFlag(IntFlag):
     FREESPACING = auto()
 
 
-class InvalidCharacterRange(ValueError):
+class InvalidCharacterRange(Exception):
     ...
 
 
@@ -336,11 +336,26 @@ class RangeQuantifier(QuantifierItem):
         if self.start == 0 and self.end is None:
             return Anchor.empty_string()
 
-        seq = [copy(item) for _ in range(self.start)]
+        if group_index is not None:
+            seq = []
+            # a{5}
+            for _ in range(self.start):
+                seq.append(
+                    Group(
+                        item.pos,
+                        item,
+                        None,
+                        group_index=group_index,
+                        substr=None,
+                    )
+                )
+        else:
+            seq = [copy(item) for _ in range(self.start)]
 
         if self.end is not None:
             if self.end == maxsize:
                 if self.start > 0:
+                    # 'a{3,maxsize}
                     item = seq.pop()
                     seq.append(
                         Group(
@@ -352,6 +367,7 @@ class RangeQuantifier(QuantifierItem):
                         )
                     )
                 else:
+                    # 'a{0,maxsize}'
                     seq.append(
                         Group(
                             item.pos,
@@ -361,8 +377,9 @@ class RangeQuantifier(QuantifierItem):
                             substr=None,
                         )
                     )
-
             else:
+                # a{,5} = a{0,5}
+                # a{3,5}
                 for _ in range(self.start, self.end):
                     seq.append(
                         Group(
@@ -693,7 +710,7 @@ class RegexpParser:
         return sub_exprs
 
     def parse_sub_expression_item(self) -> SubExpressionItem:
-        if self.matches("("):
+        if self.can_parse_group():
             return self.parse_group()
         elif self.can_parse_anchor():
             return self.parse_anchor()

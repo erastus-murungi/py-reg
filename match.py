@@ -120,33 +120,61 @@ class Regexp(NFA):
         # we only need to keep track of 3 state variables
         work_list = [(self.start, index, captured_groups, ())]
 
+        state2captured_group: dict[(State, State, int), CapturedGroups] = {}
+
         while work_list:
             current_state, index, captured_groups, path = work_list.pop()
 
             if current_state in self.accept:
                 return index, captured_groups
 
+            frontier, update = [], None
             for matchable, end_state in reversed(self.step(current_state, text, index)):
                 # only create a copy of captured groups when a modification is made
                 if (current_state, end_state, index) in path:
+                    # we should reset our captured groups to align with what it was before we went on that path
+                    update = state2captured_group[(current_state, end_state, index)]
                     continue
+
+                state2captured_group[
+                    (current_state, end_state, index)
+                ] = captured_groups
+
+                path_copy = path + ((current_state, end_state, index),)
 
                 if matchable.is_opening_group() or matchable.is_closing_group():
                     group_index = matchable.group_index
+
+                    # must create copy of the list
+                    groups_copy = captured_groups[:]
+
+                    # copy actual group object
                     captured_group_copy = captured_groups[group_index].copy()
                     if matchable.is_opening_group():
                         captured_group_copy.start = index
                     else:
                         captured_group_copy.end = index
-                    # must create a copy of the list
-                    captured_groups = captured_groups[:]
-                    captured_groups[group_index] = captured_group_copy
 
-                path_copy = path + ((current_state, end_state, index),)
+                    groups_copy[group_index] = captured_group_copy
 
-                work_list.append(
-                    (end_state, matchable.increment(index), captured_groups, path_copy)
-                )
+                    frontier.append(
+                        (end_state, matchable.increment(index), groups_copy, path_copy)
+                    )
+
+                else:
+                    frontier.append(
+                        (
+                            end_state,
+                            matchable.increment(index),
+                            captured_groups,
+                            path_copy,
+                        )
+                    )
+            if update is not None:
+                for (end_state, index, _, path_copy) in frontier:
+                    work_list.append((end_state, index, update, path_copy))
+            else:
+                work_list.extend(frontier)
 
         return None
 
@@ -222,13 +250,17 @@ if __name__ == "__main__":
     # regex, t = r"^ab|(abab)$", "abbabab"
     # regex, t = "a.+?c", "abcabc"
     # regex, t = "a?", "a"
-    regex, t = r"([0a-z][a-z0-9]*,)+", r"a5,b7,c9,"
+    # regex, t = r"([0a-z][a-z0-9]*,)+", r"a5,b7,c9,"
     # regex, t = r"ABC[a-x]\d", "a"
     # regex, t = "(?:ab)+", "ababa"
     # regex, t = '(?:a|)*', ''
     # regex, t = ("([^.]*)\\.([^:]*):[T ]+(.*)", "track1.title:TBlah blah blah")
-
     # regex, t = "(?i)(a+|b){0,1}?", "AB"
+    # regex, t = 'ab{0,}bc', 'abbbbc'
+    # regex, t = ("((b*)|c(c*))*", "cbb")
+
+    regex, t = ("X(.?){1,8}Y", "X1234567Y")
+
     pattern = Regexp(regex)
     pattern.graph()
     # DFA(pattern).graph()
@@ -237,31 +269,5 @@ if __name__ == "__main__":
     print(f"findall took {monotonic() - start} seconds ...")
     pprint(list(re.finditer(regex, t)))
 
-    # for span in re.finditer(regex, t):
-    #     print(span)
-
-    # print(re.match(regex, t))
-    # print(Regexp(regex).match(t))
-
     print([m.groups() for m in re.finditer(regex, t)])
-    print(pattern.match(t).group())
-
-    # for span in matcher:
-    #     print(span.groups())
-
-    # for span in RegexMatcher(regex, t):
-    #     print(span)
-
-    # # regex, t = ("a*?", "aaab")
-    #
-    # regex, t = (' (.*)a|(.*)b', 'aaaaab')
-    # matcher = RegexMatcher(regex, t)
-    # matcher.compiled_regex.graph()
-    #
-    # for span in re.finditer(regex, t):
-    #     print(span)
-    #
-    # print(re.match(regex, t).groups())
-    #
-    # for span in matcher:
-    #     print(span)
+    print([m.groups() for m in Regexp(regex).finditer(t)])
