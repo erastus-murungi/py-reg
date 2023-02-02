@@ -223,7 +223,7 @@ class Regexp(NFA):
                 index = index + 1
 
     def findall(self, text):
-        return list(self.finditer(text))
+        return [m.group(0) for m in self.finditer(text)]
 
     def __repr__(self):
         return f"{self.__class__.__name__}(regex={self.pattern!r})"
@@ -247,17 +247,18 @@ if __name__ == "__main__":
     # regex, t = 'ab{0,}bc', 'abbbbc'
     # regex, t = ("((b*)|c(c*))*", "cbb")
 
-    regex, t = (
-        "((b*)|c(c*))*",
-        "cbb",
-    )
+    # regex, t = 'foo.$', 'foo1\nfoo2\n'
+    # regex, t = '(?m)foo.$', 'foo1\nfoo2\n'
+    # regex, t = '$', 'foo\n'
+    regex, t = ("(?m)\\A^(a)", "a\nb\n")
+    # regex, t = "StackOverflow\\z", "StackOverflow\n"
+
+    print(list(re.finditer(regex, t)))
 
     pattern = Regexp(regex)
-    # pattern.graph()
+    pattern.graph()
     # DFA(pattern).graph()
-    start = monotonic()
-    pprint(pattern.findall(t))
-    print(f"findall took {monotonic() - start} seconds ...")
+    pprint(list(pattern.finditer(t)))
     pprint(list(re.finditer(regex, t)))
 
     print([m.groups() for m in re.finditer(regex, t)])

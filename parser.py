@@ -41,37 +41,34 @@ class RegexNode(ABC):
 
 
 class AnchorType(Enum):
-    Start = "^"
-    End = "$"
-    Empty = ""
+    StartOfString = "^"
+    EndOfString = "$"
+    EmptyString = ""
 
     # must be escaped
     WordBoundary = "\\b"
     NonWordBoundary = "\\B"
-    AnchorStartOfStringOnly = "\\A"
-    AnchorEndOfStringOnlyNotNewline = "\\z"
-    AnchorEndOfStringOnly = "\\Z"
-    AnchorPreviousMatchEnd = "\\G"
+    StartOfStringOnly = "\\A"
+    EndOfStringOnlyNotNewline = "\\z"
+    EndOfStringOnlyMaybeNewLine = "\\Z"
 
     @staticmethod
     def get(char):
         match char:
             case "^":
-                return AnchorType.Start
+                return AnchorType.StartOfString
             case "$":
-                return AnchorType.End
+                return AnchorType.EndOfString
             case "b":
                 return AnchorType.WordBoundary
             case "B":
                 return AnchorType.NonWordBoundary
             case "A":
-                return AnchorType.AnchorStartOfStringOnly
+                return AnchorType.StartOfStringOnly
             case "z":
-                return AnchorType.AnchorEndOfStringOnlyNotNewline
+                return AnchorType.EndOfStringOnlyNotNewline
             case "Z":
-                return AnchorType.AnchorEndOfStringOnly
-            case "G":
-                return AnchorType.AnchorPreviousMatchEnd
+                return AnchorType.EndOfStringOnlyMaybeNewLine
             case _:
                 raise ValueError(f"unrecognized anchor {char}")
 
@@ -192,25 +189,50 @@ class Anchor(SubExpressionItem, Virtual):
 
     @staticmethod
     def empty_string(pos: int = maxsize) -> "Anchor":
-        return Anchor(pos, AnchorType.Empty)
+        return Anchor(pos, AnchorType.EmptyString)
 
-    def match(self, text, position, flags) -> bool:
+    def match(self, text: str, position: int, flags: RegexFlag) -> bool:
         match self.anchor_type:
-            case AnchorType.Start:
-                # assert that this is the beginning of the string
-                return position == 0
-                # or the previous char is a \n if MULTILINE mode enabled
-            case AnchorType.End:
-                return (
-                    position >= len(text)
-                    or position == len(text) - 1
-                    and text[position] == "\n"
+            case AnchorType.StartOfString:
+                # match the start of the string
+                return position == 0 or (
+                    # and in MULTILINE mode also matches immediately after each newline.
+                    (RegexFlag.MULTILINE & flags)
+                    and (not text or (position > 0) and text[position - 1] == "\n")
                 )
+            case AnchorType.EndOfString:
+                # . foo matches both ‘foo’ and ‘foobar’,
+                # while the regular expression foo$ matches only ‘foo’.
+                # More interestingly, searching for foo.$ in 'foo1\nfoo2\n' matches ‘foo2’ normally,
+                # but ‘foo1’ in MULTILINE mode; searching for a single $ in 'foo\n' will find two (empty) matches:
+                # one just before the newline, and one at the end of the string.
+
+                return (
+                    position >= len(text)  # Matches the end of the string
+                    or position
+                    == len(text)
+                    - 1  # or just before the newline at the end of the string
+                    and text[position] == "\n"
+                ) or (
+                    # and in MULTILINE mode also matches before a newline
+                    RegexFlag.MULTILINE & flags
+                    and (position < len(text) and text[position] == "\n")
+                )
+            case AnchorType.StartOfStringOnly:
+                # matches only at the start of the string
+                return position == 0
+            case AnchorType.EndOfStringOnlyMaybeNewLine:
+                return (
+                    position == len(text) - 1 and text[position] == "\n"
+                ) or position >= len(text)
+            case AnchorType.EndOfStringOnlyNotNewline:
+                return position >= len(text)
             case AnchorType.WordBoundary:
                 return is_word_boundary(text, position)
             case AnchorType.NonWordBoundary:
                 return text and not is_word_boundary(text, position)
-            case AnchorType.Empty:
+            case AnchorType.EmptyString:
+                # empty string always matches
                 return True
 
         raise NotImplementedError

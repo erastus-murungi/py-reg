@@ -169,7 +169,7 @@ def test_non_word_boundary_cases():
     _test_cases_suite(cases)
 
 
-def test_edges_cases():
+def test_edge_cases():
     cases = [
         (r"a", "a"),
         (r"a", "zyzzyva"),
@@ -991,16 +991,6 @@ def test_infinite_loops():
     _test_cases_suite(cases)
 
 
-@pytest.mark.skip
-def test_posix_character_classes():
-    cases = [
-        ("[[:lower:]]+", "`az{"),
-        ("[[:upper:]]+", "@AZ["),
-    ]
-
-    _test_cases_suite(cases)
-
-
 def test_class():
     cases = [
         ("aa*", "xaxaax"),
@@ -1264,3 +1254,59 @@ def test_right_assoc():
     ]
 
     _test_cases_suite(cases)
+
+
+def test_multiline():
+    cases = [
+        ("(?m)^abc", "abcdef"),
+        ("(?m)^abc", "aabcdef"),
+        ("(?m)^[ay]*[bx]+c", "abcdef"),
+        ("(?m)^[ay]*[bx]+c", "aabcdef"),
+        ("(?m)def$", "abcdef"),
+        ("(?m)def$", "abcdeff"),
+        ("(?m)d[ex][fy]$", "abcdef"),
+        ("(?m)d[ex][fy]$", "abcdeff"),
+        ("(?m)[dz][ex][fy]$", "abcdef"),
+        ("(?m)[dz][ex][fy]$", "abcdeff"),
+        ("(?m)^b$", "a\nb\nc\n"),
+        ("(foo|bar|[A-Z])$", "foo\n"),
+        ("(foo|bar|[A-Z])$", "foo\nbar"),  # should find no match
+        ("^(foo|bar|[A-Z])$", "foo\nbarfoo"),  # no matches
+        ("(?m)^(foo|bar|[A-Z])$", "foo\nbar"),  # should find matches
+        ("(?m)^b", "a\nb\n"),
+        ("(?m)^(b)", "a\nb\n"),
+        ("(?m)\n(^b)", "a\nb\n"),
+        ("foo.$", "foo1\nfoo2\n"),
+        ("(?m)foo.$", "foo1\nfoo2\n"),
+        ("$", "foo\n"),
+    ]
+
+    _test_cases_suite(cases)
+
+
+def test_start_of_string_absolute_anchor():
+    cases = [
+        ("\\A(foo|bar|[A-Z])$", "foo\n"),
+        ("\\A(foo|bar|[A-Z])$", "foo\nbar"),  # should find no match
+        ("\\A^(foo|bar|[A-Z])$", "foo\nbarfoo"),  # no matches
+        ("(?m)\\A^(foo|bar|[A-Z])$", "foo\nbar"),  # should find matches
+        ("(?m)\\A^b", "a\nb\n"),
+        ("(?m)\\A^(b)", "a\nb\n"),
+        ("(?m)\\A\n(^b)", "a\nb\n"),
+        ("\\A^b", "a\nb\n"),
+        ("\\A^(b)", "a\nb\n"),
+        ("\\A\n(^b)", "a\nb\n"),
+    ]
+
+    _test_cases_suite(cases)
+
+
+def test_end_of_string_absolute_anchors():
+    cases = [
+        ("StackOverflow\\Z", "StackOverflow\n", ["StackOverflow"]),
+        ("StackOverflow\\z", "StackOverflow\n", []),
+    ]
+
+    for pattern, text, expected in cases:
+        actual = Regexp(pattern).findall(text)
+        assert actual == expected
