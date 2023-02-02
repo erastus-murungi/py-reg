@@ -457,7 +457,6 @@ def test_greedy_vs_lazy():
         ("a.*?c", "abcabc"),
         ("a.{0,5}?c", "abcabc"),
         ("a{2,3}?", "aaaaa"),
-        # ("(a+|b){0,1}?", "ab"),
     ]
 
     _test_cases_suite(cases)
@@ -665,7 +664,6 @@ def test_ignorecase():
     _test_cases_suite(cases)
 
 
-# @pytest.mark.skip
 def test_groups1():
     cases = [
         ("((abc|123)+)!", "!abc123!"),
@@ -747,8 +745,7 @@ def test_groups1():
     _test_cases_suite(cases)
 
 
-@pytest.mark.skip
-def test_ambiguous_cases_which_work_on_some_engines():
+def test_ambiguous_cases_groups_pass_on_some_engines():
     cases = [
         ("(.?)*", "x"),  # passes in Golang and Javascript
         ("(.?.?)*", "xxx"),  # passes in Golang and Javascript
@@ -756,16 +753,24 @@ def test_ambiguous_cases_which_work_on_some_engines():
             "((s)|(e)|())*",
             "searchme",
         ),  # fix so that empty capturing groups always find a match
-        (
-            "((b*)|c(c*))*",
-            "cbb",
-        ),  # agrees with Javascript, where the first empty string is not found, and the all
         # capturing groups are found
         ("(.|()|())*", "c"),  # empty groups aren't matching
         ("((..)*(...)*)*", "xxx"),  # passes in Golang and Javascript
         ("(a*)*", "a"),  # passes in .NET(C#), Golang, Javascript
     ]
 
+    _test_cases_suite_no_groups(cases)
+
+
+@pytest.mark.skip
+def test_ambiguous_cases_matches_pass_on_some_engines():
+    cases = [
+        ("(a+|b){0,1}?", "ab"),  # passes in .NET(C#), Java8, GoLang, JavaScript
+        (
+            "((b*)|c(c*))*",
+            "cbb",
+        ),  # agrees with Javascript, where the first empty string is not found, and the all
+    ]
     _test_cases_suite(cases)
 
 
@@ -967,7 +972,6 @@ def test_basic3():
     _test_cases_suite(cases)
 
 
-# @pytest.mark.skip
 def test_infinite_loops():
     cases = [
         ("(a*)*", "-"),
@@ -1140,7 +1144,6 @@ def test_osx_bsd_critical():
     _test_cases_suite(cases)
 
 
-@pytest.mark.skip
 def test_osx_bsd_critical_no_groups():
     cases = [
         ("(()|[ab])+b", "aaab"),
