@@ -303,9 +303,10 @@ class NFA(defaultdict[State, list[Transition]], RegexpNodesVisitor[Fragment]):
         for fragment1, fragment2 in pairwise(fragments):
             self.epsilon(fragment1.end, fragment2.start)
 
-    def _apply_range_quantifier(
-        self, node: Group | Match, fragment: Fragment
-    ) -> Fragment:
+    def _apply_range_quantifier(self, node: Group | Match) -> Fragment:
+        """
+        Generate a fragment for a group or match node with a range quantifier
+        """
 
         quantifier = node.quantifier
         start, end = quantifier.range_quantifier
@@ -313,26 +314,27 @@ class NFA(defaultdict[State, list[Transition]], RegexpNodesVisitor[Fragment]):
         if start == 0:
             if end == maxsize:
                 # 'a{0,} = a{0,maxsize}' expands to a*
-                return self.zero_or_more(fragment, quantifier.lazy)
+                return self.zero_or_more(
+                    self._gen_frag_for_quantifiable(node), quantifier.lazy
+                )
             elif end is None:
                 # a{0} = ''
                 return self.base(Anchor.empty_string())
-
-        gen_frag = (
-            lambda: self._add_capturing_markers(node.expression.accept(self), node)
-            if isinstance(node, Group)
-            else node.item.accept(self)
-        )
 
         if end is not None:
             if end == maxsize:
                 # a{3,} expands to aaa+.
                 # 'a{3,maxsize}
-                fragments = [gen_frag() for _ in range(start - 1)]
-                fragments.append(self.one_or_more(fragment, quantifier.lazy))
+                fragments = [
+                    self._gen_frag_for_quantifiable(node) for _ in range(start - 1)
+                ] + [
+                    self.one_or_more(
+                        self._gen_frag_for_quantifiable(node), quantifier.lazy
+                    )
+                ]
             else:
                 # a{,5} = a{0,5} or a{3,5}
-                fragments = [fragment] + [gen_frag() for _ in range(end - 1)]
+                fragments = [self._gen_frag_for_quantifiable(node) for _ in range(end)]
 
                 for fragment in fragments[start:end]:
                     # empty transitions all lead to a common exit
@@ -343,20 +345,26 @@ class NFA(defaultdict[State, list[Transition]], RegexpNodesVisitor[Fragment]):
                         self.reverse_transitions(fragment.start)
 
         else:
-            fragments = [fragment] + [gen_frag() for _ in range(start - 1)]
+            fragments = [self._gen_frag_for_quantifiable(node) for _ in range(start)]
 
         self._concat_fragments(fragments)
         return Fragment(fragments[0].start, fragments[-1].end)
 
+    def _gen_frag_for_quantifiable(self, node: Group | Match) -> Fragment:
+        """
+        Helper method to generate fragments for nodes and matches
+        """
+        if isinstance(node, Group):
+            return self._add_capturing_markers(node.expression.accept(self), node)
+        return node.item.accept(self)
+
     def _apply_quantifier(
         self,
         node: Group | Match,
-        fragment: Fragment,
     ) -> Fragment:
-
         quantifier = node.quantifier
-
         if quantifier.char is not None:
+            fragment = self._gen_frag_for_quantifiable(node)
             match quantifier.char:
                 case "+":
                     return self.one_or_more(fragment, quantifier.lazy)
@@ -365,18 +373,7 @@ class NFA(defaultdict[State, list[Transition]], RegexpNodesVisitor[Fragment]):
                 case "?":
                     return self.zero_or_one(fragment, quantifier.lazy)
         else:
-            return self._apply_range_quantifier(node, fragment)
-
-    def visit_anchor(self, anchor: Anchor):
-        return self.base(anchor)
-
-    def visit_expression(self, expression: Expression):
-        fragments = [subexpression.accept(self) for subexpression in expression.seq]
-        self._concat_fragments(fragments)
-        fragment = Fragment(fragments[0].start, fragments[-1].end)
-        if expression.alternate is None:
-            return fragment
-        return self.alternation(fragment, expression.alternate.accept(self))
+            return self._apply_range_quantifier(node)
 
     def _add_capturing_markers(self, fragment: Fragment, group: Group) -> Fragment:
         if group.group_index is not None:
@@ -394,30 +391,35 @@ class NFA(defaultdict[State, list[Transition]], RegexpNodesVisitor[Fragment]):
             return Fragment(state1, state3)
         return fragment
 
+    def visit_expression(self, expression: Expression):
+        fragments = [subexpression.accept(self) for subexpression in expression.seq]
+        self._concat_fragments(fragments)
+        fragment = Fragment(fragments[0].start, fragments[-1].end)
+        if expression.alternate is None:
+            return fragment
+        return self.alternation(fragment, expression.alternate.accept(self))
+
     def visit_group(self, group: Group):
-        fragment = self._add_capturing_markers(group.expression.accept(self), group)
         if group.quantifier:
-            fragment = self._apply_quantifier(group, fragment)
-        return fragment
+            return self._apply_quantifier(group)
+        return self._add_capturing_markers(group.expression.accept(self), group)
 
     def visit_match(self, match: Match) -> Fragment:
-        fragment = match.item.accept(self)
         if match.quantifier:
-            return self._apply_quantifier(match, fragment)
-        return fragment
+            return self._apply_quantifier(match)
+        return match.item.accept(self)
+
+    def visit_anchor(self, anchor: Anchor):
+        return self.base(anchor)
 
     def visit_match_any_character(self, meta_char: MatchAnyCharacter) -> Fragment:
         return self.base(meta_char)
 
     def visit_character_scalar(self, character_scalar: CharacterScalar) -> Fragment:
-        fragment = Fragment()
-        self.add_transition(fragment.start, fragment.end, character_scalar)
-        return fragment
+        return self.base(character_scalar)
 
     def visit_character_group(self, character_group: CharacterGroup) -> Fragment:
-        fragment = Fragment()
-        self.add_transition(fragment.start, fragment.end, character_group)
-        return fragment
+        return self.base(character_group)
 
 
 class DFA(NFA):
