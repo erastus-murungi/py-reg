@@ -312,6 +312,7 @@ class Quantifier:
             self.validate_range()
 
     def string(self):
+        # TODO: Fix string method of range quantifier so that it appears as it was in original regex
         if self.char is not None:
             base = self.char
         else:

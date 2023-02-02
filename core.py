@@ -301,10 +301,59 @@ class NFA(defaultdict[State, list[Transition]], RegexpNodesVisitor[Fragment]):
         dot.edge("start", f"{self.start}", arrowhead="vee")
         dot.render(view=True, directory="graphs", filename=str(id(self)))
 
-    def _apply_quantifier(
-        self, quantifier: Quantifier, fragment: Fragment, source_node
-    ):
+    def _concat_fragments(self, fragments: Iterable[Fragment]):
+        for fragment1, fragment2 in pairwise(fragments):
+            self.epsilon(fragment1.end, fragment2.start)
 
+    def _apply_range_quantifier(
+        self, quantifier: Quantifier, fragment: Fragment, source_node: Group | Match
+    ) -> Fragment:
+
+        start, end = quantifier.range_quantifier
+
+        if start == 0:
+            if end == maxsize:
+                # 'a{0,} = a{0,maxsize}' expands to a*
+                return self.zero_or_more(fragment, quantifier.lazy)
+            elif end is None:
+                # a{0} = ''
+                return self.base(Anchor.empty_string())
+
+        gen_frag = (
+            lambda: self._add_capturing_markers(
+                source_node.expression.accept(self), source_node
+            )
+            if isinstance(source_node, Group)
+            else source_node.item.accept(self)
+        )
+
+        if end is not None:
+            if end == maxsize:
+                # a{3,} expands to aaa+.
+                # 'a{3,maxsize}
+                fragments = [gen_frag() for _ in range(start - 1)]
+                fragments.append(self.one_or_more(fragment, quantifier.lazy))
+            else:
+                # a{,5} = a{0,5} or a{3,5}
+                fragments = [fragment] + [gen_frag() for _ in range(end - 1)]
+
+                for fragment in fragments[start:end]:
+                    # empty transitions all lead to a common exit
+                    self.add_transition(
+                        fragment.start, fragments[-1].end, Anchor.empty_string()
+                    )
+                    if quantifier.lazy:
+                        self.reverse_transitions(fragment.start)
+
+        else:
+            fragments = [fragment] + [gen_frag() for _ in range(start - 1)]
+
+        self._concat_fragments(fragments)
+        return Fragment(fragments[0].start, fragments[-1].end)
+
+    def _apply_quantifier(
+        self, quantifier: Quantifier, fragment: Fragment, source_node: Group | Match
+    ) -> Fragment:
         if quantifier.char is not None:
             match quantifier.char:
                 case "+":
@@ -313,66 +362,15 @@ class NFA(defaultdict[State, list[Transition]], RegexpNodesVisitor[Fragment]):
                     return self.zero_or_more(fragment, quantifier.lazy)
                 case "?":
                     return self.zero_or_one(fragment, quantifier.lazy)
-
-        elif quantifier.range_quantifier is not None:
-            start, end = quantifier.range_quantifier
-
-            if start == 0 and end is None:
-                return self.base(Anchor.empty_string())
-
-            gen_frag = (
-                lambda: self._add_capturing_markers(
-                    source_node.expression.accept(self), source_node
-                )
-                if isinstance(source_node, Group)
-                else source_node.accept(self)
-            )
-
-            if end is not None:
-                if end == maxsize:
-                    if start > 0:
-                        # a{3,} expands to aaa+.
-                        # 'a{3,maxsize}
-                        fragments = [gen_frag() for _ in range(start - 1)]
-                        fragments.append(self.one_or_more(fragment, quantifier.lazy))
-                        for fragment1, fragment2 in pairwise(fragments):
-                            self.epsilon(fragment1.end, fragment2.start)
-                        return Fragment(fragments[0].start, fragments[-1].end)
-                    else:
-                        # 'a{0,} = a{0,maxsize}' expands to a*
-                        return self.zero_or_more(fragment, quantifier.lazy)
-                else:
-                    # a{,5} = a{0,5}
-                    # a{3,5}
-                    fragments = [gen_frag() for _ in range(end - 1)]
-                    fragments.insert(0, fragment)
-                    for fragment1, fragment2 in pairwise(fragments):
-                        self.epsilon(fragment1.end, fragment2.start)
-
-                    for fragment in fragments[start:end]:
-                        self.add_transition(
-                            fragment.start, fragments[-1].end, Anchor.empty_string()
-                        )
-                        if quantifier.lazy:
-                            self.reverse_transitions(fragment.start)
-                    return Fragment(fragments[0].start, fragments[-1].end)
-            else:
-                fragments = [gen_frag() for _ in range(start - 1)]
-                fragments.insert(0, fragment)
-                for fragment1, fragment2 in pairwise(fragments):
-                    self.epsilon(fragment1.end, fragment2.start)
-                return Fragment(fragments[0].start, fragments[-1].end)
-
         else:
-            raise RuntimeError()
+            return self._apply_range_quantifier(quantifier, fragment, source_node)
 
     def visit_anchor(self, anchor: Anchor):
         return self.base(anchor)
 
     def visit_expression(self, expression: Expression):
         fragments = [subexpression.accept(self) for subexpression in expression.seq]
-        for fragment1, fragment2 in pairwise(fragments):
-            self.epsilon(fragment1.end, fragment2.start)
+        self._concat_fragments(fragments)
         fragment = Fragment(fragments[0].start, fragments[-1].end)
         if expression.alternate is None:
             return fragment
@@ -403,7 +401,7 @@ class NFA(defaultdict[State, list[Transition]], RegexpNodesVisitor[Fragment]):
     def visit_match(self, match: Match) -> Fragment:
         fragment = match.item.accept(self)
         if match.quantifier:
-            return self._apply_quantifier(match.quantifier, fragment, match.item)
+            return self._apply_quantifier(match.quantifier, fragment, match)
         return fragment
 
     def visit_match_any_character(self, meta_char: MatchAnyCharacter) -> Fragment:
