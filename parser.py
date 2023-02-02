@@ -266,153 +266,58 @@ CHARACTER_CLASSES = {"w", "W", "s", "S", "d", "D"}
 UNESCAPED_IN_CHAR_GROUP = ESCAPED - {"]"}
 
 
-class QuantifierItem(ABC):
-    pass
-
-
-class QuantifierType(Enum):
-    OneOrMore = "+"
-    ZeroOrMore = "*"
-    ZeroOrOne = "?"
-
-    @staticmethod
-    def get(char):
-        match char:
-            case "+":
-                return QuantifierType.OneOrMore
-            case "*":
-                return QuantifierType.ZeroOrMore
-            case "?":
-                return QuantifierType.ZeroOrOne
-            case _:
-                raise ValueError(f"unrecognized quantifier {char}")
-
-
-@dataclass
-class QuantifierChar(QuantifierItem):
-    type: QuantifierType
-
-
 @dataclass
 class Quantifier:
-    item: QuantifierChar
-    lazy: bool = False
+    lazy: bool
+    char: Optional[str]
+    range_quantifier: Optional[tuple[int, Optional[int]]] = None
 
-    def string(self):
-        lazy = "?" if self.lazy else ""
-        match self.item.type:
-            case QuantifierType.OneOrMore:
-                return "+" + lazy
-            case QuantifierType.ZeroOrMore:
-                return "*" + lazy
-            case QuantifierType.ZeroOrOne:
-                return "?" + lazy
-            case _:
-                raise NotImplementedError
-
-
-@dataclass
-class RangeQuantifier(QuantifierItem):
-    start: int
-    end: Optional[int] = None
+    def validate_range(self):
+        assert self.range_quantifier is not None
+        start, end = self.range_quantifier
+        if end is None:
+            if start < 0:
+                raise InvalidCharacterRange(
+                    f"fixed quantifier, {{n}} must be >= 0: not {start}"
+                )
+        elif isinstance(end, int):
+            if end == maxsize:
+                if start < 0:
+                    raise InvalidCharacterRange(
+                        f"for {{n,}} quantifier, {{n}} must be >= 0: not {start}"
+                    )
+            else:
+                if start < 0:
+                    raise InvalidCharacterRange(
+                        f"for {{n, m}} quantifier, {{n}} must be >= 0: not {start}"
+                    )
+                if end < start:
+                    raise InvalidCharacterRange(
+                        f"for {{n, m}} quantifier, {{m}} must be >= {{n}}: not {end}"
+                    )
+        elif start == 0:
+            if not isinstance(end, int):
+                raise InvalidCharacterRange(f"invalid upper bound {end}")
+            if end < 1:
+                raise InvalidCharacterRange(
+                    f"for {{, m}} quantifier, {{m}} must be >= 1: not {end}"
+                )
+        else:
+            raise InvalidCharacterRange(f"invalid range {{{start}, {end}}}")
 
     def __post_init__(self):
-        if self.end is None:
-            if self.start < 0:
-                raise InvalidCharacterRange(
-                    f"fixed quantifier, {{n}} must be >= 0: not {self.start}"
-                )
-        elif isinstance(self.end, int):
-            if self.end == maxsize:
-                if self.start < 0:
-                    raise InvalidCharacterRange(
-                        f"for {{n,}} quantifier, {{n}} must be >= 0: not {self.start}"
-                    )
-            else:
-                if self.start < 0:
-                    raise InvalidCharacterRange(
-                        f"for {{n, m}} quantifier, {{n}} must be >= 0: not {self.start}"
-                    )
-                if self.end < self.start:
-                    raise InvalidCharacterRange(
-                        f"for {{n, m}} quantifier, {{m}} must be >= {{n}}: not {self.end}"
-                    )
-        elif self.start == 0:
-            if not isinstance(self.end, int):
-                raise InvalidCharacterRange(f"invalid upper bound {self.end}")
-            if self.end < 1:
-                raise InvalidCharacterRange(
-                    f"for {{, m}} quantifier, {{m}} must be >= 1: not {self.end}"
-                )
+        if self.char is not None:
+            assert self.char in ("?", "+", "*"), f"invalid quantifier {self.char}"
         else:
-            raise InvalidCharacterRange(f"invalid range {{{self.start}, {self.end}}}")
+            assert self.range_quantifier is not None
+            self.validate_range()
 
-    def expand(
-        self,
-        item: Union["SubExpressionItem", "Expression"],
-        lazy: bool,
-        group_index: Optional[int] = None,
-    ):
-        # e{3} expands to eee; e{3,5} expands to eeee?e?, and e{3,} expands to eee+.
-        # e{0} expands to ''
-        if self.start == 0 and self.end is None:
-            return Anchor.empty_string()
-
-        if group_index is not None:
-            seq = []
-            # a{5}
-            for _ in range(self.start):
-                seq.append(
-                    Group(
-                        item.pos,
-                        item,
-                        None,
-                        group_index=group_index,
-                        substr=None,
-                    )
-                )
+    def string(self):
+        if self.char is not None:
+            base = self.char
         else:
-            seq = [copy(item) for _ in range(self.start)]
-
-        if self.end is not None:
-            if self.end == maxsize:
-                if self.start > 0:
-                    # 'a{3,maxsize}
-                    item = seq.pop()
-                    seq.append(
-                        Group(
-                            item.pos,
-                            item,
-                            Quantifier(QuantifierChar(QuantifierType.OneOrMore), lazy),
-                            group_index=group_index,
-                            substr=None,
-                        )
-                    )
-                else:
-                    # 'a{0,maxsize}'
-                    seq.append(
-                        Group(
-                            item.pos,
-                            item,
-                            Quantifier(QuantifierChar(QuantifierType.ZeroOrMore), lazy),
-                            group_index=group_index,
-                            substr=None,
-                        )
-                    )
-            else:
-                # a{,5} = a{0,5}
-                # a{3,5}
-                for _ in range(self.start, self.end):
-                    seq.append(
-                        Group(
-                            item.pos,
-                            item,
-                            Quantifier(QuantifierChar(QuantifierType.ZeroOrOne), lazy),
-                            group_index=group_index,
-                            substr=None,
-                        )
-                    )
-        return Expression(item.pos, seq)
+            base = f"{{{self.range_quantifier}}}"
+        return base + "?" if self.lazy else ""
 
 
 @dataclass
@@ -757,22 +662,18 @@ class RegexpParser:
         quantifier = None
         if self.can_parse_quantifier():
             quantifier = self.parse_quantifier()
-            # handle range qualifies and return a list of matches instead
-            if isinstance(quantifier.item, RangeQuantifier):
-                return quantifier.item.expand(expr, quantifier.lazy, index)
         return Group(self._pos, expr, quantifier, index, self._regex[start:end])
 
     def can_parse_quantifier(self):
         return self.matches_any(("*", "+", "?", "{"))
 
-    def parse_quantifier(self):
+    def parse_quantifier(self) -> Quantifier:
         if self.matches_any(("*", "+", "?")):
-            quantifier_item = QuantifierChar(
-                QuantifierType.get(self.consume_and_return())
-            )
+            quantifier_char = self.consume_and_return()
+            return Quantifier(self.optional("?"), quantifier_char)
         else:
-            quantifier_item = self.parse_range_quantifier()
-        return Quantifier(quantifier_item, self.optional("?"))
+            quantifier_range = self.parse_range_quantifier()
+            return Quantifier(self.optional("?"), None, quantifier_range)
 
     def parse_int(self):
         digits = []
@@ -780,7 +681,7 @@ class RegexpParser:
             digits.append(self.consume_and_return())
         return int("".join(digits))
 
-    def parse_range_quantifier(self) -> RangeQuantifier:
+    def parse_range_quantifier(self) -> tuple[int, Optional[int]]:
         # RangeQuantifier ::= "{" RangeQuantifierLowerBound ( "," RangeQuantifierUpperBound? )? "}"
         self.consume("{")
         # RangeQuantifierLowerBound = Integer
@@ -792,7 +693,7 @@ class RegexpParser:
             if self.current().isdigit():
                 upper = self.parse_int()
         self.consume("}")
-        return RangeQuantifier(lower, upper)
+        return lower, upper
 
     def parse_match(self) -> Match | Expression:
         # Match ::= MatchItem Quantifier?
@@ -801,9 +702,6 @@ class RegexpParser:
         quantifier = None
         if self.can_parse_quantifier():
             quantifier = self.parse_quantifier()
-            # handle range qualifies and return a list of matches instead
-            if isinstance(quantifier.item, RangeQuantifier):
-                return quantifier.item.expand(match_item, quantifier.lazy)
         return Match(pos, match_item, quantifier)
 
     def can_parse_character_group(self):
@@ -882,6 +780,7 @@ class RegexpParser:
         try:
             while self.can_parse_char() or self.matches("\\"):
                 items.append(self.parse_character_group_item())
+                state = self.save_state()
             self.consume("]")
         except ValueError:
             self._pos, self._flags = state

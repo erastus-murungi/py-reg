@@ -1,23 +1,12 @@
 from collections import defaultdict
+from copy import copy
 from dataclasses import astuple, dataclass, field
 from itertools import chain, combinations, count, product
-from parser import (
-    Anchor,
-    CharacterGroup,
-    CharacterScalar,
-    Expression,
-    Group,
-    Match,
-    Matchable,
-    MatchAnyCharacter,
-    Quantifier,
-    QuantifierType,
-    RegexFlag,
-    RegexpNodesVisitor,
-    Tag,
-    TagType,
-)
+from parser import (Anchor, CharacterGroup, CharacterScalar, Expression, Group,
+                    Match, Matchable, MatchAnyCharacter, Quantifier, RegexFlag,
+                    RegexpNodesVisitor, Tag, TagType)
 from string import ascii_uppercase
+from sys import maxsize
 from typing import Iterable, Iterator, Optional, Union
 
 import graphviz
@@ -300,16 +289,70 @@ class NFA(defaultdict[State, list[Transition]], RegexpNodesVisitor[Fragment]):
         dot.edge("start", f"{self.start}", arrowhead="vee")
         dot.render(view=True, directory="graphs", filename=str(id(self)))
 
-    def _apply_quantifier(self, quantifier: Quantifier, fragment: Fragment):
-        match quantifier.item.type:
-            case QuantifierType.OneOrMore:
-                return self.one_or_more(fragment, quantifier.lazy)
-            case QuantifierType.ZeroOrMore:
-                return self.zero_or_more(fragment, quantifier.lazy)
-            case QuantifierType.ZeroOrOne:
-                return self.zero_or_one(fragment, quantifier.lazy)
-            case _:
-                raise NotImplementedError
+    def _apply_quantifier(
+        self, quantifier: Quantifier, fragment: Fragment, source_node
+    ):
+
+        if quantifier.char is not None:
+            match quantifier.char:
+                case "+":
+                    return self.one_or_more(fragment, quantifier.lazy)
+                case "*":
+                    return self.zero_or_more(fragment, quantifier.lazy)
+                case "?":
+                    return self.zero_or_one(fragment, quantifier.lazy)
+
+        elif quantifier.range_quantifier is not None:
+            start, end = quantifier.range_quantifier
+
+            if start == 0 and end is None:
+                return self.base(Anchor.empty_string())
+
+            gen_frag = (
+                lambda: self._add_capturing_markers(
+                    source_node.expression.accept(self), source_node
+                )
+                if isinstance(source_node, Group)
+                else source_node.accept(self)
+            )
+
+            if end is not None:
+                if end == maxsize:
+                    if start > 0:
+                        # a{3,} expands to aaa+.
+                        # 'a{3,maxsize}
+                        fragments = [gen_frag() for _ in range(start - 1)]
+                        fragments.append(self.one_or_more(fragment, quantifier.lazy))
+                        for fragment1, fragment2 in pairwise(fragments):
+                            self.epsilon(fragment1.end, fragment2.start)
+                        return Fragment(fragments[0].start, fragments[-1].end)
+                    else:
+                        # 'a{0,} = a{0,maxsize}' expands to a*
+                        return self.zero_or_more(fragment, quantifier.lazy)
+                else:
+                    # a{,5} = a{0,5}
+                    # a{3,5}
+                    fragments = [gen_frag() for _ in range(end - 1)]
+                    fragments.insert(0, fragment)
+                    for fragment1, fragment2 in pairwise(fragments):
+                        self.epsilon(fragment1.end, fragment2.start)
+
+                    for fragment in fragments[start:end]:
+                        self.add_transition(
+                            fragment.start, fragments[-1].end, Anchor.empty_string()
+                        )
+                        if quantifier.lazy:
+                            self.reverse_transitions(fragment.start)
+                    return Fragment(fragments[0].start, fragments[-1].end)
+            else:
+                fragments = [gen_frag() for _ in range(start - 1)]
+                fragments.insert(0, fragment)
+                for fragment1, fragment2 in pairwise(fragments):
+                    self.epsilon(fragment1.end, fragment2.start)
+                return Fragment(fragments[0].start, fragments[-1].end)
+
+        else:
+            raise RuntimeError()
 
     def visit_anchor(self, anchor: Anchor):
         return self.base(anchor)
@@ -323,8 +366,7 @@ class NFA(defaultdict[State, list[Transition]], RegexpNodesVisitor[Fragment]):
             return fragment
         return self.alternation(fragment, expression.alternate.accept(self))
 
-    def visit_group(self, group: Group):
-        fragment = group.expression.accept(self)
+    def _add_capturing_markers(self, fragment: Fragment, group: Group) -> Fragment:
         if group.group_index is not None:
             state1, state2, state3 = gen_state(), gen_state(), gen_state()
             self.base(
@@ -337,15 +379,19 @@ class NFA(defaultdict[State, list[Transition]], RegexpNodesVisitor[Fragment]):
             )
             self.add_transition(state2, state3, Tag.barrier())
             self.add_transition(state2, fragment.start, Tag.link())
-            fragment = Fragment(state1, state3)
+            return Fragment(state1, state3)
+        return fragment
+
+    def visit_group(self, group: Group):
+        fragment = self._add_capturing_markers(group.expression.accept(self), group)
         if group.quantifier:
-            fragment = self._apply_quantifier(group.quantifier, fragment)
+            fragment = self._apply_quantifier(group.quantifier, fragment, group)
         return fragment
 
     def visit_match(self, match: Match) -> Fragment:
         fragment = match.item.accept(self)
         if match.quantifier:
-            return self._apply_quantifier(match.quantifier, fragment)
+            return self._apply_quantifier(match.quantifier, fragment, match.item)
         return fragment
 
     def visit_match_any_character(self, meta_char: MatchAnyCharacter) -> Fragment:

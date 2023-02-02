@@ -2,7 +2,6 @@ import re
 from dataclasses import dataclass
 from parser import RegexpParser
 from pprint import pprint
-from time import monotonic
 from typing import Optional
 
 from more_itertools import first_true
@@ -250,16 +249,17 @@ if __name__ == "__main__":
     # regex, t = 'foo.$', 'foo1\nfoo2\n'
     # regex, t = '(?m)foo.$', 'foo1\nfoo2\n'
     # regex, t = '$', 'foo\n'
-    regex, t = ("(?m)\\A^(a)", "a\nb\n")
+    regex, t = "((..)|(.)){2}", "NULL"
     # regex, t = "StackOverflow\\z", "StackOverflow\n"
+    # regex, t = r"[a-zA-Z0-9-@:%._\+~#=]", '-'
 
     print(list(re.finditer(regex, t)))
+    print([m.groups() for m in re.finditer(regex, t)])
 
     pattern = Regexp(regex)
     pattern.graph()
     # DFA(pattern).graph()
     pprint(list(pattern.finditer(t)))
-    pprint(list(re.finditer(regex, t)))
 
-    print([m.groups() for m in re.finditer(regex, t)])
+    # print([m.groups() for m in re.finditer(regex, t)])
     print([m.groups() for m in Regexp(regex).finditer(t)])
