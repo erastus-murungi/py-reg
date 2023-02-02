@@ -7,8 +7,6 @@ import pytest
 
 from match import Regexp
 
-logging.basicConfig(filename="test.log", level=logging.NOTSET, encoding="utf-8")
-
 
 # acquired from re2: https://github.com/google/re2/blob/main/re2/testing/search_test.cc
 
@@ -1337,9 +1335,9 @@ def test_common_email():
     )
 
 
-@pytest.mark.skip
 def test_urls():
-    url_pattern = r"^https?://(www\.)?[-a-zA-Z0-9-@:%._\+~#=]{2,256}\.[a-z]{2,6}\b([a-zA-Z0-9-@:%_\+.~#()?&\/=]*)$"
+    url_pattern = r"^https?://(www\.)?[-a-zA-Z0-9@:%._\+~#=]{2,256}\.[a-z]{2,6}\b([-a-zA-Z0-9@:%_\+.~#()?&\/=]*)$"
+
     cases = [
         "http://foo.com/blah_blah",
         "http://foo.com/blah_blah/",
@@ -1363,3 +1361,33 @@ def test_urls():
     ]
 
     _test_cases_suite_no_groups([(url_pattern, text) for text in cases])
+
+
+def test_ipv4_addresses():
+    ipv4_address_pattern = r"^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])$"
+    cases = [
+        "0.0.0.0",
+        "9.255.255.255",
+        "11.0.0.0",
+        "126.255.255.255",
+        "129.0.0.0",
+        "169.253.255.255",
+        "169.255.0.0",
+        "172.15.255.255",
+        "172.32.0.0",
+        "256.0.0.0",  # not a valid address
+        "191.0.1.255",
+        "192.88.98.255",
+        "192.88.100.0",
+        "192.167.255.255",
+        "192.169.0.0",
+        "198.17.255.255",
+        "223.255.255.255",
+    ]
+
+    _test_cases_suite([(ipv4_address_pattern, ipv4_address) for ipv4_address in cases])
+
+
+def test_mac_address():
+    pattern = "((?:[a-zA-Z0-9]{2}[:-]){5}[a-zA-Z0-9]{2})"
+    _test_cases_suite([(pattern, "00:0a:95:9d:68:16")])

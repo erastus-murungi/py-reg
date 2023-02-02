@@ -229,37 +229,14 @@ class Regexp(NFA):
 
 
 if __name__ == "__main__":
-    # regex, t = ("ab{0,}bc", "abbbbc")
-    # regex, t = ("((a)*|b)(ab|b)", "aaab")
-    # regex, t = ("(a|bcdef|g|ab|c|d|e|efg|fg)*", "abcdefg")
-    # regex, t = ("(0(_?0)*|[1-9](_?[0-9])*)", "17429")
-    # regex, t = (r"(a?)((ab)?)", "ab")
-    # regex, t = r"^ab|(abab)$", "abbabab"
-    # regex, t = "a.+?c", "abcabc"
-    # regex, t = "a?", "a"
-    # regex, t = r"([0a-z][a-z0-9]*,)+", r"a5,b7,c9,"
-    # regex, t = r"ABC[a-x]\d", "a"
-    # regex, t = "(?:ab)+", "ababa"
-    # regex, t = '(?:a|)*', ''
-    # regex, t = ("([^.]*)\\.([^:]*):[T ]+(.*)", "track1.title:TBlah blah blah")
-    # regex, t = "(?i)(a+|b){0,1}?", "AB"
-    # regex, t = 'ab{0,}bc', 'abbbbc'
-    # regex, t = ("((b*)|c(c*))*", "cbb")
-
-    # regex, t = 'foo.$', 'foo1\nfoo2\n'
-    # regex, t = '(?m)foo.$', 'foo1\nfoo2\n'
-    # regex, t = '$', 'foo\n'
-    regex, t = "((..)|(.)){2}", "NULL"
-    # regex, t = "StackOverflow\\z", "StackOverflow\n"
-    # regex, t = r"[a-zA-Z0-9-@:%._\+~#=]", '-'
+    regex, t = "[-a-zA-Z0-9@:%._\\+~#=]", "foo"
 
     print(list(re.finditer(regex, t)))
     print([m.groups() for m in re.finditer(regex, t)])
 
     pattern = Regexp(regex)
-    pattern.graph()
+    # pattern.graph()
     # DFA(pattern).graph()
     pprint(list(pattern.finditer(t)))
 
-    # print([m.groups() for m in re.finditer(regex, t)])
     print([m.groups() for m in Regexp(regex).finditer(t)])

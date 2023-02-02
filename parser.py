@@ -1,10 +1,9 @@
 import re
 from abc import ABC, ABCMeta, abstractmethod
-from copy import copy
 from dataclasses import dataclass, field
 from enum import Enum, IntFlag, auto
 from sys import maxsize
-from typing import Generic, Hashable, Optional, TypeVar, Union
+from typing import Generic, Hashable, Optional, TypeVar
 
 T = TypeVar("T")
 
@@ -778,7 +777,11 @@ class RegexpParser:
         state = self.save_state()
         items = []
         try:
-            while self.can_parse_char() or self.matches("\\"):
+            while (
+                self.can_parse_char()
+                or self.matches("\\")
+                or self.matches_any(UNESCAPED_IN_CHAR_GROUP)
+            ):
                 items.append(self.parse_character_group_item())
                 state = self.save_state()
             self.consume("]")
