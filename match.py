@@ -6,7 +6,7 @@ from typing import Optional
 
 from more_itertools import first_true
 
-from core import NFA, State, Tag, Transition
+from core import NFA, State, Tag, Transition, DFA
 
 
 @dataclass(slots=True)
@@ -65,6 +65,14 @@ class Regexp(NFA):
         self.parser = RegexpParser(regexp)
         self.set_terminals(self.parser.root.accept(self))
         self.update_symbols_and_states()
+
+        # self.pattern = regexp
+        # self.parser = RegexpParser(regexp)
+        # nfa = NFA()
+        # nfa.set_terminals(self.parser.root.accept(nfa))
+        # nfa.update_symbols_and_states()
+        # super().__init__(nfa)
+        # self.minimize()
 
     def matches(self, state, text, index):
         for transition in self[state]:
@@ -128,6 +136,40 @@ class Regexp(NFA):
             groups_copy[group_index] = captured_group_copy
             return groups_copy
         return captured_groups
+
+    def _match_at_index_dfa(self, state: State, text: str, index: int) -> Optional[int]:
+        """
+        This a fast matcher when you don't have groups or greedy quantifiers
+        """
+        assert self.parser.group_count == 0
+
+        if state is not None:
+            matching_indices = []
+
+            if state in self.accept:
+                matching_indices.append(index)
+
+            transitions = [
+                transition
+                for transition in self[state]
+                if transition.match(text, index, self.parser.flags) is not None
+            ]
+
+            for matchable, end_state in transitions:
+
+                result = self._match_at_index_dfa(
+                    end_state,
+                    text,
+                    matchable.increment(index),
+                )
+
+                if result is not None:
+                    matching_indices.append(result)
+
+            if matching_indices:
+                return max(matching_indices)
+
+        return None
 
     def _match_at_index_with_groups(
         self,
@@ -194,6 +236,12 @@ class Regexp(NFA):
         return None
 
     def _match_at_index(self, text: str, index: int) -> Optional[MatchResult]:
+        if isinstance(super(), DFA):
+            if (
+                position := self._match_at_index_dfa(self.start, text, index)
+            ) is not None:
+                return position, []
+            return None
         if self.parser.group_count > 0:
             return self._match_at_index_with_groups(text, index)
         else:
@@ -229,13 +277,13 @@ class Regexp(NFA):
 
 
 if __name__ == "__main__":
-    regex, t = "[-a-zA-Z0-9@:%._\\+~#=]", "foo"
+    regex, t = ('(a*)*', 'a')
 
     print(list(re.finditer(regex, t)))
     print([m.groups() for m in re.finditer(regex, t)])
 
     pattern = Regexp(regex)
-    # pattern.graph()
+    pattern.graph()
     # DFA(pattern).graph()
     pprint(list(pattern.finditer(t)))
 

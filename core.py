@@ -377,18 +377,17 @@ class NFA(defaultdict[State, list[Transition]], RegexpNodesVisitor[Fragment]):
 
     def _add_capturing_markers(self, fragment: Fragment, group: Group) -> Fragment:
         if group.group_index is not None:
-            state1, state2, state3 = gen_state(), gen_state(), gen_state()
+            markers = Fragment()
             self.base(
                 Tag.entry(group.group_index, group.substr),
-                Fragment(state1, fragment.start),
+                Fragment(markers.start, fragment.start),
             )
             self.base(
                 Tag.exit(group.group_index, group.substr),
-                Fragment(fragment.end, state2),
+                Fragment(fragment.end, markers.end),
             )
-            self.add_transition(state2, state3, Tag.barrier())
-            self.add_transition(state2, fragment.start, Tag.link())
-            return Fragment(state1, state3)
+            self.add_transition(markers.end, fragment.start, Tag.link())
+            return markers
         return fragment
 
     def visit_expression(self, expression: Expression):
@@ -426,7 +425,7 @@ class DFA(NFA):
     def __init__(self, nfa: Optional[NFA] = None):
         super(DFA, self).__init__()
         if nfa is not None:
-            self.subset_construction(nfa, Tag.epsilon())
+            self._subset_construction(nfa, Tag.epsilon())
 
     def transition(
         self, state: State, symbol: Matchable, wrapped: bool = False
@@ -450,24 +449,23 @@ class DFA(NFA):
         cp.states = self.states.copy()
         return cp
 
-    def subset_construction(self, nfa: NFA, collapsed):
-        seen, stack = set(), [(nfa.start,)]
+    def _subset_construction(self, nfa: NFA, collapsed):
+        seen, work_list, finished = set(), [(nfa.start,)], []
 
-        finished = []
-
-        while stack:
-            nfa_states = stack.pop()  # what is the epsilon closure of the dfa_states
-            closure = nfa.symbol_closure(nfa_states, collapsed)
-            start = gen_dfa_state(closure, src_fsm=nfa, dst_fsm=self)
+        while work_list:
+            closure = nfa.symbol_closure(work_list.pop(), collapsed)
+            dfa_state = gen_dfa_state(closure, src_fsm=nfa, dst_fsm=self)
             # next we want to see which states are reachable from each of the states in the epsilon closure
             for symbol in nfa.symbols - {collapsed}:
-                if move := nfa.symbol_closure(nfa.move(closure, symbol), collapsed):
-                    end = gen_dfa_state(move, src_fsm=nfa, dst_fsm=self)
-                    self.add_transition(start, end, symbol)
-                    if move not in seen:
-                        seen.add(move)
-                        stack.append(move)
-            finished.append(start)
+                if move_closure := nfa.symbol_closure(
+                    nfa.move(closure, symbol), collapsed
+                ):
+                    end_state = gen_dfa_state(move_closure, src_fsm=nfa, dst_fsm=self)
+                    self.add_transition(dfa_state, end_state, symbol)
+                    if move_closure not in seen:
+                        seen.add(move_closure)
+                        work_list.append(move_closure)
+            finished.append(dfa_state)
 
         self.states.update(finished)
         self.update_symbols()
@@ -545,7 +543,6 @@ class DFA(NFA):
 
         cp = self.copy()
         self.clear()
-        self.subset_construction(cp, Tag.barrier())
 
     def clear(self) -> None:
         super().clear()

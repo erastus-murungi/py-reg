@@ -151,10 +151,6 @@ class Tag(Virtual):
         return Tag(TagType.GroupLink, maxsize, "")
 
     @staticmethod
-    def barrier() -> "Tag":
-        return Tag(TagType.Fence, maxsize, "")
-
-    @staticmethod
     def epsilon() -> "Tag":
         return Tag(TagType.Epsilon, maxsize, "")
 
