@@ -1,19 +1,20 @@
 from collections import defaultdict
 from dataclasses import astuple, dataclass, field
+from functools import reduce
 from itertools import chain, combinations, count, product
 from parser import (
+    EMPTY_STRING,
+    EPSILON,
+    GROUP_LINK,
     Anchor,
+    AnyCharacter,
+    Character,
     CharacterGroup,
-    CharacterScalar,
     Expression,
     Group,
     Match,
     Matchable,
-    MatchAnyCharacter,
-    RegexFlag,
     RegexpNodesVisitor,
-    Epsilon,
-    GroupLink,
 )
 from string import ascii_uppercase
 from sys import maxsize
@@ -69,7 +70,7 @@ def gen_dfa_state(
     return strid
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class Fragment:
     start: State = field(default_factory=gen_state)
     end: State = field(default_factory=gen_state)
@@ -78,25 +79,13 @@ class Fragment:
         yield from astuple(self)
 
 
-@dataclass(eq=True)
+@dataclass(eq=True, slots=True)
 class Transition:
     matchable: Matchable
     end: State
 
-    def match(
-        self,
-        text: str,
-        position: int,
-        flags: RegexFlag,
-        default: Optional[State] = None,
-    ) -> Optional[State]:
-        if self.matchable.match(text, position, flags):
-            return self.end
-        return default
-
     def __iter__(self):
-        # noinspection PyRedundantParentheses
-        yield from (self.matchable, self.end)
+        yield from [self.matchable, self.end]
 
 
 class NFA(defaultdict[State, list[Transition]], RegexpNodesVisitor[Fragment]):
@@ -122,18 +111,12 @@ class NFA(defaultdict[State, list[Transition]], RegexpNodesVisitor[Fragment]):
             for symbol, end in transitions:
                 self.states.add(end)
                 self.symbols.add(symbol)
-        self.symbols.discard(Epsilon)
+        self.symbols.discard(EPSILON)
 
     def update_symbols(self):
         for transition in chain.from_iterable(self.values()):
             self.symbols.add(transition.matchable)
-        self.symbols.discard(Epsilon)
-
-    def _dict(self) -> defaultdict[State, list[Transition]]:
-        t = defaultdict(list)
-        for state, transitions in self.items():
-            t[state] = transitions.copy()
-        return t
+        self.symbols.discard(EPSILON)
 
     def set_start(self, state: State):
         self.start = state
@@ -148,12 +131,11 @@ class NFA(defaultdict[State, list[Transition]], RegexpNodesVisitor[Fragment]):
     def transition(
         self, state: State, symbol: Matchable, _: bool = False
     ) -> tuple[State, ...]:
-        result = tuple(
+        return tuple(
             transition.end
             for transition in self[state]
             if transition.matchable == symbol
         )
-        return result
 
     def add_transition(self, start: State, end: State, matchable: Matchable):
         self[start].append(Transition(matchable, end))
@@ -162,7 +144,7 @@ class NFA(defaultdict[State, list[Transition]], RegexpNodesVisitor[Fragment]):
         self[state].reverse()
 
     def epsilon(self, start: State, end: State):
-        self.add_transition(start, end, Epsilon)
+        self.add_transition(start, end, EPSILON)
 
     def __repr__(self):
         return (
@@ -190,24 +172,23 @@ class NFA(defaultdict[State, list[Transition]], RegexpNodesVisitor[Fragment]):
 
             seen.add(state)
             # explore the states in the order which they are in
-            nxt = self.transition(state, Epsilon, True)[::-1]
+            nxt = self.transition(state, EPSILON, True)[::-1]
             stack.extend(nxt)
             closure.add(state)
 
         return tuple(closure)
 
     def move(self, states: Iterable[State], symbol: Matchable) -> frozenset[State]:
-        s = set()
-        for state in states:
-            item = self.transition(state, symbol)
-            if item and isinstance(item, str):
-                s.update({item})
-            else:
-                s.update(item)
-        return frozenset(s)
+        return frozenset(
+            reduce(
+                set.union,
+                (self.transition(state, symbol) for state in states),
+                set(),
+            )
+        )
 
     def zero_or_more(self, fragment: Fragment, lazy: bool) -> Fragment:
-        empty_fragment = self.base(Anchor.empty_string())
+        empty_fragment = self.base(EMPTY_STRING)
 
         self.epsilon(fragment.end, empty_fragment.end)
         self.epsilon(fragment.end, fragment.start)
@@ -229,7 +210,7 @@ class NFA(defaultdict[State, list[Transition]], RegexpNodesVisitor[Fragment]):
         return Fragment(fragment.start, s)
 
     def zero_or_one(self, fragment: Fragment, lazy: bool) -> Fragment:
-        self.add_transition(fragment.start, fragment.end, Anchor.empty_string())
+        self.add_transition(fragment.start, fragment.end, EMPTY_STRING)
         if lazy:
             self.reverse_transitions(fragment.start)
         return fragment
@@ -262,8 +243,8 @@ class NFA(defaultdict[State, list[Transition]], RegexpNodesVisitor[Fragment]):
             engine="dot",
         )
         dot.attr("graph", rankdir="LR")
-        dot.attr("node", fontname="Palatino")
-        dot.attr("edge", fontname="Palatino")
+        dot.attr("node", fontname="verdana")
+        dot.attr("edge", fontname="verdana")
 
         seen = set()
 
@@ -271,7 +252,7 @@ class NFA(defaultdict[State, list[Transition]], RegexpNodesVisitor[Fragment]):
             for transition in transitions:
                 symbol, end = transition
                 if state not in seen:
-                    color = "green" if state == self.start else "gray"
+                    color = "green" if state == self.start else ""
                     dot.node(
                         str(state),
                         color=color,
@@ -280,15 +261,12 @@ class NFA(defaultdict[State, list[Transition]], RegexpNodesVisitor[Fragment]):
                     )
                     seen.add(state)
                 if end not in seen:
-                    color = "gray"
                     dot.node(
                         f"{end}",
-                        color=color,
                         shape="doublecircle" if end in self.accept else "circle",
-                        style="filled",
                     )
                     seen.add(end)
-                if symbol is GroupLink:
+                if symbol is GROUP_LINK:
                     dot.edge(str(state), str(end), color="blue", style="dotted")
                 else:
                     dot.edge(str(state), str(end), label=str(symbol), color="black")
@@ -317,7 +295,7 @@ class NFA(defaultdict[State, list[Transition]], RegexpNodesVisitor[Fragment]):
                 )
             elif end is None:
                 # a{0} = ''
-                return self.base(Anchor.empty_string())
+                return self.base(EMPTY_STRING)
 
         if end is not None:
             if end == maxsize:
@@ -336,9 +314,7 @@ class NFA(defaultdict[State, list[Transition]], RegexpNodesVisitor[Fragment]):
 
                 for fragment in fragments[start:end]:
                     # empty transitions all lead to a common exit
-                    self.add_transition(
-                        fragment.start, fragments[-1].end, Anchor.empty_string()
-                    )
+                    self.add_transition(fragment.start, fragments[-1].end, EMPTY_STRING)
                     if quantifier.lazy:
                         self.reverse_transitions(fragment.start)
 
@@ -370,22 +346,24 @@ class NFA(defaultdict[State, list[Transition]], RegexpNodesVisitor[Fragment]):
                     return self.zero_or_more(fragment, quantifier.lazy)
                 case "?":
                     return self.zero_or_one(fragment, quantifier.lazy)
+                case _:
+                    raise RuntimeError(f"unrecognized quantifier {quantifier.char}")
         else:
             return self._apply_range_quantifier(node)
 
     def _add_capturing_markers(self, fragment: Fragment, group: Group) -> Fragment:
         if group.group_index is not None:
-            markers = Fragment()
+            markers_fragment = Fragment()
             self.base(
                 Anchor.group_entry(group.group_index),
-                Fragment(markers.start, fragment.start),
+                Fragment(markers_fragment.start, fragment.start),
             )
             self.base(
                 Anchor.group_exit(group.group_index),
-                Fragment(fragment.end, markers.end),
+                Fragment(fragment.end, markers_fragment.end),
             )
-            self.add_transition(markers.end, fragment.start, GroupLink)
-            return markers
+            self.add_transition(markers_fragment.end, fragment.start, GROUP_LINK)
+            return markers_fragment
         return fragment
 
     def visit_expression(self, expression: Expression):
@@ -409,11 +387,11 @@ class NFA(defaultdict[State, list[Transition]], RegexpNodesVisitor[Fragment]):
     def visit_anchor(self, anchor: Anchor):
         return self.base(anchor)
 
-    def visit_match_any_character(self, meta_char: MatchAnyCharacter) -> Fragment:
+    def visit_any_character(self, meta_char: AnyCharacter) -> Fragment:
         return self.base(meta_char)
 
-    def visit_character_scalar(self, character_scalar: CharacterScalar) -> Fragment:
-        return self.base(character_scalar)
+    def visit_character(self, character: Character) -> Fragment:
+        return self.base(character)
 
     def visit_character_group(self, character_group: CharacterGroup) -> Fragment:
         return self.base(character_group)
@@ -427,7 +405,7 @@ class DFA(NFA):
 
     def transition(
         self, state: State, symbol: Matchable, wrapped: bool = False
-    ) -> State:
+    ) -> State | tuple[State, ...]:
         result = first_true(
             self[state],
             None,

@@ -3,9 +3,16 @@ from abc import ABC, ABCMeta, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum, IntFlag, auto
 from sys import maxsize
-from typing import Generic, Hashable, Optional, TypeVar
+from typing import Final, Generic, Hashable, Optional, TypeVar
 
 T = TypeVar("T")
+
+
+INLINE_MODIFIER_START = "(?"
+pattern = re.compile(r"(?<!^)(?=[A-Z])")
+ESCAPED = set(". \\ + * ? [ ^ ] $ ( ) { } = < > | -".split())
+CHARACTER_CLASSES = {"w", "W", "s", "S", "d", "D"}
+UNESCAPED_IN_CHAR_GROUP = ESCAPED - {"]"}
 
 
 class RegexFlag(IntFlag):
@@ -16,27 +23,8 @@ class RegexFlag(IntFlag):
     FREESPACING = auto()
 
 
-class InvalidCharacterRange(Exception):
+class RegexpParserError(Exception):
     ...
-
-
-INLINE_MODIFIER_START = "(?"
-
-pattern = re.compile(r"(?<!^)(?=[A-Z])")
-
-
-@dataclass
-class RegexNode(ABC):
-    pos: int = field(repr=False)
-
-    def accept(self, visitor: "RegexpNodesVisitor"):
-        method_name = f"visit_{pattern.sub('_', self.__class__.__name__).lower()}"
-        visit = getattr(visitor, method_name)
-        return visit(self)
-
-    @abstractmethod
-    def string(self) -> str:
-        ...
 
 
 def is_word_character(char: str) -> bool:
@@ -76,19 +64,112 @@ class Matchable(Hashable):
     def match(self, text: str, position: int, flags: RegexFlag) -> bool:
         ...
 
-    def is_opening_group(self):
-        return isinstance(self, Anchor) and self.anchor_type == AnchorType.GroupEntry
-
-    def is_closing_group(self):
-        return isinstance(self, Anchor) and self.anchor_type == AnchorType.GroupExit
-
     def increment(self, index: int) -> int:
-        """We keep the index the same only when we are a `Virtual` node"""
+        """We keep the index the same only when we are an Anchor"""
         return index + (not isinstance(self, Anchor))
 
 
-class SubExpressionItem(RegexNode, ABC):
-    pass
+@dataclass
+class RegexNode(ABC):
+    pos: int = field(repr=False)
+
+    def accept(self, visitor: "RegexpNodesVisitor"):
+        method_name = f"visit_{pattern.sub('_', self.__class__.__name__).lower()}"
+        visit = getattr(visitor, method_name)
+        return visit(self)
+
+    @abstractmethod
+    def string(self) -> str:
+        ...
+
+
+@dataclass
+class Quantifier:
+    lazy: bool
+    char: Optional[str]
+    range_quantifier: Optional[tuple[int, Optional[int]]] = None
+
+    def _validate_range(self):
+        assert self.range_quantifier is not None
+        start, end = self.range_quantifier
+        if end is None:
+            if start < 0:
+                raise RegexpParserError(
+                    f"Invalid Range Quantifier: fixed quantifier, {{n}} must be >= 0: not {start}"
+                )
+        elif isinstance(end, int):
+            if end == maxsize:
+                if start < 0:
+                    raise RegexpParserError(
+                        f"Invalid Range Quantifier: for {{n,}} quantifier, {{n}} must be >= 0: not {start}"
+                    )
+            else:
+                if start < 0:
+                    raise RegexpParserError(
+                        f"Invalid Range Quantifier: for {{n, m}} quantifier, {{n}} must be >= 0: not {start}"
+                    )
+                if end < start:
+                    raise RegexpParserError(
+                        f"Invalid Range Quantifier: for {{n, m}} quantifier, {{m}} must be >= {{n}}: not {end}"
+                    )
+        elif start == 0:
+            if not isinstance(end, int):
+                raise RegexpParserError(
+                    f"Invalid Range Quantifier: invalid upper bound {end}"
+                )
+            if end < 1:
+                raise RegexpParserError(
+                    f"Invalid Range Quantifier: for {{, m}} quantifier, {{m}} must be >= 1: not {end}"
+                )
+        else:
+            raise RegexpParserError(
+                f"Invalid Range Quantifier: invalid range {{{start}, {end}}}"
+            )
+
+    def __post_init__(self):
+        if self.char is not None:
+            assert self.char in ("?", "+", "*"), f"invalid quantifier {self.char}"
+        else:
+            assert self.range_quantifier is not None
+            self._validate_range()
+
+    def string(self):
+        # TODO: Fix string method of range quantifier so that it appears as it was in original regex
+        if self.char is not None:
+            base = self.char
+        else:
+            base = f"{{{self.range_quantifier}}}"
+        return base + "?" if self.lazy else ""
+
+
+@dataclass
+class CharacterRange(Matchable):
+    start: str
+    end: str
+
+    def match(self, text, position, flags) -> bool:
+        if position < len(text):
+            if flags & RegexFlag.IGNORECASE:
+                return (
+                    self.start.casefold()
+                    <= text[position].casefold()
+                    <= self.end.casefold()
+                )
+            else:
+                return self.start <= text[position] <= self.end
+        return False
+
+    def __post_init__(self):
+        if self.start > self.end:
+            raise RegexpParserError(
+                f"Invalid Character Range: [{self.start}-{self.end}] is not ordered"
+            )
+
+    def __hash__(self):
+        return hash((self.start, self.end))
+
+    def __repr__(self):
+        return f"{self.start}-{self.end}"
 
 
 class AnchorType(Enum):
@@ -108,35 +189,26 @@ class AnchorType(Enum):
     EndOfStringOnlyNotNewline = "\\z"
     EndOfStringOnlyMaybeNewLine = "\\Z"
 
-    @staticmethod
-    def get(char):
-        match char:
-            case "^":
-                return AnchorType.StartOfString
-            case "$":
-                return AnchorType.EndOfString
-            case "b":
-                return AnchorType.WordBoundary
-            case "B":
-                return AnchorType.NonWordBoundary
-            case "A":
-                return AnchorType.StartOfStringOnly
-            case "z":
-                return AnchorType.EndOfStringOnlyNotNewline
-            case "Z":
-                return AnchorType.EndOfStringOnlyMaybeNewLine
-            case _:
-                raise ValueError(f"unrecognized anchor {char}")
+
+char2anchor_type: Final[dict[str, AnchorType]] = {
+    "^": AnchorType.StartOfString,
+    "$": AnchorType.EndOfString,
+    "b": AnchorType.WordBoundary,
+    "B": AnchorType.NonWordBoundary,
+    "A": AnchorType.StartOfStringOnly,
+    "z": AnchorType.EndOfStringOnlyNotNewline,
+    "Z": AnchorType.EndOfStringOnlyMaybeNewLine,
+}
+
+
+class MatchableRegexNode(RegexNode, Matchable, ABC):
+    ...
 
 
 @dataclass(slots=True)
-class Anchor(SubExpressionItem, Matchable):
+class Anchor(MatchableRegexNode):
     anchor_type: AnchorType
     group_index: Optional[int] = None
-
-    @staticmethod
-    def empty_string(pos: int = maxsize) -> "Anchor":
-        return Anchor(pos, AnchorType.EmptyString)
 
     @staticmethod
     def group_entry(group_index: int):
@@ -152,7 +224,7 @@ class Anchor(SubExpressionItem, Matchable):
                 # match the start of the string
                 return position == 0 or (
                     # and in MULTILINE mode also matches immediately after each newline.
-                    (RegexFlag.MULTILINE & flags)
+                    bool(RegexFlag.MULTILINE & flags)
                     and (not text or (position > 0) and text[position - 1] == "\n")
                 )
             case AnchorType.EndOfString:
@@ -170,7 +242,7 @@ class Anchor(SubExpressionItem, Matchable):
                     and text[position] == "\n"
                 ) or (
                     # and in MULTILINE mode also matches before a newline
-                    RegexFlag.MULTILINE & flags
+                    bool(RegexFlag.MULTILINE & flags)
                     and (position < len(text) and text[position] == "\n")
                 )
             case AnchorType.StartOfStringOnly:
@@ -185,7 +257,7 @@ class Anchor(SubExpressionItem, Matchable):
             case AnchorType.WordBoundary:
                 return is_word_boundary(text, position)
             case AnchorType.NonWordBoundary:
-                return text and not is_word_boundary(text, position)
+                return text != "" and not is_word_boundary(text, position)
             case AnchorType.EmptyString | AnchorType.Epsilon | AnchorType.GroupEntry | AnchorType.GroupExit:
                 return True
             case AnchorType.GroupLink:
@@ -194,142 +266,34 @@ class Anchor(SubExpressionItem, Matchable):
         raise NotImplementedError
 
     def string(self):
-        if (
-            self.anchor_type == AnchorType.GroupEntry
-            or self.anchor_type == AnchorType.GroupExit
-        ):
-            return f"{self.anchor_type.name}({self.group_index})"
         return self.anchor_type.value
 
     def __hash__(self):
         return hash(self.anchor_type)
 
     def __repr__(self):
+        if (
+            self.anchor_type == AnchorType.GroupEntry
+            or self.anchor_type == AnchorType.GroupExit
+        ):
+            return f"{self.anchor_type.name}({self.group_index})"
         return self.anchor_type.name
 
 
-Epsilon = Anchor(maxsize, AnchorType.Epsilon)
-GroupLink = Anchor(maxsize, AnchorType.GroupLink)
+EPSILON: Final[Anchor] = Anchor(maxsize, AnchorType.Epsilon)
+GROUP_LINK: Final[Anchor] = Anchor(maxsize, AnchorType.GroupLink)
+EMPTY_STRING: Final[Anchor] = Anchor(maxsize, AnchorType.EmptyString)
 
 
 @dataclass
-class Expression(RegexNode):
-    seq: list[SubExpressionItem]
-    alternate: Optional["Expression"] = None
-
-    def string(self):
-        seq = "".join(item.string() for item in self.seq)
-        if self.alternate is not None:
-            return f"{seq}|{self.alternate.string()}"
-        return seq
-
-
-ESCAPED = set(". \\ + * ? [ ^ ] $ ( ) { } = < > | -".split())
-
-CHARACTER_CLASSES = {"w", "W", "s", "S", "d", "D"}
-
-UNESCAPED_IN_CHAR_GROUP = ESCAPED - {"]"}
-
-
-@dataclass
-class Quantifier:
-    lazy: bool
-    char: Optional[str]
-    range_quantifier: Optional[tuple[int, Optional[int]]] = None
-
-    def validate_range(self):
-        assert self.range_quantifier is not None
-        start, end = self.range_quantifier
-        if end is None:
-            if start < 0:
-                raise InvalidCharacterRange(
-                    f"fixed quantifier, {{n}} must be >= 0: not {start}"
-                )
-        elif isinstance(end, int):
-            if end == maxsize:
-                if start < 0:
-                    raise InvalidCharacterRange(
-                        f"for {{n,}} quantifier, {{n}} must be >= 0: not {start}"
-                    )
-            else:
-                if start < 0:
-                    raise InvalidCharacterRange(
-                        f"for {{n, m}} quantifier, {{n}} must be >= 0: not {start}"
-                    )
-                if end < start:
-                    raise InvalidCharacterRange(
-                        f"for {{n, m}} quantifier, {{m}} must be >= {{n}}: not {end}"
-                    )
-        elif start == 0:
-            if not isinstance(end, int):
-                raise InvalidCharacterRange(f"invalid upper bound {end}")
-            if end < 1:
-                raise InvalidCharacterRange(
-                    f"for {{, m}} quantifier, {{m}} must be >= 1: not {end}"
-                )
-        else:
-            raise InvalidCharacterRange(f"invalid range {{{start}, {end}}}")
-
-    def __post_init__(self):
-        if self.char is not None:
-            assert self.char in ("?", "+", "*"), f"invalid quantifier {self.char}"
-        else:
-            assert self.range_quantifier is not None
-            self.validate_range()
-
-    def string(self):
-        # TODO: Fix string method of range quantifier so that it appears as it was in original regex
-        if self.char is not None:
-            base = self.char
-        else:
-            base = f"{{{self.range_quantifier}}}"
-        return base + "?" if self.lazy else ""
-
-
-@dataclass
-class Group(SubExpressionItem):
-    expression: Expression
-    quantifier: Optional[Quantifier]
-    group_index: Optional[int]
-    substr: Optional[str]
-
-    def capturing(self):
-        return self.group_index is not None
-
-    def string(self):
-        expression = f"({'' if self.capturing() else '?:'}{self.expression.string()})"
-        if self.quantifier is not None:
-            return f"{expression}{self.quantifier.string()}"
-        return expression
-
-
-class MatchItem(SubExpressionItem, ABC):
-    pass
-
-
-@dataclass
-class Match(SubExpressionItem):
-    item: MatchItem
-    quantifier: Optional[Quantifier]
-
-    def string(self):
-        return (
-            f'{self.item.string()}{self.quantifier.string() if self.quantifier else ""}'
+class AnyCharacter(MatchableRegexNode):
+    def match(self, text, position, flags) -> bool:
+        return position < len(text) and (
+            bool(flags & RegexFlag.DOTALL) or text[position] != "\n"
         )
 
-
-@dataclass
-class MatchAnyCharacter(MatchItem, Matchable):
-    ignore: tuple = ("\n",)
-
-    def __eq__(self, other):
-        return isinstance(other, MatchAnyCharacter) and other.ignore == self.ignore
-
-    def match(self, text, position, flags) -> bool:
-        return position < len(text) and text[position] not in self.ignore
-
     def __repr__(self):
-        return "Any"
+        return "Dot"
 
     def __hash__(self):
         return hash(".")
@@ -338,12 +302,8 @@ class MatchAnyCharacter(MatchItem, Matchable):
         return "."
 
 
-class CharacterGroupItem(Matchable, ABC):
-    pass
-
-
 @dataclass
-class CharacterScalar(CharacterGroupItem, MatchItem):
+class Character(MatchableRegexNode):
     char: str
 
     def match(self, text, position, flags) -> bool:
@@ -357,8 +317,6 @@ class CharacterScalar(CharacterGroupItem, MatchItem):
         return other == self.char
 
     def __lt__(self, other) -> bool:
-        if isinstance(other, CharacterScalar):
-            return self.char <= other.char
         return other <= self.char
 
     def __repr__(self):
@@ -368,16 +326,14 @@ class CharacterScalar(CharacterGroupItem, MatchItem):
         return hash(self.char)
 
     def string(self):
+        if self.char in ESCAPED:
+            return "\\" + self.char
         return self.char
 
 
-class MatchCharacterClass(MatchItem, ABC):
-    pass
-
-
 @dataclass
-class CharacterGroup(MatchCharacterClass, Matchable):
-    items: tuple[CharacterGroupItem, ...]
+class CharacterGroup(MatchableRegexNode):
+    items: tuple[Character | CharacterRange, ...]
     negated: bool = False
 
     def match(self, text, position, flags) -> bool:
@@ -406,38 +362,47 @@ class CharacterGroup(MatchCharacterClass, Matchable):
 
 
 @dataclass
-class CharacterRange(CharacterGroupItem, Matchable):
-    start: str
-    end: str
+class Match(RegexNode):
+    item: Character | CharacterGroup | AnyCharacter
+    quantifier: Optional[Quantifier]
 
-    def match(self, text, position, flags) -> bool:
-        if position < len(text):
-            if flags & RegexFlag.IGNORECASE:
-                return (
-                    self.start.casefold()
-                    <= text[position].casefold()
-                    <= self.end.casefold()
-                )
-            else:
-                return self.start <= text[position] <= self.end
-        return False
+    def string(self):
+        return (
+            f'{self.item.string()}{self.quantifier.string() if self.quantifier else ""}'
+        )
 
-    def __post_init__(self):
-        if self.start > self.end:
-            raise InvalidCharacterRange(f"[{self.start}-{self.end}] is not ordered")
 
-    def __hash__(self):
-        return hash((self.start, self.end))
+@dataclass
+class Group(RegexNode):
+    expression: "Expression"
+    group_index: Optional[int]
+    quantifier: Optional[Quantifier]
 
-    def __repr__(self):
-        return f"{self.start}-{self.end}"
+    def is_capturing(self):
+        return self.group_index is not None
+
+    def string(self):
+        expression = (
+            f"({'' if self.is_capturing() else '?:'}{self.expression.string()})"
+        )
+        if self.quantifier is not None:
+            return f"{expression}{self.quantifier.string()}"
+        return expression
+
+
+@dataclass
+class Expression(RegexNode):
+    seq: list[Anchor | Group | Match]
+    alternate: Optional["Expression"] = None
+
+    def string(self):
+        seq = "".join(item.string() for item in self.seq)
+        if self.alternate is not None:
+            return f"{seq}|{self.alternate.string()}"
+        return seq
 
 
 class RegexpNodesVisitor(Generic[T], metaclass=ABCMeta):
-    @abstractmethod
-    def visit_anchor(self, anchor: Anchor) -> T:
-        ...
-
     @abstractmethod
     def visit_expression(self, expression: Expression) -> T:
         ...
@@ -447,15 +412,19 @@ class RegexpNodesVisitor(Generic[T], metaclass=ABCMeta):
         ...
 
     @abstractmethod
-    def visit_match(self, group: Group) -> T:
+    def visit_match(self, group: Match) -> T:
         ...
 
     @abstractmethod
-    def visit_match_any_character(self, meta_char: MatchAnyCharacter) -> T:
+    def visit_anchor(self, anchor: Anchor) -> T:
         ...
 
     @abstractmethod
-    def visit_character_scalar(self, character_scalar: CharacterScalar) -> T:
+    def visit_any_character(self, meta_char: AnyCharacter) -> T:
+        ...
+
+    @abstractmethod
+    def visit_character(self, character: Character) -> T:
         ...
 
     @abstractmethod
@@ -464,10 +433,10 @@ class RegexpNodesVisitor(Generic[T], metaclass=ABCMeta):
 
 
 class RegexpParser:
-    def __init__(self, regex: str):
+    def __init__(self, regex: str, flags: RegexFlag = RegexFlag.NOFLAG):
         self._regex = regex
         self._pos = 0
-        self._flags = RegexFlag.NOFLAG
+        self._flags = flags
         self._group_count = 0
         self._root = self.parse_regex()
         if self._pos < len(self._regex):
@@ -536,15 +505,15 @@ class RegexpParser:
                 case "x":
                     self._flags |= RegexFlag.FREESPACING
                 case "_":
-                    raise ValueError()
+                    raise ValueError(f"unrecognized inline modifier {modifier}")
 
     def parse_regex(self) -> RegexNode:
         if self._regex == "":
-            return Anchor.empty_string()
+            return EMPTY_STRING
         self.parse_inline_modifiers()
 
         if self.matches("^"):
-            anchor = Anchor(self._pos, AnchorType.get(self.consume_and_return()))
+            anchor = Anchor(self._pos, char2anchor_type[self.consume_and_return()])
             if self.remainder():
                 expr = self.parse_expression()
                 expr.seq.insert(0, anchor)
@@ -591,18 +560,18 @@ class RegexpParser:
             expr = (
                 self.parse_expression()
                 if self.can_parse_sub_expression_item()
-                else Anchor.empty_string(self._pos)
+                else EMPTY_STRING
             )
         return Expression(pos, sub_exprs, expr)
 
-    def parse_sub_expression(self) -> list[SubExpressionItem]:
+    def parse_sub_expression(self):
         # Subexpression ::= SubexpressionItem+
         sub_exprs = [self.parse_sub_expression_item()]
         while self.can_parse_sub_expression_item():
             sub_exprs.append(self.parse_sub_expression_item())
         return sub_exprs
 
-    def parse_sub_expression_item(self) -> SubExpressionItem:
+    def parse_sub_expression_item(self):
         if self.can_parse_group():
             return self.parse_group()
         elif self.can_parse_anchor():
@@ -613,22 +582,21 @@ class RegexpParser:
     def parse_group(self) -> Group | Expression:
         start = self._pos
         self.consume("(")
-        index = self._group_count
+        group_index = self._group_count
         self._group_count += 1
         if self.remainder().startswith("?:"):
             self.consume("?:")
-            index = None
+            group_index = None
             self._group_count -= 1
         if self.matches(")"):
-            expr = Anchor.empty_string()
+            expression = EMPTY_STRING
         else:
-            expr = self.parse_expression()
+            expression = self.parse_expression()
         self.consume(")")
-        end = self._pos
         quantifier = None
         if self.can_parse_quantifier():
             quantifier = self.parse_quantifier()
-        return Group(self._pos, expr, quantifier, index, self._regex[start:end])
+        return Group(start, expression, group_index, quantifier)
 
     def can_parse_quantifier(self):
         return self.matches_any(("*", "+", "?", "{"))
@@ -681,7 +649,7 @@ class RegexpParser:
                 (
                     CharacterRange("A", "Z"),
                     CharacterRange("a", "z"),
-                    CharacterScalar(self._pos, "_"),
+                    Character(self._pos, "_"),
                 ),
                 self.matches("W"),
             )
@@ -694,7 +662,7 @@ class RegexpParser:
                 self._pos,
                 tuple(
                     map(
-                        lambda c: CharacterScalar(self._pos, c),
+                        lambda c: Character(self._pos, c),
                         [" ", "\t", "\n", "\r", "\v", "\f"],
                     )
                 ),
@@ -712,7 +680,7 @@ class RegexpParser:
     def can_parse_character_class(self):
         return self.matches("\\") and self.matches_any(CHARACTER_CLASSES, 1)
 
-    def parse_character_group_item(self) -> CharacterGroupItem | CharacterGroup:
+    def parse_character_group_item(self) -> Character | CharacterRange | CharacterGroup:
         if self.can_parse_character_class():
             return self.parse_character_class()
         else:
@@ -724,7 +692,7 @@ class RegexpParser:
             if self.matches_any(UNESCAPED_IN_CHAR_GROUP):
                 if self.matches("\\"):
                     self.consume("\\")
-                return CharacterScalar(self._pos, self.consume_and_return())
+                return Character(self._pos, self.consume_and_return())
             char = self.parse_char()
             if self.matches("-"):
                 return self.parse_character_range(char.char)
@@ -755,7 +723,7 @@ class RegexpParser:
         except ValueError:
             self._pos, self._flags = state
             while self.can_parse_char() or self.matches_any(UNESCAPED_IN_CHAR_GROUP):
-                items.append(CharacterScalar(self._pos, self.consume_and_return()))
+                items.append(Character(self._pos, self.consume_and_return()))
             self.consume("]")
 
         if not items:
@@ -776,7 +744,7 @@ class RegexpParser:
                 f"regexp = {self._regex}\n"
                 f"left   = {' ' * self._pos + self.remainder()}"
             )
-        return CharacterScalar(self._pos - 1, self.consume_and_return())
+        return Character(self._pos - 1, self.consume_and_return())
 
     def can_parse_escaped(self):
         return self.matches("\\") and self.matches_any(ESCAPED, 1)
@@ -788,7 +756,7 @@ class RegexpParser:
 
     def parse_escaped(self):
         self.consume("\\")
-        return CharacterScalar(self._pos - 1, self.consume_and_return())
+        return Character(self._pos - 1, self.consume_and_return())
 
     def can_parse_character_class_or_group(self):
         return self.can_parse_character_class() or self.can_parse_character_group()
@@ -802,7 +770,7 @@ class RegexpParser:
     def parse_match_item(self):
         if self.matches("."):  # parse AnyCharacter
             self.consume(".")
-            return MatchAnyCharacter(self._pos)
+            return AnyCharacter(self._pos)
         elif self.can_parse_character_class_or_group():
             return self.parse_character_class_or_group()
         else:
@@ -813,7 +781,7 @@ class RegexpParser:
         if self.matches("\\"):
             self.consume("\\")
             assert self.current() in {"A", "z", "Z", "G", "b", "B"}
-        return Anchor(pos, AnchorType.get(self.consume_and_return()))
+        return Anchor(pos, char2anchor_type[self.consume_and_return()])
 
     def __repr__(self):
         return f"Parser({self._regex})"

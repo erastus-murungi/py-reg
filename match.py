@@ -1,12 +1,12 @@
 import re
 from dataclasses import dataclass
-from parser import RegexpParser, Epsilon, Matchable
+from parser import EPSILON, Anchor, AnchorType, Matchable, RegexpParser
 from pprint import pprint
 from typing import Optional
 
 from more_itertools import first_true
 
-from core import NFA, State, Transition, DFA
+from core import DFA, NFA, State, Transition
 
 
 @dataclass(slots=True)
@@ -66,19 +66,45 @@ class Regexp(NFA):
         self.set_terminals(self.parser.root.accept(self))
         self.update_symbols_and_states()
 
-        # self.pattern = regexp
-        # self.parser = RegexpParser(regexp)
-        # nfa = NFA()
-        # nfa.set_terminals(self.parser.root.accept(nfa))
-        # nfa.update_symbols_and_states()
-        # super().__init__(nfa)
-        # self.minimize()
+    def _match_at_index_dfa(self, state: State, text: str, index: int) -> Optional[int]:
+        """
+        This a fast matcher when you don't have groups or greedy quantifiers
+        """
+        assert self.parser.group_count == 0
+
+        if state is not None:
+            matching_indices = []
+
+            if state in self.accept:
+                matching_indices.append(index)
+
+            transitions = [
+                transition
+                for transition in self[state]
+                if transition.matchable.match(text, index, self.parser.flags)
+            ]
+
+            for matchable, end_state in transitions:
+
+                result = self._match_at_index_dfa(
+                    end_state,
+                    text,
+                    matchable.increment(index),
+                )
+
+                if result is not None:
+                    matching_indices.append(result)
+
+            if matching_indices:
+                return max(matching_indices)
+
+        return None
 
     def matches(self, state, text, index):
         for transition in self[state]:
-            if (transition.matchable is Epsilon and transition.end in self.accept) or (
-                transition.matchable is not Epsilon
-                and transition.match(text, index, self.parser.flags) is not None
+            if (transition.matchable is EPSILON and transition.end in self.accept) or (
+                transition.matchable is not EPSILON
+                and transition.matchable.match(text, index, self.parser.flags)
             ):
                 yield transition
 
@@ -105,7 +131,7 @@ class Regexp(NFA):
             stack.append((True, state))
             # explore the states in the order which they are in
             stack.extend(
-                (False, nxt) for nxt in self.transition(state, Epsilon, True)[::-1]
+                (False, nxt) for nxt in self.transition(state, EPSILON, True)[::-1]
             )
         return closure, transitions
 
@@ -117,15 +143,16 @@ class Regexp(NFA):
     def _update_captured_groups(
         index: int, matchable: Matchable, captured_groups: CapturedGroups
     ) -> CapturedGroups:
-        if matchable.is_opening_group() or matchable.is_closing_group():
+        if isinstance(matchable, Anchor) and matchable.anchor_type in (
+            AnchorType.GroupEntry,
+            AnchorType.GroupExit,
+        ):
             group_index = matchable.group_index
-
             # must create copy of the list
             groups_copy = captured_groups[:]
-
             # copy actual group object
             captured_group_copy = captured_groups[group_index].copy()
-            if matchable.is_opening_group():
+            if matchable.anchor_type == AnchorType.GroupEntry:
                 captured_group_copy.start = index
             else:
                 captured_group_copy.end = index
@@ -133,40 +160,6 @@ class Regexp(NFA):
             groups_copy[group_index] = captured_group_copy
             return groups_copy
         return captured_groups
-
-    def _match_at_index_dfa(self, state: State, text: str, index: int) -> Optional[int]:
-        """
-        This a fast matcher when you don't have groups or greedy quantifiers
-        """
-        assert self.parser.group_count == 0
-
-        if state is not None:
-            matching_indices = []
-
-            if state in self.accept:
-                matching_indices.append(index)
-
-            transitions = [
-                transition
-                for transition in self[state]
-                if transition.match(text, index, self.parser.flags) is not None
-            ]
-
-            for matchable, end_state in transitions:
-
-                result = self._match_at_index_dfa(
-                    end_state,
-                    text,
-                    matchable.increment(index),
-                )
-
-                if result is not None:
-                    matching_indices.append(result)
-
-            if matching_indices:
-                return max(matching_indices)
-
-        return None
 
     def _match_at_index_with_groups(
         self,
@@ -274,14 +267,13 @@ class Regexp(NFA):
 
 
 if __name__ == "__main__":
-    regex, t = ("(a*)*", "a")
+    regex, t = ("(a|ab|c|bcd){0,10}(d*)", "X1234567Y")
 
     print(list(re.finditer(regex, t)))
     print([m.groups() for m in re.finditer(regex, t)])
 
     pattern = Regexp(regex)
-    pattern.graph()
-    # DFA(pattern).graph()
+    # pattern.graph()
     pprint(list(pattern.finditer(t)))
 
     print([m.groups() for m in Regexp(regex).finditer(t)])

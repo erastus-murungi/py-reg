@@ -1,6 +1,6 @@
 import logging
 import re
-from parser import InvalidCharacterRange
+from parser import RegexpParserError
 from random import randint, random, seed
 
 import pytest
@@ -303,7 +303,7 @@ def test_raises_exception():
     for pattern, text in cases:
         with pytest.raises(re.error):
             _ = [m.group(0) for m in re.finditer(pattern, text) if m.group(0) != ""]
-        with pytest.raises((InvalidCharacterRange, ValueError)):
+        with pytest.raises((RegexpParserError, ValueError)):
             _ = [m.substr for m in Regexp(pattern).finditer(text) if m.substr != ""]
 
 
