@@ -1,4 +1,3 @@
-import logging
 import re
 from parser import RegexpParserError
 from random import randint, random, seed
@@ -10,31 +9,24 @@ from match import Regexp
 # acquired from re2: https://github.com/google/re2/blob/main/re2/testing/search_test.cc
 
 
-def _test_cases_suite(cases: list[tuple[str, str]]):
-    for i, (pattern, text) in enumerate(cases):
-        expected = [m.group(0) for m in re.finditer(pattern, text)]
-        actual = [m.group(0) for m in Regexp(pattern).finditer(text)]
-        assert expected == actual, (i, pattern, text)
-
-        expected_groups = [m.groups() for m in re.finditer(pattern, text)]
-        actual_groups = [m.groups() for m in Regexp(pattern).finditer(text)]
-        for expected_group, actual_group in zip(expected_groups, actual_groups):
-            assert expected_group == actual_group, (i, pattern, text)
-            logging.info(
-                f"{i:04d} pattern = {pattern!r}, text = {text!r}, expected_group={expected_group}, "
-                f"actual_group={actual_group}"
-            )
+def _test_case_no_groups(pattern, text):
+    expected = [m.group(0) for m in re.finditer(pattern, text)]
+    actual = [m.group(0) for m in Regexp(pattern).finditer(text)]
+    assert expected == actual, (pattern, text)
 
 
-def _test_cases_suite_no_groups(cases: list[tuple[str, str]]):
-    for i, (pattern, text) in enumerate(cases):
-        expected = [m.group(0) for m in re.finditer(pattern, text)]
-        actual = [m.group(0) for m in Regexp(pattern).finditer(text)]
-        assert expected == actual, (i, pattern, text)
+def _test_case(pattern, text):
+    _test_case_no_groups(pattern, text)
+
+    expected_groups = [m.groups() for m in re.finditer(pattern, text)]
+    actual_groups = [m.groups() for m in Regexp(pattern).finditer(text)]
+    for expected_group, actual_group in zip(expected_groups, actual_groups):
+        assert expected_group == actual_group, (pattern, text)
 
 
-def test_repetition():
-    cases = [
+@pytest.mark.parametrize(
+    "pattern, text",
+    [
         ("ab{0,}bc", "abbbbc"),
         ("ab{1,}bc", "abbbbc"),
         ("ab{1,3}bc", "abbbbc"),
@@ -51,12 +43,15 @@ def test_repetition():
         ("(a+|b){0,1}", "ab"),
         ("([abc])*d", "abbbcd"),
         ("([abc])*bcd", "abcd"),
-    ]
-    _test_cases_suite(cases)
+    ],
+)
+def test_repetition(pattern, text):
+    _test_case(pattern, text)
 
 
-def test_interesting_cases():
-    cases = [
+@pytest.mark.parametrize(
+    "pattern, text",
+    [
         (r"a{,2}", "str{a{,2}}"),
         ("\\.\\^\\$\\\\", "str{.^$\\}"),
         (r"[a-zABC]", "cc{0x41-0x43 0x61-0x7a}"),
@@ -70,13 +65,15 @@ def test_interesting_cases():
         (r"^", "^"),
         (r"$", "$"),
         (r"ABC[a-x]\d", "ABC[a-x]\\d"),
-    ]
+    ],
+)
+def test_interesting_cases(pattern, text):
+    _test_case(pattern, text)
 
-    _test_cases_suite(cases)
 
-
-def test_word_boundary_cases():
-    cases = [
+@pytest.mark.parametrize(
+    "pattern, text",
+    [
         ("\\bfoo\\b", "nofoo foo that"),
         ("a\\b", "faoa x"),
         ("\\bbar", "bar x"),
@@ -115,13 +112,15 @@ def test_word_boundary_cases():
         ("^^^^^^^^\\b$$$$$$$", ""),
         ("^^^^^^^^\\b.$$$$$$", "x"),
         ("^^^^^^^^\\b$$$$$$$", "x"),
-    ]
+    ],
+)
+def test_word_boundary_cases(pattern, text):
+    _test_case(pattern, text)
 
-    _test_cases_suite(cases)
 
-
-def test_non_word_boundary_cases():
-    cases = [
+@pytest.mark.parametrize(
+    "pattern, text",
+    [
         ("\\Bfoo\\B", "n foo xfoox that"),
         ("a\\B", "faoa x"),
         ("\\Bbar", "bar x"),
@@ -161,13 +160,15 @@ def test_non_word_boundary_cases():
         ("^^^^^^^^\\B$$$$$$$", ""),
         ("^^^^^^^^\\B.$$$$$$", "x"),
         ("^^^^^^^^\\B$$$$$$$", "x"),
-    ]
+    ],
+)
+def test_non_word_boundary_cases(pattern, text):
+    _test_case(pattern, text)
 
-    _test_cases_suite(cases)
 
-
-def test_edge_cases():
-    cases = [
+@pytest.mark.parametrize(
+    "pattern, text",
+    [
         (r"a", "a"),
         (r"a", "zyzzyva"),
         (r"a+", "aa"),
@@ -248,14 +249,15 @@ def test_edge_cases():
         ("[dz][ex][fy]$", "abcdef"),
         ("[dz][ex][fy]$", "abcdeff"),
         ("", ""),  # empty string
-    ]
+    ],
+)
+def test_edge_cases(pattern, text):
+    _test_case(pattern, text)
 
-    _test_cases_suite(cases)
 
-
-def test_python_benchmark():
-    cases = [
-        # test common prefix
+@pytest.mark.parametrize(
+    "pattern, text",
+    [  # test common prefix
         ("Python|Perl", "Perl"),  # Alternation
         ("(Python|Perl)", "Perl"),  # Grouped alternation
         ("Python|Perl|Tcl", "Perl"),  # Alternation
@@ -266,16 +268,15 @@ def test_python_benchmark():
         (".*Python", "Python"),  # Bad text literal
         (".*Python.*", "Python"),  # Worse text literal
         (".*(Python)", "Python"),  # Bad text literal with grouping
-    ]
-
-    _test_cases_suite(cases)
-
-
-[SUCCEED, FAIL, SYNTAX_ERROR] = range(3)
+    ],
+)
+def test_python_benchmark(pattern, text):
+    _test_case(pattern, text)
 
 
-def test_raises_exception():
-    cases = [
+@pytest.mark.parametrize(
+    "pattern, text",
+    [
         (")", ""),
         ("a[]b", "-"),
         ("a[", "-"),
@@ -298,17 +299,18 @@ def test_raises_exception():
         ("(?i)(abc", "-"),
         ("(?i)a**", "-"),
         ("(?i))(", "-"),
-    ]
+    ],
+)
+def test_raises_exception(pattern, text):
+    with pytest.raises(re.error):
+        _ = [m.group(0) for m in re.finditer(pattern, text) if m.group(0) != ""]
+    with pytest.raises((RegexpParserError, ValueError)):
+        _ = [m.substr for m in Regexp(pattern).finditer(text) if m.substr != ""]
 
-    for pattern, text in cases:
-        with pytest.raises(re.error):
-            _ = [m.group(0) for m in re.finditer(pattern, text) if m.group(0) != ""]
-        with pytest.raises((RegexpParserError, ValueError)):
-            _ = [m.substr for m in Regexp(pattern).finditer(text) if m.substr != ""]
 
-
-def test_failures():
-    cases = [
+@pytest.mark.parametrize(
+    "pattern, text",
+    [
         ("abc", "xbc"),
         ("abc", "axc"),
         ("abc", "abx"),
@@ -345,13 +347,15 @@ def test_failures():
         ("a[^bc]d", "abd"),
         (r"^a*?$", "foo"),
         (r"a[^>]*?b", "a>b"),
-    ]
+    ],
+)
+def test_failures(pattern, text):
+    _test_case(pattern, text)
 
-    _test_cases_suite(cases)
 
-
-def test_more_python_re_implementation_cases():
-    cases = [
+@pytest.mark.parametrize(
+    "pattern, text",
+    [
         ("abc", "abc"),
         ("abc", "xabcy"),
         ("abc", "ababc"),
@@ -443,70 +447,78 @@ def test_more_python_re_implementation_cases():
         ("([abc]*)x", "abcx"),
         ("([xyz]*)x", "abcx"),
         ("(a)+b|aac", "aac"),
-    ]
+    ],
+)
+def test_more_python_re_implementation_cases(pattern, text):
+    _test_case(pattern, text)
 
-    _test_cases_suite(cases)
 
-
-def test_greedy_vs_lazy():
-    cases = [
+@pytest.mark.parametrize(
+    "pattern, text",
+    [
         ("a.+?c", "abcabc"),
         ("a.*?c", "abcabc"),
         ("a.{0,5}?c", "abcabc"),
         ("a{2,3}?", "aaaaa"),
-    ]
-
-    _test_cases_suite(cases)
+    ],
+)
+def test_greedy_vs_lazy(pattern, text):
+    _test_case(pattern, text)
 
 
 seed(10)
 
 
-def test_hex():
-    pattern = r"0[xX](_?[0-9a-fA-F])+"
-    cases = [(pattern, hex(randint(0, 100000))) for _ in range(20)]
-
-    _test_cases_suite(cases)
-
-
-def test_dec():
-    pattern = r"(0(_?0)*|[1-9](_?[0-9])*)"
-    cases = [(pattern, str(randint(0, 100000))) for _ in range(20)]
-
-    _test_cases_suite(cases)
+@pytest.mark.parametrize(
+    "pattern, text",
+    [(r"0[xX](_?[0-9a-fA-F])+", hex(randint(0, 100000))) for _ in range(20)],
+)
+def test_hex(pattern, text):
+    _test_case(pattern, text)
 
 
-def test_point_float():
-    def group(*choices):
-        return "(" + "|".join(choices) + ")"
-
-    def maybe(*choices):
-        return group(*choices) + "?"
-
-    exponent = r"[eE][-+]?[0-9](?:_?[0-9])*"
-    pointfloat = group(
-        r"[0-9](?:_?[0-9])*\.(?:[0-9](?:_?[0-9])*)?", r"\.[0-9](?:_?[0-9])*"
-    ) + maybe(exponent)
-
-    cases = (
-        [(pointfloat, str(random())) for _ in range(20)]
-        + [(pointfloat, f"{random():.2E}") for _ in range(20)]
-        + [(pointfloat, f"{-random():.2E}") for _ in range(20)]
-        + [(pointfloat, f"{-random()}") for _ in range(20)]
-        + [(pointfloat, f"{10 + random()}") for _ in range(20)]
-    )
-
-    _test_cases_suite(cases)
+@pytest.mark.parametrize(
+    "pattern, text",
+    [(r"(0(_?0)*|[1-9](_?[0-9])*)", str(randint(0, 100000))) for _ in range(20)],
+)
+def test_dec(pattern, text):
+    _test_case(pattern, text)
 
 
-def test_unicode_simple():
-    cases = [("🇺🇸+", "🇺🇸🇺🇸🇺🇸🇺🇸🇺🇸")]
-
-    _test_cases_suite(cases)
+def group(*choices):
+    return "(" + "|".join(choices) + ")"
 
 
-def test_ignorecase():
-    cases = [
+def maybe(*choices):
+    return group(*choices) + "?"
+
+
+exponent = r"[eE][-+]?[0-9](?:_?[0-9])*"
+pointfloat = group(
+    r"[0-9](?:_?[0-9])*\.(?:[0-9](?:_?[0-9])*)?", r"\.[0-9](?:_?[0-9])*"
+) + maybe(exponent)
+
+
+@pytest.mark.parametrize(
+    "pattern, text",
+    [(pointfloat, str(random())) for _ in range(20)]
+    + [(pointfloat, f"{random():.2E}") for _ in range(20)]
+    + [(pointfloat, f"{-random():.2E}") for _ in range(20)]
+    + [(pointfloat, f"{-random()}") for _ in range(20)]
+    + [(pointfloat, f"{10 + random()}") for _ in range(20)],
+)
+def test_point_float(pattern, text):
+    _test_case(pattern, text)
+
+
+@pytest.mark.parametrize("pattern, text", [("🇺🇸+", "🇺🇸🇺🇸🇺🇸🇺🇸🇺🇸")])
+def test_unicode_simple(pattern, text):
+    _test_case(pattern, text)
+
+
+@pytest.mark.parametrize(
+    "pattern, text",
+    [
         ("(?i)abc", "ABC"),
         ("(?i)abc", "XBC"),
         ("(?i)abc", "AXC"),
@@ -655,13 +667,15 @@ def test_ignorecase():
         ("(?i)(bc+d$|ef*g.|h?i(j|k))", "BCDD"),
         ("(?i)(bc+d$|ef*g.|h?i(j|k))", "REFFGZ"),
         ("(?i)((((((((((a))))))))))", "A"),
-    ]
+    ],
+)
+def test_ignorecase(pattern, text):
+    _test_case(pattern, text)
 
-    _test_cases_suite(cases)
 
-
-def test_groups1():
-    cases = [
+@pytest.mark.parametrize(
+    "pattern, text",
+    [
         ("((abc|123)+)!", "!abc123!"),
         ("a+", "xaax"),
         ("(a?)((ab)?)", "ab"),
@@ -736,13 +750,15 @@ def test_groups1():
         ("ab()c|ab()c()", "abc"),
         ("(b(c)|d(e))*", "bcde"),
         ("(a(b)*)*", "aba"),
-    ]
+    ],
+)
+def test_groups1(pattern, text):
+    _test_case(pattern, text)
 
-    _test_cases_suite(cases)
 
-
-def test_ambiguous_cases_groups_pass_on_some_engines():
-    cases = [
+@pytest.mark.parametrize(
+    "pattern, text",
+    [
         ("(.?)*", "x"),  # passes in Golang and Javascript
         ("(.?.?)*", "xxx"),  # passes in Golang and Javascript
         (
@@ -753,25 +769,32 @@ def test_ambiguous_cases_groups_pass_on_some_engines():
         ("(.|()|())*", "c"),  # empty groups aren't matching
         ("((..)*(...)*)*", "xxx"),  # passes in Golang and Javascript
         ("(a*)*", "a"),  # passes in .NET(C#), Golang, Javascript
-    ]
+    ],
+)
+def test_ambiguous_cases_groups_pass_on_some_engines(pattern, text):
+    _test_case_no_groups(pattern, text)
 
-    _test_cases_suite_no_groups(cases)
 
-
-@pytest.mark.skip
-def test_ambiguous_cases_matches_pass_on_some_engines():
-    cases = [
+@pytest.mark.parametrize(
+    "pattern, text",
+    [
         ("(a+|b){0,1}?", "ab"),  # passes in .NET(C#), Java8, GoLang, JavaScript
         (
             "((b*)|c(c*))*",
             "cbb",
         ),  # agrees with Javascript, where the first empty string is not found, and the all
-    ]
-    _test_cases_suite(cases)
+    ],
+)
+@pytest.mark.skip(
+    reason="first test passes only in some engines, second test doesn't find first empty string"
+)
+def test_ambiguous_cases_matches_pass_on_some_engines(pattern, text):
+    _test_case_no_groups(pattern, text)
 
 
-def test_basic3():
-    cases = [
+@pytest.mark.parametrize(
+    "pattern, text",
+    [
         (r"\)", "()"),
         (r"\}", "}"),
         (r"\]", "]"),  # escaped
@@ -964,12 +987,15 @@ def test_basic3():
         (".*(/000).*", "/000"),
         (".*(\\\\000).*", "\\000"),
         ("\\\\000", "\\000"),
-    ]
-    _test_cases_suite(cases)
+    ],
+)
+def test_basic3(pattern, text):
+    _test_case(pattern, text)
 
 
-def test_infinite_loops():
-    cases = [
+@pytest.mark.parametrize(
+    "pattern, text",
+    [
         ("(a*)*", "-"),
         ("(a*)+", "-"),
         ("(a*|b)*", "-"),
@@ -982,13 +1008,15 @@ def test_infinite_loops():
         ("(?:a*|b)*", "-"),
         ("(?:^)*", "-"),
         ("(?:(a*|b))*", "-"),
-    ]
+    ],
+)
+def test_infinite_loops(pattern, text):
+    _test_case(pattern, text)
 
-    _test_cases_suite(cases)
 
-
-def test_class():
-    cases = [
+@pytest.mark.parametrize(
+    "pattern, text",
+    [
         ("aa*", "xaxaax"),
         ("(a*)(ab)*(b*)", "abc"),
         ("(a*)(ab)*(b*)", "abc"),
@@ -1002,13 +1030,15 @@ def test_class():
         (".*(.*)", "ab"),
         ("(a?)((ab)?)(b?)a?(ab)?b?", "abab"),
         ("(a?)((ab)?)(b?)a?(ab)?b?", "abab"),
-    ]
+    ],
+)
+def test_class(pattern, text):
+    _test_case(pattern, text)
 
-    _test_cases_suite(cases)
 
-
-def test_forced_assoc():
-    cases = [
+@pytest.mark.parametrize(
+    "pattern, text",
+    [
         ("(a|ab)(c|bcd)", "abcd"),
         ("(a|ab)(bcd|c)", "abcd"),
         ("(ab|a)(c|bcd)", "abcd"),
@@ -1037,13 +1067,15 @@ def test_forced_assoc():
         ("(ab|a)", "ab"),
         ("(a|ab)(b*)", "ab"),
         ("(ab|a)(b*)", "ab"),
-    ]
+    ],
+)
+def test_forced_assoc(pattern, text):
+    _test_case(pattern, text)
 
-    _test_cases_suite(cases)
 
-
-def test_left_assoc():
-    cases = [
+@pytest.mark.parametrize(
+    "pattern, text",
+    [
         ("(a|ab)(c|bcd)(d*)", "abcd"),
         ("(a|ab)(bcd|c)(d*)", "abcd"),
         ("(ab|a)(c|bcd)(d*)", "abcd"),
@@ -1056,13 +1088,15 @@ def test_left_assoc():
         ("(a|ab)(bcd|c)(d|.*)", "abcd"),
         ("(ab|a)(c|bcd)(d|.*)", "abcd"),
         ("(ab|a)(bcd|c)(d|.*)", "abcd"),
-    ]
+    ],
+)
+def test_left_assoc(pattern, text):
+    _test_case(pattern, text)
 
-    _test_cases_suite(cases)
 
-
-def test_null_sub3():
-    cases = [
+@pytest.mark.parametrize(
+    "pattern, text",
+    [
         ("(a*)*", "a"),
         ("(a*)*", "x"),
         ("(a*)*", "aaaaaa"),
@@ -1114,33 +1148,41 @@ def test_null_sub3():
         ("(a*){2}(x)", "x"),
         ("(a*){2}(x)", "ax"),
         ("(a*){2}(x)", "axa"),
-    ]
+    ],
+)
+def test_null_sub3(pattern, text):
+    _test_case_no_groups(pattern, text)
 
-    _test_cases_suite_no_groups(cases)
 
-
-def test_osx_bsd_critical():
-    cases = [
+@pytest.mark.parametrize(
+    "pattern, text",
+    [
         ("(()|.)(b)", "ab"),
         ("(()|.)(b)", "ab"),
         ("(()|[ab])(b)", "ab"),
         ("([ab]|())(b)", "ab"),
         ("(.?)(b)", "ab"),
-    ]
-    _test_cases_suite(cases)
+    ],
+)
+def test_osx_bsd_critical(pattern, text):
+    _test_case(pattern, text)
 
 
-def test_osx_bsd_critical_no_groups():
-    cases = [
+@pytest.mark.parametrize(
+    "pattern, text",
+    [
         ("(()|[ab])+b", "aaab"),
         ("(.|())(b)", "ab"),
         ("([ab]|())+b", "aaab"),
-    ]
-    _test_cases_suite_no_groups(cases)
+    ],
+)
+def test_osx_bsd_critical_no_groups(pattern, text):
+    _test_case_no_groups(pattern, text)
 
 
-def test_repetition2():
-    cases = [
+@pytest.mark.parametrize(
+    "pattern, text",
+    [
         ("((..)|(.))", "NULL"),
         ("((..)|(.))((..)|(.))", "NULL"),
         ("((..)|(.))((..)|(.))((..)|(.))", "NULL"),
@@ -1212,14 +1254,15 @@ def test_repetition2():
         ("(a|ab|c|bcd){4,10}(d*)", "ababcd"),
         ("(a|ab|c|bcd)*(d*)", "ababcd"),
         ("(a|ab|c|bcd)+(d*)", "ababcd"),
-    ]
+    ],
+)
+def test_repetition2(pattern, text):
+    _test_case(pattern, text)
 
-    _test_cases_suite(cases)
 
-
-def test_repetition2_no_groups():
-    # Golang, Javascript capture 7, Python doesn't
-    cases = [
+@pytest.mark.parametrize(
+    "pattern, text",
+    [
         ("X(.?){0,}Y", "X1234567Y"),
         ("X(.?){1,}Y", "X1234567Y"),
         ("X(.?){2,}Y", "X1234567Y"),
@@ -1228,13 +1271,16 @@ def test_repetition2_no_groups():
         ("X(.?){5,}Y", "X1234567Y"),
         ("X(.?){6,}Y", "X1234567Y"),
         ("X(.?){7,}Y", "X1234567Y"),
-    ]
+    ],
+)
+def test_repetition2_no_groups(pattern, text):
+    # Golang, Javascript capture 7, Python doesn't
+    _test_case_no_groups(pattern, text)
 
-    _test_cases_suite_no_groups(cases)
 
-
-def test_right_assoc():
-    cases = [
+@pytest.mark.parametrize(
+    "pattern, text",
+    [
         ("(a|ab)(c|bcd)(d*)", "abcd"),
         ("(a|ab)(bcd|c)(d*)", "abcd"),
         ("(ab|a)(c|bcd)(d*)", "abcd"),
@@ -1247,13 +1293,15 @@ def test_right_assoc():
         ("(a|ab)(bcd|c)(d|.*)", "abcd"),
         ("(ab|a)(c|bcd)(d|.*)", "abcd"),
         ("(ab|a)(bcd|c)(d|.*)", "abcd"),
-    ]
+    ],
+)
+def test_right_assoc(pattern, text):
+    _test_case(pattern, text)
 
-    _test_cases_suite(cases)
 
-
-def test_multiline():
-    cases = [
+@pytest.mark.parametrize(
+    "pattern, text",
+    [
         ("(?m)^abc", "abcdef"),
         ("(?m)^abc", "aabcdef"),
         ("(?m)^[ay]*[bx]+c", "abcdef"),
@@ -1275,13 +1323,15 @@ def test_multiline():
         ("foo.$", "foo1\nfoo2\n"),
         ("(?m)foo.$", "foo1\nfoo2\n"),
         ("$", "foo\n"),
-    ]
+    ],
+)
+def test_multiline(pattern, text):
+    _test_case(pattern, text)
 
-    _test_cases_suite(cases)
 
-
-def test_start_of_string_absolute_anchor():
-    cases = [
+@pytest.mark.parametrize(
+    "pattern, text",
+    [
         ("\\A(foo|bar|[A-Z])$", "foo\n"),
         ("\\A(foo|bar|[A-Z])$", "foo\nbar"),  # should find no match
         ("\\A^(foo|bar|[A-Z])$", "foo\nbarfoo"),  # no matches
@@ -1292,100 +1342,120 @@ def test_start_of_string_absolute_anchor():
         ("\\A^b", "a\nb\n"),
         ("\\A^(b)", "a\nb\n"),
         ("\\A\n(^b)", "a\nb\n"),
-    ]
+    ],
+)
+def test_start_of_string_absolute_anchor(pattern, text):
 
-    _test_cases_suite(cases)
+    _test_case(pattern, text)
 
 
-def test_end_of_string_absolute_anchors():
-    cases = [
+@pytest.mark.parametrize(
+    "pattern, text, expected",
+    [
         ("StackOverflow\\Z", "StackOverflow\n", ["StackOverflow"]),
         ("StackOverflow\\z", "StackOverflow\n", []),
-    ]
+    ],
+)
+def test_end_of_string_absolute_anchors(pattern, text, expected):
+    actual = Regexp(pattern).findall(text)
+    assert actual == expected
 
-    for pattern, text, expected in cases:
-        actual = Regexp(pattern).findall(text)
-        assert actual == expected
 
-
-def test_common_email():
-    cases = [
-        "email@example.com",
-        "firstname.lastname@example.com",
-        "email@subdomain.example.com",
-        "firstname+lastname@example.com",  # this is actually valid
-        "email@123.123.123.123",  # valid
-        "email@[123.123.123.123]",  # valid
-        'email"@example.com',  # valid
-        "1234567890@example.com",
-        "email@example-one.com",
-        "_______@example.com",
-        "email@example.name",
-        "email@example.museum",
-        "email@example.co.jp",
-        "firstname-lastname@example.com",
-    ]
-    _test_cases_suite(
-        [
-            (r"^([a-zA-Z0-9._%-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,6})*$", text)
-            for text in cases
+@pytest.mark.parametrize(
+    "pattern, text",
+    [
+        (r"^([a-zA-Z0-9._%-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,6})*$", text)
+        for text in [
+            "email@example.com",
+            "firstname.lastname@example.com",
+            "email@subdomain.example.com",
+            "firstname+lastname@example.com",  # this is actually valid
+            "email@123.123.123.123",  # valid
+            "email@[123.123.123.123]",  # valid
+            'email"@example.com',  # valid
+            "1234567890@example.com",
+            "email@example-one.com",
+            "_______@example.com",
+            "email@example.name",
+            "email@example.museum",
+            "email@example.co.jp",
+            "firstname-lastname@example.com",
         ]
-    )
+    ],
+)
+def test_common_email(pattern, text):
+    _test_case(pattern, text)
 
 
-def test_urls():
-    url_pattern = r"^https?://(www\.)?[-a-zA-Z0-9@:%._\+~#=]{2,256}\.[a-z]{2,6}\b([-a-zA-Z0-9@:%_\+.~#()?&\/=]*)$"
-
-    cases = [
-        "http://foo.com/blah_blah",
-        "http://foo.com/blah_blah/",
-        "http://foo.com/blah_blah_(wikipedia)",
-        "http://www.example.com/wpstyle/?p=364",
-        "https://www.example.com/foo/?bar=baz&inga=42&quux",
-        "http://userid:password@example.com:8080",
-        "http://foo.com/blah_(wikipedia)#cite-1",
-        "www.google.com",
-        "http://../",
-        "http:// shouldfail.com",
-        "http://224.1.1.1",
-        "http://142.42.1.1:8080/",
-        "ftp://foo.bar/baz",
-        "http://1337.net",
-        "http://foo.bar/?q=Test%20URL-encoded%20stuff",
-        "http://code.google.com/events/#&product=browser",
-        "http://-error-.invalid/",
-        "http://3628126748",
-        "http://उदाहरण.परीक्षा",
-    ]
-
-    _test_cases_suite_no_groups([(url_pattern, text) for text in cases])
-
-
-def test_ipv4_addresses():
-    ipv4_address_pattern = r"^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])$"
-    cases = [
-        "0.0.0.0",
-        "9.255.255.255",
-        "11.0.0.0",
-        "126.255.255.255",
-        "129.0.0.0",
-        "169.253.255.255",
-        "169.255.0.0",
-        "172.15.255.255",
-        "172.32.0.0",
-        "256.0.0.0",  # not a valid address
-        "191.0.1.255",
-        "192.88.98.255",
-        "192.88.100.0",
-        "192.167.255.255",
-        "192.169.0.0",
-        "198.17.255.255",
-        "223.255.255.255",
-    ]
-
-    _test_cases_suite([(ipv4_address_pattern, ipv4_address) for ipv4_address in cases])
+@pytest.mark.parametrize(
+    "pattern, text",
+    [
+        (
+            r"^https?://(www\.)?[-a-zA-Z0-9@:%._\+~#=]{2,256}\.[a-z]{2,6}\b([-a-zA-Z0-9@:%_\+.~#()?&\/=]*)$",
+            text,
+        )
+        for text in [
+            "http://foo.com/blah_blah",
+            "http://foo.com/blah_blah/",
+            "http://foo.com/blah_blah_(wikipedia)",
+            "http://www.example.com/wpstyle/?p=364",
+            "https://www.example.com/foo/?bar=baz&inga=42&quux",
+            "http://userid:password@example.com:8080",
+            "http://foo.com/blah_(wikipedia)#cite-1",
+            "www.google.com",
+            "http://../",
+            "http:// shouldfail.com",
+            "http://224.1.1.1",
+            "http://142.42.1.1:8080/",
+            "ftp://foo.bar/baz",
+            "http://1337.net",
+            "http://foo.bar/?q=Test%20URL-encoded%20stuff",
+            "http://code.google.com/events/#&product=browser",
+            "http://-error-.invalid/",
+            "http://3628126748",
+            "http://उदाहरण.परीक्षा",
+        ]
+    ],
+)
+def test_urls(pattern, text):
+    _test_case_no_groups(pattern, text)
 
 
-def test_mac_address():
-    pattern = "((?:[a-zA-Z0-9]{2}[:-]){5}[a-zA-Z0-9]{2})"
-    _test_cases_suite([(pattern, "00:0a:95:9d:68:16")])
+@pytest.mark.parametrize(
+    "pattern, text",
+    [
+        (
+            r"^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])$",
+            ipv4_address,
+        )
+        for ipv4_address in [
+            "0.0.0.0",
+            "9.255.255.255",
+            "11.0.0.0",
+            "126.255.255.255",
+            "129.0.0.0",
+            "169.253.255.255",
+            "169.255.0.0",
+            "172.15.255.255",
+            "172.32.0.0",
+            "256.0.0.0",  # not a valid address
+            "191.0.1.255",
+            "192.88.98.255",
+            "192.88.100.0",
+            "192.167.255.255",
+            "192.169.0.0",
+            "198.17.255.255",
+            "223.255.255.255",
+        ]
+    ],
+)
+def test_ipv4_addresses(pattern, text):
+    _test_case(pattern, text)
+
+
+@pytest.mark.parametrize(
+    "pattern, text",
+    [("((?:[a-zA-Z0-9]{2}[:-]){5}[a-zA-Z0-9]{2})", "00:0a:95:9d:68:16")],
+)
+def test_mac_address(pattern, text):
+    _test_case(pattern, text)
