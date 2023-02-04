@@ -59,18 +59,20 @@ class Match:
 
 
 class Regexp(NFA):
-    def __init__(self, regexp: str):
+    def __init__(self, pattern: str):
         super().__init__()
-        self.pattern = regexp
-        self.parser = RegexpParser(regexp)
-        self.set_terminals(self.parser.root.accept(self))
+        self._parser = RegexpParser(pattern)
+        self.set_terminals(self._parser.root.accept(self))
         self.update_symbols_and_states()
+
+    def recover(self) -> str:
+        return self._parser.root.string()
 
     def _match_at_index_dfa(self, state: State, text: str, index: int) -> Optional[int]:
         """
         This a fast matcher when you don't have groups or greedy quantifiers
         """
-        assert self.parser.group_count == 0
+        assert self._parser.group_count == 0
 
         if state is not None:
             matching_indices = []
@@ -81,7 +83,7 @@ class Regexp(NFA):
             transitions = [
                 transition
                 for transition in self[state]
-                if transition.matchable.match(text, index, self.parser.flags)
+                if transition.matchable.match(text, index, self._parser.flags)
             ]
 
             for matchable, end_state in transitions:
@@ -104,7 +106,7 @@ class Regexp(NFA):
         for transition in self[state]:
             if (transition.matchable is EPSILON and transition.end in self.accept) or (
                 transition.matchable is not EPSILON
-                and transition.matchable.match(text, index, self.parser.flags)
+                and transition.matchable.match(text, index, self._parser.flags)
             ):
                 yield transition
 
@@ -167,7 +169,7 @@ class Regexp(NFA):
         index: int,
     ) -> Optional[MatchResult]:
 
-        captured_groups = [CapturedGroup() for _ in range(self.parser.group_count)]
+        captured_groups = [CapturedGroup() for _ in range(self._parser.group_count)]
 
         # we only need to keep track of 3 state variables
         work_list = [(self.start, index, captured_groups, ())]
@@ -232,7 +234,7 @@ class Regexp(NFA):
             ) is not None:
                 return position, []
             return None
-        if self.parser.group_count > 0:
+        if self._parser.group_count > 0:
             return self._match_at_index_with_groups(text, index)
         else:
             if (position := self._match_at_index_no_groups(text, index)) is not None:
@@ -263,11 +265,11 @@ class Regexp(NFA):
         return [m.group(0) for m in self.finditer(text)]
 
     def __repr__(self):
-        return f"{self.__class__.__name__}(regex={self.pattern!r})"
+        return f"{self.__class__.__name__}(regex={self.recover()!r})"
 
 
 if __name__ == "__main__":
-    regex, t = ("(a|ab|c|bcd){0,10}(d*)", "X1234567Y")
+    regex, t = "[\\d]", "aaaaaaa"
 
     print(list(re.finditer(regex, t)))
     print([m.groups() for m in re.finditer(regex, t)])

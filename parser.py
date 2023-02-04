@@ -420,7 +420,7 @@ class RegexpNodesVisitor(Generic[T], metaclass=ABCMeta):
         ...
 
     @abstractmethod
-    def visit_any_character(self, meta_char: AnyCharacter) -> T:
+    def visit_any_character(self, any_character: AnyCharacter) -> T:
         ...
 
     @abstractmethod
@@ -644,20 +644,22 @@ class RegexpParser:
     def parse_character_class(self) -> CharacterGroup:
         self.consume("\\")
         if self.matches_any(("w", "W")):
+            c = self.consume_and_return()
             return CharacterGroup(
                 self._pos,
                 (
+                    CharacterRange("0", "9"),
                     CharacterRange("A", "Z"),
-                    CharacterRange("a", "z"),
                     Character(self._pos, "_"),
+                    CharacterRange("a", "z"),
                 ),
-                self.matches("W"),
+                c == "W",
             )
         elif self.matches_any(("d", "D")):
-            return CharacterGroup(
-                self._pos, (CharacterRange("0", "9"),), self.matches("D")
-            )
+            c = self.consume_and_return()
+            return CharacterGroup(self._pos, (CharacterRange("0", "9"),), c == "D")
         elif self.matches_any(("s", "S")):
+            c = self.consume_and_return()
             return CharacterGroup(
                 self._pos,
                 tuple(
@@ -666,7 +668,7 @@ class RegexpParser:
                         [" ", "\t", "\n", "\r", "\v", "\f"],
                     )
                 ),
-                self.matches("S"),
+                c == "S",
             )
         else:
             raise ValueError(f"unrecognized character class{self.current()}")

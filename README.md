@@ -2,6 +2,8 @@
 
 A simple Backtracking NFA-based regular expression engine.
 
+![Tests](https://github.com/erastus-murungi/py-reg/actions/workflows/python-app.yml/badge.svg)
+
 ### Supports:
   1. ``|`` Alternation
   2. ``*`` Zero or More

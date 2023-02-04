@@ -387,8 +387,8 @@ class NFA(defaultdict[State, list[Transition]], RegexpNodesVisitor[Fragment]):
     def visit_anchor(self, anchor: Anchor):
         return self.base(anchor)
 
-    def visit_any_character(self, meta_char: AnyCharacter) -> Fragment:
-        return self.base(meta_char)
+    def visit_any_character(self, any_character: AnyCharacter) -> Fragment:
+        return self.base(any_character)
 
     def visit_character(self, character: Character) -> Fragment:
         return self.base(character)
