@@ -1345,7 +1345,6 @@ def test_multiline(pattern, text):
     ],
 )
 def test_start_of_string_absolute_anchor(pattern, text):
-
     _test_case(pattern, text)
 
 
@@ -1364,8 +1363,8 @@ def test_end_of_string_absolute_anchors(pattern, text, expected):
 @pytest.mark.parametrize(
     "pattern, text",
     [
-        (r"^([a-zA-Z0-9._%-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,6})*$", text)
-        for text in [
+        (r"^([a-zA-Z0-9._%-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,6})*$", email)
+        for email in [
             "email@example.com",
             "firstname.lastname@example.com",
             "email@subdomain.example.com",
@@ -1392,9 +1391,9 @@ def test_common_email(pattern, text):
     [
         (
             r"^https?://(www\.)?[-a-zA-Z0-9@:%._\+~#=]{2,256}\.[a-z]{2,6}\b([-a-zA-Z0-9@:%_\+.~#()?&\/=]*)$",
-            text,
+            url,
         )
-        for text in [
+        for url in [
             "http://foo.com/blah_blah",
             "http://foo.com/blah_blah/",
             "http://foo.com/blah_blah_(wikipedia)",
