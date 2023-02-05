@@ -1,6 +1,6 @@
 import pytest
 
-from match import Regexp
+from src.match import Regexp
 
 
 @pytest.mark.parametrize(

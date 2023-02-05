@@ -1,12 +1,13 @@
 import re
 from dataclasses import dataclass
-from parser import EPSILON, Anchor, AnchorType, Matchable, RegexpParser
 from pprint import pprint
 from typing import Optional
 
 from more_itertools import first_true
 
-from core import DFA, NFA, State, Transition
+from src.core import DFA, NFA, State, Transition
+
+from .parser import EPSILON, Anchor, AnchorType, Matchable, RegexpParser
 
 
 @dataclass(slots=True)
@@ -265,7 +266,7 @@ class Regexp(NFA):
         return [m.group(0) for m in self.finditer(text)]
 
     def __repr__(self):
-        return f"{self.__class__.__name__}(regex={self.recover()!r})"
+        return super().__repr__()
 
 
 if __name__ == "__main__":
@@ -274,8 +275,8 @@ if __name__ == "__main__":
     print(list(re.finditer(regex, t)))
     print([m.groups() for m in re.finditer(regex, t)])
 
-    pattern = Regexp(regex)
+    p = Regexp(regex)
     # pattern.graph()
-    pprint(list(pattern.finditer(t)))
+    pprint(list(p.finditer(t)))
 
-    print([m.groups() for m in Regexp(regex).finditer(t)])
+    pprint([m.groups() for m in Regexp(regex).finditer(t)])

@@ -2,7 +2,14 @@ from collections import defaultdict
 from dataclasses import astuple, dataclass, field
 from functools import reduce
 from itertools import chain, combinations, count, product
-from parser import (
+from string import ascii_uppercase
+from sys import maxsize
+from typing import Iterable, Iterator, Optional, Union
+
+import graphviz
+from more_itertools import first, first_true, minmax, pairwise
+
+from .parser import (
     EMPTY_STRING,
     EPSILON,
     GROUP_LINK,
@@ -16,14 +23,7 @@ from parser import (
     Matchable,
     RegexpNodesVisitor,
 )
-from string import ascii_uppercase
-from sys import maxsize
-from typing import Iterable, Iterator, Optional, Union
-
-import graphviz
-from more_itertools import first, first_true, minmax, pairwise
-
-from unionfind import UnionFind
+from .unionfind import UnionFind
 
 State = Union[int, str]
 
@@ -151,6 +151,7 @@ class NFA(defaultdict[State, list[Transition]], RegexpNodesVisitor[Fragment]):
             f"FSM(states={self.states}, "
             f"symbols={self.symbols}, "
             f"start_state={self.start}, "
+            f"transitions = {super().__repr__()}"
             f"accept_states={self.accept}) "
         )
 

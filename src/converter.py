@@ -1,7 +1,7 @@
 from itertools import product
 from typing import Iterable
 
-from core import NFA, State, Tag, Transition, gen_state
+from src.core import NFA, State, Tag, Transition, gen_state
 
 
 def _remove_unreachable_states(

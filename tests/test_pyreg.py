@@ -1,10 +1,10 @@
 import re
-from parser import RegexpParserError
 from random import randint, random, seed
 
 import pytest
 
-from match import Regexp
+from src.match import Regexp
+from src.parser import RegexpParserError
 
 # acquired from re2: https://github.com/google/re2/blob/main/re2/testing/search_test.cc
 
