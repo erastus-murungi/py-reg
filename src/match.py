@@ -5,8 +5,7 @@ from typing import Optional
 
 from more_itertools import first_true
 
-from src.core import DFA, NFA, State, Transition
-
+from .core import DFA, NFA, State, Transition
 from .parser import EPSILON, Anchor, AnchorType, Matchable, RegexpParser
 
 
