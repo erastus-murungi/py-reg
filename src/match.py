@@ -1,12 +1,11 @@
-import re
 from dataclasses import dataclass
-from pprint import pprint
-from typing import Optional
+from sys import maxsize
+from typing import Callable, Optional
 
-from more_itertools import first_true
+from more_itertools import first_true, take
 
-from .core import DFA, NFA, State, Transition
-from .parser import EPSILON, Anchor, AnchorType, Matchable, RegexpParser
+from src.core import DFA, NFA, State, Transition
+from src.parser import EPSILON, Anchor, AnchorType, Matchable, RegexpParser
 
 
 @dataclass(slots=True)
@@ -264,18 +263,53 @@ class Regexp(NFA):
     def findall(self, text):
         return [m.group(0) for m in self.finditer(text)]
 
+    def _sub(
+        self, string: str, replacer: str | Callable[[Match], str], count: int = maxsize
+    ) -> tuple[str, int]:
+        if isinstance(replacer, str):
+
+            def r(_):
+                return replacer
+
+        else:
+            r = replacer
+        matches = take(count, self.finditer(string))
+        chunks = []
+        start = 0
+        subs = 0
+        for match in matches:
+            chunks.append(string[start : match.start])
+            chunks.append(r(match))
+            start = match.end
+            subs += 1
+        chunks.append(string[start:])
+        return "".join(chunks), subs
+
+    def subn(
+        self, string: str, replacer: str | Callable[[Match], str], count: int = maxsize
+    ) -> tuple[str, int]:
+        return self._sub(string, replacer, count)
+
+    def sub(
+        self, string: str, replacer: str | Callable[[Match], str], count: int = maxsize
+    ):
+        return self._sub(string, replacer, count)[0]
+
     def __repr__(self):
         return super().__repr__()
 
 
 if __name__ == "__main__":
-    regex, t = "[\\d]", "aaaaaaa"
-
-    print(list(re.finditer(regex, t)))
-    print([m.groups() for m in re.finditer(regex, t)])
+    regex, t = "abc", "abcdefabc"
 
     p = Regexp(regex)
-    # pattern.graph()
-    pprint(list(p.finditer(t)))
+    print(p.subn(t, ""))
 
-    pprint([m.groups() for m in Regexp(regex).finditer(t)])
+    # print(list(re.finditer(regex, t)))
+    # print([m.groups() for m in re.finditer(regex, t)])
+    #
+    # p = Regexp(regex)
+    # # pattern.graph()
+    # pprint(list(p.finditer(t)))
+    #
+    # pprint([m.groups() for m in Regexp(regex).finditer(t)])
