@@ -23,7 +23,7 @@ class RegexFlag(IntFlag):
     FREESPACING = auto()
 
 
-class RegexpParserError(Exception):
+class RegexpParsingError(Exception):
     ...
 
 
@@ -94,35 +94,35 @@ class Quantifier:
         start, end = self.range_quantifier
         if end is None:
             if start < 0:
-                raise RegexpParserError(
+                raise RegexpParsingError(
                     f"Invalid Range Quantifier: fixed quantifier, {{n}} must be >= 0: not {start}"
                 )
         elif isinstance(end, int):
             if end == maxsize:
                 if start < 0:
-                    raise RegexpParserError(
+                    raise RegexpParsingError(
                         f"Invalid Range Quantifier: for {{n,}} quantifier, {{n}} must be >= 0: not {start}"
                     )
             else:
                 if start < 0:
-                    raise RegexpParserError(
+                    raise RegexpParsingError(
                         f"Invalid Range Quantifier: for {{n, m}} quantifier, {{n}} must be >= 0: not {start}"
                     )
                 if end < start:
-                    raise RegexpParserError(
+                    raise RegexpParsingError(
                         f"Invalid Range Quantifier: for {{n, m}} quantifier, {{m}} must be >= {{n}}: not {end}"
                     )
         elif start == 0:
             if not isinstance(end, int):
-                raise RegexpParserError(
+                raise RegexpParsingError(
                     f"Invalid Range Quantifier: invalid upper bound {end}"
                 )
             if end < 1:
-                raise RegexpParserError(
+                raise RegexpParsingError(
                     f"Invalid Range Quantifier: for {{, m}} quantifier, {{m}} must be >= 1: not {end}"
                 )
         else:
-            raise RegexpParserError(
+            raise RegexpParsingError(
                 f"Invalid Range Quantifier: invalid range {{{start}, {end}}}"
             )
 
@@ -161,7 +161,7 @@ class CharacterRange(Matchable):
 
     def __post_init__(self):
         if self.start > self.end:
-            raise RegexpParserError(
+            raise RegexpParsingError(
                 f"Invalid Character Range: [{self.start}-{self.end}] is not ordered"
             )
 

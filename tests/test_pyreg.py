@@ -4,18 +4,18 @@ from random import randint, random, seed
 import pytest
 
 from src.match import Regexp
-from src.parser import RegexpParserError
+from src.parser import RegexpParsingError
 
 # acquired from re2: https://github.com/google/re2/blob/main/re2/testing/search_test.cc
 
 
-def _test_case_no_groups(pattern, text):
+def _test_case_no_groups(pattern: str, text: str) -> None:
     expected = [m.group(0) for m in re.finditer(pattern, text)]
     actual = [m.group(0) for m in Regexp(pattern).finditer(text)]
     assert expected == actual, (pattern, text)
 
 
-def _test_case(pattern, text):
+def _test_case(pattern: str, text: str) -> None:
     _test_case_no_groups(pattern, text)
 
     expected_groups = [m.groups() for m in re.finditer(pattern, text)]
@@ -304,7 +304,7 @@ def test_python_benchmark(pattern, text):
 def test_raises_exception(pattern, text):
     with pytest.raises(re.error):
         _ = [m.group(0) for m in re.finditer(pattern, text) if m.group(0) != ""]
-    with pytest.raises((RegexpParserError, ValueError)):
+    with pytest.raises((RegexpParsingError, ValueError)):
         _ = [m.substr for m in Regexp(pattern).finditer(text) if m.substr != ""]
 
 
