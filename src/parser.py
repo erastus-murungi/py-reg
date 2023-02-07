@@ -73,10 +73,10 @@ class Matchable(Hashable):
 class RegexNode(ABC):
     pos: int = field(repr=False)
 
-    def accept(self, visitor: "RegexpNodesVisitor"):
+    def accept(self, visitor: "RegexNodesVisitor"):
         method_name = f"visit_{pattern.sub('_', self.__class__.__name__).lower()}"
-        visit = getattr(visitor, method_name)
-        return visit(self)
+        visit_method = getattr(visitor, method_name)
+        return visit_method(self)
 
     @abstractmethod
     def string(self) -> str:
@@ -402,7 +402,7 @@ class Expression(RegexNode):
         return seq
 
 
-class RegexpNodesVisitor(Generic[T], metaclass=ABCMeta):
+class RegexNodesVisitor(Generic[T], metaclass=ABCMeta):
     @abstractmethod
     def visit_expression(self, expression: Expression) -> T:
         ...

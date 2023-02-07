@@ -1,10 +1,11 @@
+import json
 from collections import defaultdict
 from dataclasses import astuple, dataclass, field
 from functools import reduce
 from itertools import chain, combinations, count, product
 from string import ascii_uppercase
 from sys import maxsize
-from typing import Iterable, Iterator, Optional, Union
+from typing import Any, Iterable, Iterator, Optional, Union
 
 import graphviz
 from more_itertools import first, first_true, minmax, pairwise
@@ -21,7 +22,8 @@ from .parser import (
     Group,
     Match,
     Matchable,
-    RegexpNodesVisitor,
+    RegexNode,
+    RegexNodesVisitor,
 )
 from .unionfind import UnionFind
 
@@ -62,10 +64,10 @@ def gen_dfa_state(
 
     strid = next(strcounter)
     if src_fsm is not None and dst_fsm is not None:
-        if any(s == src_fsm.start for s in sources):
-            dst_fsm.start = strid
-        if any(s in src_fsm.accept for s in sources):
-            dst_fsm.accept.add(strid)
+        if any(s == src_fsm.start_state for s in sources):
+            dst_fsm.start_state = strid
+        if any(s in src_fsm.accepting_states for s in sources):
+            dst_fsm.accepting_states.add(strid)
     sourcescache[sources] = strid
     return strid
 
@@ -88,7 +90,7 @@ class Transition:
         yield from [self.matchable, self.end]
 
 
-class NFA(defaultdict[State, list[Transition]], RegexpNodesVisitor[Fragment]):
+class NFA(defaultdict[State, list[Transition]], RegexNodesVisitor[Fragment]):
     """Formally, an NFA is a 5-tuple (Q, Σ, q0, T, δ) where
         • Q is finite set of states;
         • Σ is alphabet of input symbols;
@@ -98,12 +100,14 @@ class NFA(defaultdict[State, list[Transition]], RegexpNodesVisitor[Fragment]):
         • δ is the transition function.
     Now the transition function specifies a set of states rather than a state: it maps Q × Σ to { subsets of Q }."""
 
+    __slots__ = ("symbols", "states", "accepting_states", "start_state")
+
     def __init__(self):
         super(NFA, self).__init__(list)
         self.symbols: set[Matchable] = set()
         self.states: set[State] = set()
-        self.accept: set[State] = set()
-        self.start: State = -1
+        self.accepting_states: set[State] = set()
+        self.start_state: State = -1
 
     def update_symbols_and_states(self):
         for start, transitions in self.items():
@@ -119,14 +123,14 @@ class NFA(defaultdict[State, list[Transition]], RegexpNodesVisitor[Fragment]):
         self.symbols.discard(EPSILON)
 
     def set_start(self, state: State):
-        self.start = state
+        self.start_state = state
 
     def set_terminals(self, fragment: Fragment):
         self.set_start(fragment.start)
         self.set_accept(fragment.end)
 
     def set_accept(self, accept: State):
-        self.accept = {accept}
+        self.accepting_states = {accept}
 
     def transition(
         self, state: State, symbol: Matchable, _: bool = False
@@ -148,11 +152,33 @@ class NFA(defaultdict[State, list[Transition]], RegexpNodesVisitor[Fragment]):
 
     def __repr__(self):
         return (
-            f"FSM(states={self.states}, "
-            f"symbols={self.symbols}, "
-            f"start_state={self.start}, "
+            f"FSM({self.states=}, "
+            f"{self.symbols=}, "
+            f"{self.start_state=}, "
             f"transitions = {super().__repr__()}"
-            f"accept_states={self.accept}) "
+            f"accept_states={self.accepting_states}) "
+        )
+
+    def to_json(self):
+        class CustomEncoder(json.JSONEncoder):
+            def default(self, o: Any) -> Any:
+                if isinstance(o, Transition):
+                    return [o.matchable, o.end]
+                if isinstance(o, RegexNode):
+                    return o.string()
+                if isinstance(o, set):
+                    return list(o)
+                return json.JSONEncoder.default(self, o)
+
+        return json.dumps(
+            {
+                "states": self.states,
+                "transitions": self,
+                "symbols": self.symbols,
+                "start_state": self.start_state,
+                "accepting_states": self.accepting_states,
+            },
+            cls=CustomEncoder,
         )
 
     def epsilon_closure(self, states: Iterable[State]) -> tuple[State, ...]:
@@ -253,18 +279,22 @@ class NFA(defaultdict[State, list[Transition]], RegexpNodesVisitor[Fragment]):
             for transition in transitions:
                 symbol, end = transition
                 if state not in seen:
-                    color = "green" if state == self.start else ""
+                    color = "green" if state == self.start_state else ""
                     dot.node(
                         str(state),
                         color=color,
-                        shape="doublecircle" if state in self.accept else "circle",
+                        shape="doublecircle"
+                        if state in self.accepting_states
+                        else "circle",
                         style="filled",
                     )
                     seen.add(state)
                 if end not in seen:
                     dot.node(
                         f"{end}",
-                        shape="doublecircle" if end in self.accept else "circle",
+                        shape="doublecircle"
+                        if end in self.accepting_states
+                        else "circle",
                     )
                     seen.add(end)
                 if symbol is GROUP_LINK:
@@ -273,7 +303,7 @@ class NFA(defaultdict[State, list[Transition]], RegexpNodesVisitor[Fragment]):
                     dot.edge(str(state), str(end), label=str(symbol), color="black")
 
         dot.node("start", shape="none")
-        dot.edge("start", f"{self.start}", arrowhead="vee")
+        dot.edge("start", f"{self.start_state}", arrowhead="vee")
         dot.render(view=True, directory="graphs", filename=str(id(self)))
 
     def _concat_fragments(self, fragments: Iterable[Fragment]):
@@ -399,6 +429,8 @@ class NFA(defaultdict[State, list[Transition]], RegexpNodesVisitor[Fragment]):
 
 
 class DFA(NFA):
+    __slots__ = ("symbols", "states", "accepting_states", "start_state")
+
     def __init__(self, nfa: Optional[NFA] = None):
         super(DFA, self).__init__()
         if nfa is not None:
@@ -421,13 +453,13 @@ class DFA(NFA):
         for state, transitions in self.items():
             cp[state] = transitions.copy()
         cp.symbols = self.symbols.copy()
-        cp.start = self.start
-        cp.accept = self.accept.copy()
+        cp.start_state = self.start_state
+        cp.accepting_states = self.accepting_states.copy()
         cp.states = self.states.copy()
         return cp
 
     def _subset_construction(self, nfa: NFA):
-        seen, work_list, finished = set(), [(nfa.start,)], []
+        seen, work_list, finished = set(), [(nfa.start_state,)], []
 
         while work_list:
             closure = nfa.epsilon_closure(work_list.pop())
@@ -460,7 +492,7 @@ class DFA(NFA):
             # if they are both accepting or both non-accepting
             # we use min max to provide an ordering based on the labels
             p, q = minmax(p, q)
-            if (p in self.accept) == (q in self.accept):
+            if (p in self.accepting_states) == (q in self.accepting_states):
                 indistinguishable.add((p, q))
 
         union_find = UnionFind(self.states)
@@ -487,7 +519,7 @@ class DFA(NFA):
         return union_find.to_sets()
 
     def minimize(self):
-        accept_states = self.accept.copy()
+        accept_states = self.accepting_states.copy()
         states = set()
         lost = {}
 
@@ -498,7 +530,7 @@ class DFA(NFA):
                 lost[original] = compound
 
         self.states = states
-        self.accept = self.accept - accept_states
+        self.accepting_states = self.accepting_states - accept_states
 
         for start in tuple(self):
             if start in lost:
@@ -519,6 +551,6 @@ class DFA(NFA):
     def clear(self) -> None:
         super().clear()
         self.symbols.clear()
-        self.start = -1
-        self.accept.clear()
+        self.start_state = -1
+        self.accepting_states.clear()
         self.states.clear()

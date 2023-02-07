@@ -57,7 +57,7 @@ class Match:
         return self.captured_groups[index - 1].string(self.text)
 
 
-class Regexp(NFA):
+class Regex(NFA):
     def __init__(self, pattern: str):
         super().__init__()
         self._parser = RegexpParser(pattern)
@@ -76,7 +76,7 @@ class Regexp(NFA):
         if state is not None:
             matching_indices = []
 
-            if state in self.accept:
+            if state in self.accepting_states:
                 matching_indices.append(index)
 
             transitions = [
@@ -86,7 +86,6 @@ class Regexp(NFA):
             ]
 
             for matchable, end_state in transitions:
-
                 result = self._match_at_index_dfa(
                     end_state,
                     text,
@@ -103,7 +102,10 @@ class Regexp(NFA):
 
     def matches(self, state, text, index):
         for transition in self[state]:
-            if (transition.matchable is EPSILON and transition.end in self.accept) or (
+            if (
+                transition.matchable is EPSILON
+                and transition.end in self.accepting_states
+            ) or (
                 transition.matchable is not EPSILON
                 and transition.matchable.match(text, index, self._parser.flags)
             ):
@@ -171,12 +173,12 @@ class Regexp(NFA):
         captured_groups = [CapturedGroup() for _ in range(self._parser.group_count)]
 
         # we only need to keep track of 3 state variables
-        work_list = [(self.start, index, captured_groups, ())]
+        work_list = [(self.start_state, index, captured_groups, ())]
 
         while work_list:
             current_state, index, captured_groups, path = work_list.pop()
 
-            if current_state in self.accept:
+            if current_state in self.accepting_states:
                 return index, captured_groups
 
             for matchable, end_state in reversed(self.step(current_state, text, index)):
@@ -204,12 +206,12 @@ class Regexp(NFA):
         index: int,
     ) -> Optional[int]:
         # we only need to keep track of 2 state variables
-        work_list = [(self.start, index, ())]
+        work_list = [(self.start_state, index, ())]
 
         while work_list:
             current_state, index, path = work_list.pop()
 
-            if current_state in self.accept:
+            if current_state in self.accepting_states:
                 return index
 
             work_list.extend(
@@ -229,7 +231,7 @@ class Regexp(NFA):
     def _match_at_index(self, text: str, index: int) -> Optional[MatchResult]:
         if isinstance(super(), DFA):
             if (
-                position := self._match_at_index_dfa(self.start, text, index)
+                position := self._match_at_index_dfa(self.start_state, text, index)
             ) is not None:
                 return position, []
             return None
@@ -302,8 +304,9 @@ class Regexp(NFA):
 if __name__ == "__main__":
     regex, t = "abc", "abcdefabc"
 
-    p = Regexp(regex)
-    print(p.subn(t, ""))
+    p = Regex(regex)
+    d = p.to_json()
+    print(d)
 
     # print(list(re.finditer(regex, t)))
     # print([m.groups() for m in re.finditer(regex, t)])

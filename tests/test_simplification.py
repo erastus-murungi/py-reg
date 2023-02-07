@@ -1,6 +1,6 @@
 import pytest
 
-from src.match import Regexp
+from src.match import Regex
 
 
 @pytest.mark.parametrize(
@@ -15,5 +15,5 @@ from src.match import Regexp
     ],
 )
 def test_perl_character_classes(pattern, expected):
-    recovered = Regexp(pattern).recover()
+    recovered = Regex(pattern).recover()
     assert recovered == expected, f"{pattern=}, {expected=}, {recovered=}"

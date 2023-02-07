@@ -44,17 +44,17 @@ def _mutate_and_gen_accept_states(
     final_accept = gen_state()
     added_transitions = {}
     for state in new_nfa.states:
-        if any(v in old_nfa.accept for v in state2closure[state]):
+        if any(v in old_nfa.accepting_states for v in state2closure[state]):
             transition = Transition(Tag.epsilon(), final_accept)
             added_transitions[state] = transition
     if len(added_transitions) == 0:
         raise RuntimeError(f"No accept states found in {old_nfa}")
     if len(added_transitions) == 1:
-        new_nfa.accept.update(old_nfa.accept)
+        new_nfa.accepting_states.update(old_nfa.accepting_states)
     else:
         for state, transition in added_transitions.items():
             new_nfa[state].append(transition)
-        new_nfa.accept.add(final_accept)
+        new_nfa.accepting_states.add(final_accept)
 
 
 def _fill_transitions_and_gen_states(
@@ -78,7 +78,7 @@ def reduce_epsilon_transitions(nfa: NFA) -> NFA:
     state2closure = _compute_state_2_closure_mapping(nfa)
     new_nfa = NFA()
     _fill_transitions_and_gen_states(nfa, state2closure, new_nfa)
-    _remove_unreachable_states(nfa.start, new_nfa.states, new_nfa)
+    _remove_unreachable_states(nfa.start_state, new_nfa.states, new_nfa)
     _mutate_and_gen_accept_states(nfa, new_nfa, state2closure)
-    new_nfa.set_start(nfa.start)
+    new_nfa.set_start(nfa.start_state)
     return new_nfa
