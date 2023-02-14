@@ -412,7 +412,7 @@ class RegexNodesVisitor(Generic[T], metaclass=ABCMeta):
         ...
 
     @abstractmethod
-    def visit_match(self, group: Match) -> T:
+    def visit_match(self, match: Match) -> T:
         ...
 
     @abstractmethod
@@ -432,7 +432,7 @@ class RegexNodesVisitor(Generic[T], metaclass=ABCMeta):
         ...
 
 
-class RegexpParser:
+class RegexParser:
     def __init__(self, regex: str, flags: RegexFlag = RegexFlag.NOFLAG):
         self._regex = regex
         self._pos = 0

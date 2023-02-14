@@ -1,66 +1,26 @@
-from dataclasses import dataclass
 from sys import maxsize
 from typing import Callable, Optional
 
 from more_itertools import first_true, take
 
-from src.core import DFA, NFA, State, Transition
-from src.parser import EPSILON, Anchor, AnchorType, Matchable, RegexpParser
+from src.core import (
+    DFA,
+    NFA,
+    CapturedGroup,
+    CapturedGroups,
+    Match,
+    MatchResult,
+    RegexPattern,
+    State,
+    Transition,
+)
+from src.parser import EPSILON, Anchor, AnchorType, Matchable, RegexFlag, RegexParser
 
 
-@dataclass(slots=True)
-class CapturedGroup:
-    start: Optional[int] = None
-    end: Optional[int] = None
-
-    def copy(self):
-        return CapturedGroup(self.start, self.end)
-
-    def string(self, text: str):
-        if self.start is not None and self.end is not None:
-            return text[self.start : self.end]
-        return None
-
-
-CapturedGroups = list[CapturedGroup]
-MatchResult = tuple[int, CapturedGroups]
-
-
-@dataclass(frozen=True, slots=True)
-class Match:
-    start: int
-    end: int
-    text: str
-    captured_groups: CapturedGroups
-
-    @property
-    def span(self):
-        return self.start, self.end
-
-    def __repr__(self):
-        return (
-            f"{self.__class__.__name__}"
-            f"(span={self.span}, "
-            f"match={self.text[self.start:self.end]!r})"
-        )
-
-    def groups(self) -> tuple[str, ...]:
-        return tuple(
-            captured_group.string(self.text) for captured_group in self.captured_groups
-        )
-
-    def group(self, index=0) -> Optional[str]:
-        if index < 0 or index > len(self.captured_groups):
-            raise IndexError(f"index should be 0 <= {len(self.captured_groups)}")
-        if index == 0:
-            return self.text[self.start : self.end]
-        return self.captured_groups[index - 1].string(self.text)
-
-
-class Regex(NFA):
-    def __init__(self, pattern: str):
+class Regex(NFA, RegexPattern):
+    def __init__(self, pattern: str, flags: RegexFlag = RegexFlag.NOFLAG):
         super().__init__()
-        self._parser = RegexpParser(pattern)
+        self._parser = RegexParser(pattern, flags)
         self.set_terminals(self._parser.root.accept(self))
         self.update_symbols_and_states()
 
@@ -100,7 +60,7 @@ class Regex(NFA):
 
         return None
 
-    def matches(self, state, text, index):
+    def _matches(self, state, text, index):
         for transition in self[state]:
             if (
                 transition.matchable is EPSILON
@@ -124,7 +84,7 @@ class Regex(NFA):
             if completed:
                 closure.append(state)
                 # once we are done with this state
-                transitions.extend(self.matches(state, text, index))
+                transitions.extend(self._matches(state, text, index))
 
             if state in explored:
                 continue
@@ -242,70 +202,15 @@ class Regex(NFA):
                 return position, []
             return None
 
-    def match(self, text: str):
-        """Try to apply the pattern at the start of the string, returning
-        a Match object, or None if no match was found."""
-        return first_true(self.finditer(text), default=None)
-
-    def finditer(self, text: str):
-        index = 0
-        while index <= len(text):
-            if (result := self._match_at_index(text, index)) is not None:
-                position, captured_groups = result
-                yield Match(
-                    index,
-                    position,
-                    text,
-                    captured_groups,
-                )
-                index = position + 1 if position == index else position
-            else:
-                index = index + 1
-
-    def findall(self, text):
-        return [m.group(0) for m in self.finditer(text)]
-
-    def _sub(
-        self, string: str, replacer: str | Callable[[Match], str], count: int = maxsize
-    ) -> tuple[str, int]:
-        if isinstance(replacer, str):
-
-            def r(_):
-                return replacer
-
-        else:
-            r = replacer
-        matches = take(count, self.finditer(string))
-        chunks = []
-        start = 0
-        subs = 0
-        for match in matches:
-            chunks.append(string[start : match.start])
-            chunks.append(r(match))
-            start = match.end
-            subs += 1
-        chunks.append(string[start:])
-        return "".join(chunks), subs
-
-    def subn(
-        self, string: str, replacer: str | Callable[[Match], str], count: int = maxsize
-    ) -> tuple[str, int]:
-        return self._sub(string, replacer, count)
-
-    def sub(
-        self, string: str, replacer: str | Callable[[Match], str], count: int = maxsize
-    ):
-        return self._sub(string, replacer, count)[0]
-
     def __repr__(self):
         return super().__repr__()
 
 
 if __name__ == "__main__":
-    regex, t = "abc", "abcdefabc"
+    regex, t = "(a*)*", "aaaa"
 
     p = Regex(regex)
-    d = p.to_json()
+    d = p.graph()
     print(d)
 
     # print(list(re.finditer(regex, t)))

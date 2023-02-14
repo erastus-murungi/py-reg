@@ -769,6 +769,7 @@ def test_groups1(pattern, text):
         ("(.|()|())*", "c"),  # empty groups aren't matching
         ("((..)*(...)*)*", "xxx"),  # passes in Golang and Javascript
         ("(a*)*", "a"),  # passes in .NET(C#), Golang, Javascript
+        ("a(a*?)(a?)(a??)(a+)(a*)a", "aaaaaa"),  # passes in PCRE2, JS,
     ],
 )
 def test_ambiguous_cases_groups_pass_on_some_engines(pattern, text):
