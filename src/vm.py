@@ -1,12 +1,12 @@
 import re
-from dataclasses import dataclass, field
+from collections import deque
 from enum import IntEnum, auto
 from itertools import pairwise
 from pprint import pprint
-from typing import Any, Optional
-from collections import deque
+from sys import maxsize
+from typing import Optional
 
-from src.core import RegexPattern
+from src.core import CapturedGroups, MatchResult, RegexPattern
 from src.match import CapturedGroup
 from src.parser import (
     EMPTY_STRING,
@@ -17,9 +17,7 @@ from src.parser import (
     Expression,
     Group,
     Match,
-    Quantifier,
     RegexFlag,
-    RegexNode,
     RegexNodesVisitor,
     RegexParser,
 )
@@ -29,27 +27,140 @@ class Type(IntEnum):
     End = auto()
     Jump = auto()
     Split = auto()
-    MatchingPoint = auto()
+    Match = auto()
     StartCapturing = auto()
     EndCapturing = auto()
     EmptyString = auto()
 
 
-@dataclass(slots=True)
-class Instruction:
-    type: Type
-    attrs: dict[str, Any] = field(default_factory=dict)
-    next: Optional["Instruction"] = field(default=None, repr=False)
+class Instruction(dict):
+    __slots__ = ("type", "next")
 
-    def __getitem__(self, item):
-        return self.attrs.__getitem__(item)
+    def __init__(self, instruction_type, nxt=None, **kwargs):
+        super().__init__(kwargs)
+        self.type: Type = instruction_type
+        self.next: Optional[Instruction] = nxt
+
+    def __hash__(self):
+        return id(self)
+
+    def __repr__(self):
+        if self.type == Type.Split:
+            x, y = self["branches"]
+            return f"L{id(self): <10}: Split(x=L{id(x): <10}, y=L{id(y): <10})"
+        elif self.type == Type.Match:
+            return f'L{id(self): <10}: Match({self["matchable"]!r})'
+        elif self.type == Type.Jump:
+            return f'L{id(self): <10}: Jump(to=L{id(self["to"]): <10})'
+        return f'L{id(self): <10}: {self.type.name} {{{", ".join(f"{k!r}={v!r}" for k, v in self.items())}}}'
 
 
-class InstructionGenerator(RegexNodesVisitor[tuple[Instruction, Instruction]]):
-    def __init__(self, root: RegexNode):
-        self.root = root
-        self.start, last = root.accept(self)
+Thread = tuple[Instruction, list[CapturedGroup]]
+
+
+def queue_thread(queue: deque[Thread], thread: Thread, index: int):
+    def update_capturing_groups(
+        capturing_instruction: Instruction,
+        captured_groups: CapturedGroups,
+        *,
+        is_start: bool,
+    ):
+        group_index = capturing_instruction["index"]
+        groups_copy = captured_groups[:]
+        captured_group_copy: CapturedGroup = captured_groups[group_index].copy()
+        if is_start:
+            captured_group_copy.start = index
+        else:
+            captured_group_copy.end = index
+        groups_copy[group_index] = captured_group_copy
+        return groups_copy
+
+    work_list: list[Thread] = [thread]
+
+    visited = set()
+
+    while work_list:
+        instruction, groups = work_list.pop()
+
+        if instruction in visited:
+            continue
+
+        visited.add(instruction)
+
+        match instruction.type:
+            case Type.Jump:
+                work_list.append((instruction["to"], groups))
+
+            case Type.Split:
+                x, y = instruction["branches"]
+                work_list.append((y, groups))
+                work_list.append((x, groups.copy()))
+
+            case Type.StartCapturing | Type.EndCapturing:
+                work_list.append(
+                    (
+                        instruction.next,
+                        update_capturing_groups(
+                            instruction,
+                            groups,
+                            is_start=instruction.type == Type.StartCapturing,
+                        ),
+                    )
+                )
+            case Type.EmptyString:
+                work_list.append((instruction.next, groups))
+
+            case _:
+                queue.append((instruction, groups))
+
+
+class PikeVM(RegexPattern, RegexNodesVisitor[tuple[Instruction, Instruction]]):
+    def __init__(self, pattern: str, flags: RegexFlag = RegexFlag.NOFLAG):
+        self._parser = RegexParser(pattern, flags)
+        self.start, last = self._parser.root.accept(self)
         last.next = Instruction(Type.End)
+
+    def linearize(self) -> list[Instruction]:
+        instructions = []
+        current = self.start
+        while current is not None:
+            instructions.append(current)
+            current = current.next
+        return instructions
+
+    def _match_at_index(self, text: str, start_index: int) -> MatchResult:
+        captured_groups = [CapturedGroup() for _ in range(self._parser.group_count)]
+
+        queue = deque()
+        queue_thread(queue, (self.start, captured_groups), start_index)
+        matched = None
+
+        for index in range(start_index, len(text) + 1):
+            if not queue:
+                break
+
+            frontier = deque()
+
+            while queue:
+                instruction, groups = queue.popleft()
+                if instruction.type == Type.Match:
+                    matchable = instruction["matchable"]
+                    if matchable.match(text, index, self._parser.flags):
+                        if (next_index := matchable.increment(index)) == index:
+                            # process all anchors immediately
+                            queue_thread(queue, (instruction.next, groups), index)
+                        else:
+                            queue_thread(
+                                frontier, (instruction.next, groups), next_index
+                            )
+                elif instruction.type == Type.End:
+                    matched = (index, groups)
+                    # stop exploring threads in this queue, maybe explore higher-priority threads in `frontier`
+                    break
+
+            queue = frontier
+
+        return matched
 
     @staticmethod
     def _concat(instructions: list[tuple[Instruction, Instruction]]):
@@ -67,16 +178,16 @@ class InstructionGenerator(RegexNodesVisitor[tuple[Instruction, Instruction]]):
 
         if expression.alternate:
             first, last = instructions
+            first_alt, last_alt = expression.alternate.accept(self)
             empty = Instruction(Type.EmptyString)
-            jump = Instruction(Type.Jump, {"to": empty})
-            alternate_instructions = expression.alternate.accept(self)
+            jump = Instruction(Type.Jump, to=empty)
             split = Instruction(
                 Type.Split,
-                {"branches": (first, alternate_instructions[0])},
+                branches=(first, first_alt),
             )
             last.next = jump
-            jump.next = alternate_instructions[0]
-            alternate_instructions[1].next = empty
+            jump.next = first_alt
+            last_alt.next = empty
             return split, empty
         return instructions
 
@@ -86,8 +197,8 @@ class InstructionGenerator(RegexNodesVisitor[tuple[Instruction, Instruction]]):
         empty = Instruction(Type.EmptyString)
         split = Instruction(
             Type.Split,
-            {"branches": (empty, first) if lazy else (first, empty)},
             empty,
+            branches=((empty, first) if lazy else (first, empty)),
         )
         last.next = split
         return first, empty
@@ -96,11 +207,10 @@ class InstructionGenerator(RegexNodesVisitor[tuple[Instruction, Instruction]]):
     def zero_or_more(instructions: tuple[Instruction, Instruction], lazy: bool):
         empty = Instruction(Type.EmptyString)
         first, last = instructions
-        if lazy:
-            split = Instruction(Type.Split, {"branches": (empty, first)})
-        else:
-            split = Instruction(Type.Split, {"branches": (first, empty)})
-        jump = Instruction(Type.Jump, {"to": split})
+        split = Instruction(
+            Type.Split, first, branches=(empty, first) if lazy else (first, empty)
+        )
+        jump = Instruction(Type.Jump, empty, to=split)
         last.next = jump
         return split, empty
 
@@ -108,44 +218,114 @@ class InstructionGenerator(RegexNodesVisitor[tuple[Instruction, Instruction]]):
     def zero_or_one(instructions: tuple[Instruction, Instruction], lazy: bool):
         empty = Instruction(Type.EmptyString)
         first, last = instructions
-        if lazy:
-            split = Instruction(Type.Split, {"branches": (empty, first)})
-        else:
-            split = Instruction(Type.Split, {"branches": (first, empty)})
-        split.next = first
+        split = Instruction(
+            Type.Split, first, branches=(empty, first) if lazy else (first, empty)
+        )
         last.next = empty
         return split, empty
 
-    def _apply_quantifier(
-        self, instructions: tuple[Instruction, Instruction], quantifier: Quantifier
+    def _apply_quantifier(self, node: Group | Match) -> tuple[Instruction, Instruction]:
+        quantifier = node.quantifier
+        if quantifier.char is not None:
+            fragment = self._gen_instructions_for_quantifiable(node)
+            match quantifier.char:
+                case "+":
+                    return self.one_or_more(fragment, quantifier.lazy)
+                case "*":
+                    return self.zero_or_more(fragment, quantifier.lazy)
+                case "?":
+                    return self.zero_or_one(fragment, quantifier.lazy)
+                case _:
+                    raise RuntimeError(f"unrecognized quantifier {quantifier.char}")
+        else:
+            return self._apply_range_quantifier(node)
+
+    def _apply_range_quantifier(
+        self, node: Group | Match
     ) -> tuple[Instruction, Instruction]:
-        match quantifier.char:
-            case "+":
-                return self.one_or_more(instructions, quantifier.lazy)
-            case "*":
-                return self.zero_or_more(instructions, quantifier.lazy)
-            case "?":
-                return self.zero_or_one(instructions, quantifier.lazy)
-            case _:
-                raise RuntimeError(f"unrecognized quantifier {quantifier.char}")
+        quantifier = node.quantifier
+        start, end = quantifier.range_quantifier
+
+        if start == 0:
+            if end == maxsize:
+                # 'a{0,} = a{0,maxsize}' expands to a*
+                return self.zero_or_more(
+                    self._gen_instructions_for_quantifiable(node), quantifier.lazy
+                )
+            elif end is None:
+                # a{0} = ''
+                return self.duplicate(Instruction(Type.EmptyString))
+
+        if end is not None:
+            if end == maxsize:
+                # a{3,} expands to aaa+.
+                # 'a{3,maxsize}
+                instructions = [
+                    self._gen_instructions_for_quantifiable(node)
+                    for _ in range(start - 1)
+                ] + [
+                    self.one_or_more(
+                        self._gen_instructions_for_quantifiable(node), quantifier.lazy
+                    )
+                ]
+            else:
+                # a{,5} = a{0,5} or a{3,5}
+
+                instructions = [
+                    self._gen_instructions_for_quantifiable(node) for _ in range(start)
+                ]
+
+                empty = Instruction(Type.EmptyString)
+                for _ in range(start, end):
+                    first, last = self._gen_instructions_for_quantifiable(node)
+                    jump = Instruction(Type.Jump, first, to=empty)
+
+                    if quantifier.lazy:
+                        split = Instruction(Type.Split, first, branches=(jump, first))
+                    else:
+                        split = Instruction(Type.Split, first, branches=(first, jump))
+                    instructions.append((split, last))
+                instructions.append(self.duplicate(empty))
+
+        else:
+            instructions = [
+                self._gen_instructions_for_quantifiable(node) for _ in range(start)
+            ]
+
+        return self._concat(instructions)
+
+    def _gen_instructions_for_quantifiable(
+        self, node: Group | Match
+    ) -> tuple[Instruction, Instruction]:
+        """
+        Helper method to generate fragments for nodes and matches
+        """
+        if isinstance(node, Group):
+            return self._add_capturing_markers(node.expression.accept(self), node)
+        return node.item.accept(self)
+
+    @staticmethod
+    def _add_capturing_markers(
+        instructions: tuple[Instruction, Instruction], group: Group
+    ) -> tuple[Instruction, Instruction]:
+        if group.is_capturing():
+            first, last = instructions
+            sc = Instruction(Type.StartCapturing, index=group.group_index)
+            sc.next = first
+            ec = Instruction(Type.EndCapturing, index=group.group_index)
+            last.next = ec
+            instructions = (sc, ec)
+        return instructions
 
     def visit_group(self, group: Group) -> tuple[Instruction, Instruction]:
-        instructions = group.expression.accept(self)
-        if group.is_capturing():
-            sc = Instruction(Type.StartCapturing, {"index": group.group_index})
-            sc.next = instructions[0]
-            ec = Instruction(Type.EndCapturing, {"index": group.group_index})
-            instructions[1].next = ec
-            instructions = (sc, ec)
         if group.quantifier:
-            instructions = self._apply_quantifier(instructions, group.quantifier)
-        return instructions
+            return self._apply_quantifier(group)
+        return self._add_capturing_markers(group.expression.accept(self), group)
 
     def visit_match(self, match: Match) -> tuple[Instruction, Instruction]:
-        instructions = match.item.accept(self)
         if match.quantifier:
-            return self._apply_quantifier(instructions, match.quantifier)
-        return instructions
+            return self._apply_quantifier(match)
+        return match.item.accept(self)
 
     @staticmethod
     def duplicate(item):
@@ -154,111 +334,35 @@ class InstructionGenerator(RegexNodesVisitor[tuple[Instruction, Instruction]]):
     def visit_anchor(self, anchor: Anchor) -> tuple[Instruction, Instruction]:
         if anchor is EMPTY_STRING:
             return self.duplicate(Instruction(Type.EmptyString))
-        return self.duplicate(Instruction(Type.MatchingPoint, {"matchable": anchor}))
+        return self.duplicate(Instruction(Type.Match, matchable=anchor))
 
     def visit_any_character(
         self, any_character: AnyCharacter
     ) -> tuple[Instruction, Instruction]:
-        return self.duplicate(
-            Instruction(Type.MatchingPoint, {"matchable": any_character})
-        )
+        return self.duplicate(Instruction(Type.Match, matchable=any_character))
 
     def visit_character(self, character: Character) -> tuple[Instruction, Instruction]:
-        return self.duplicate(Instruction(Type.MatchingPoint, {"matchable": character}))
+        return self.duplicate(Instruction(Type.Match, matchable=character))
 
     def visit_character_group(
         self, character_group: CharacterGroup
     ) -> tuple[Instruction, Instruction]:
-        return self.duplicate(
-            Instruction(Type.MatchingPoint, {"matchable": character_group})
-        )
-
-
-Thread = tuple[Instruction, list[CapturedGroup]]
-
-
-class ThreadQueue(deque[Thread]):
-    def __init__(self):
-        super().__init__()
-
-    def update_capturing_group(self, pc, groups, is_start, index):
-        group_index = pc["index"]
-        groups_copy = groups[:]
-        captured_group_copy: CapturedGroup = groups[group_index].copy()
-        if is_start:
-            captured_group_copy.start = index
-        else:
-            captured_group_copy.end = index + 1
-        groups_copy[group_index] = captured_group_copy
-        self.add_thread((pc.next, groups_copy), index + 1)
-
-    def add_thread(self, thread: Thread, index) -> bool:
-        if thread in self:
-            return False
-        else:
-            pc, groups = thread
-            match pc.type:
-                case Type.Jump:
-                    self.add_thread((pc["to"], groups), index)
-                case Type.Split:
-                    x, y = pc["branches"]
-                    self.add_thread((x, groups.copy()), index)
-                    self.add_thread((y, groups), index)
-                case Type.StartCapturing:
-                    self.update_capturing_group(pc, groups, True, index)
-                case Type.EndCapturing:
-                    self.update_capturing_group(pc, groups, False, index)
-                case Type.EmptyString:
-                    self.add_thread((pc.next, groups), index)
-                case _:
-                    self.append(thread)
-
-
-class PikeVM(RegexPattern):
-    def __init__(self, pattern: str, flags: RegexFlag = RegexFlag.NOFLAG):
-        self._parser = RegexParser(pattern, flags)
-        self.start = InstructionGenerator(self._parser.root).start
-
-    def _match_at_index(self, text: str, starting_index: int):
-        captured_groups = [CapturedGroup() for _ in range(self._parser.group_count)]
-
-        queue = ThreadQueue()
-        queue.add_thread((self.start, captured_groups), starting_index)
-        matched = None
-
-        for index in range(starting_index, len(text) + 1):
-            if not queue:
-                break
-
-            frontier = ThreadQueue()
-
-            while queue:
-                instruction, groups = queue.popleft()
-                if instruction.type == Type.MatchingPoint:
-                    matchable = instruction["matchable"]
-                    if matchable.match(text, index, self._parser.flags):
-                        if matchable.increment(index) == index:
-                            # process all anchors immediately
-                            queue.add_thread((instruction.next, groups), index)
-                        else:
-                            frontier.add_thread((instruction.next, groups), index)
-                elif instruction.type == Type.End:
-                    matched = (index, groups)
-                    queue.clear()
-
-            queue = frontier
-
-        return matched
+        return self.duplicate(Instruction(Type.Match, matchable=character_group))
 
 
 if __name__ == "__main__":
-    regex, t = ("((a*)(abc|b))(c*)", "abc")
+    regex, t = (
+        r"^([a-zA-Z0-9._%-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,6})*$",
+        "erastusmurungi@gmail.com",
+    )
+    # regex, t = ("(ab)+?", "abab")
 
     pprint(list(re.finditer(regex, t)))
     pprint([m.groups() for m in re.finditer(regex, t)])
 
     p = PikeVM(regex)
+    pprint(p.linearize())
     # pattern.graph()
     pprint(list(p.finditer(t)))
 
-    pprint([m.groups() for m in PikeVM(regex).finditer(t)])
+    pprint([m.groups() for m in p.finditer(t)])

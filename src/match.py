@@ -1,14 +1,10 @@
-from sys import maxsize
-from typing import Callable, Optional
-
-from more_itertools import first_true, take
+from typing import Optional
 
 from src.core import (
     DFA,
     NFA,
     CapturedGroup,
     CapturedGroups,
-    Match,
     MatchResult,
     RegexPattern,
     State,
@@ -207,7 +203,7 @@ class Regex(NFA, RegexPattern):
 
 
 if __name__ == "__main__":
-    regex, t = "(a*)*", "aaaa"
+    regex, t = "(a*)*", "-"
 
     p = Regex(regex)
     d = p.graph()

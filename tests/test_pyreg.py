@@ -6,6 +6,8 @@ import pytest
 from src.match import Regex
 from src.parser import RegexpParsingError
 
+# from src.vm import PikeVM as Regex
+
 # acquired from re2: https://github.com/google/re2/blob/main/re2/testing/search_test.cc
 
 
@@ -790,7 +792,7 @@ def test_ambiguous_cases_groups_pass_on_some_engines(pattern, text):
     reason="first test passes only in some engines, second test doesn't find first empty string"
 )
 def test_ambiguous_cases_matches_pass_on_some_engines(pattern, text):
-    _test_case_no_groups(pattern, text)
+    _test_case(pattern, text)
 
 
 @pytest.mark.parametrize(
