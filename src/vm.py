@@ -450,15 +450,12 @@ class PikeVM(RegexPattern, RegexNodesVisitor[Fragment[Instruction]]):
 
         return codes
 
-    def visit_group(self, group: Group) -> Fragment[Instruction]:
-        if group.quantifier:
-            return self._apply_quantifier(group)
-        return self._add_capturing_markers(group.expression.accept(self), group)
+    def visit_quantifiable(self, node: Group | Match) -> Fragment[Instruction]:
+        if node.quantifier:
+            return self._apply_quantifier(node)
+        return self._gen_instructions_for_quantifiable(node)
 
-    def visit_match(self, match: Match) -> Fragment[Instruction]:
-        if match.quantifier:
-            return self._apply_quantifier(match)
-        return match.item.accept(self)
+    visit_group = visit_match = visit_quantifiable
 
     visit_character = (
         visit_character_group

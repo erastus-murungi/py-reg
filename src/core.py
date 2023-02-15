@@ -418,15 +418,12 @@ class NFA(defaultdict[State, list[Transition]], RegexNodesVisitor[Fragment[State
             return fragment
         return self.alternation(fragment, expression.alternate.accept(self))
 
-    def visit_group(self, group: Group) -> Fragment[State]:
-        if group.quantifier:
-            return self._apply_quantifier(group)
-        return self._add_capturing_markers(group.expression.accept(self), group)
+    def visit_quantifiable(self, node: Group | Match) -> Fragment[State]:
+        if node.quantifier:
+            return self._apply_quantifier(node)
+        return self._gen_frag_for_quantifiable(node)
 
-    def visit_match(self, match: Match) -> Fragment[State]:
-        if match.quantifier:
-            return self._apply_quantifier(match)
-        return match.item.accept(self)
+    visit_group = visit_match = visit_quantifiable
 
     visit_character = (
         visit_character_group
