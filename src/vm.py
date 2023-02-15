@@ -60,27 +60,25 @@ Thread = tuple[Instruction, list[CapturedGroup]]
 
 def queue_thread(queue: deque[Thread], thread: Thread, index: int):
     def update_capturing_groups(
-        capturing_instruction: Instruction,
+        group_index: int,
         captured_groups: CapturedGroups,
         *,
         is_start: bool,
     ):
-        group_index = capturing_instruction["index"]
-        groups_copy = captured_groups[:]
-        captured_group_copy: CapturedGroup = captured_groups[group_index].copy()
+        group_copy: CapturedGroup = captured_groups[group_index].copy()
         if is_start:
-            captured_group_copy.start = index
+            group_copy.start = index
         else:
-            captured_group_copy.end = index
-        groups_copy[group_index] = captured_group_copy
-        return groups_copy
+            group_copy.end = index
+        captured_groups[group_index] = group_copy
+        return captured_groups
 
-    work_list: list[Thread] = [thread]
+    stack: list[Thread] = [thread]
 
     visited = set()
 
-    while work_list:
-        instruction, groups = work_list.pop()
+    while stack:
+        instruction, groups = stack.pop()
 
         if instruction in visited:
             continue
@@ -89,26 +87,26 @@ def queue_thread(queue: deque[Thread], thread: Thread, index: int):
 
         match instruction.type:
             case Type.Jump:
-                work_list.append((instruction["to"], groups))
+                stack.append((instruction["to"], groups))
 
             case Type.Split:
                 x, y = instruction["branches"]
-                work_list.append((y, groups))
-                work_list.append((x, groups.copy()))
+                stack.append((y, groups))
+                stack.append((x, groups.copy()))
 
             case Type.StartCapturing | Type.EndCapturing:
-                work_list.append(
+                stack.append(
                     (
                         instruction.next,
                         update_capturing_groups(
-                            instruction,
-                            groups,
+                            instruction["index"],
+                            groups.copy(),  # make sure to pass a copy
                             is_start=instruction.type == Type.StartCapturing,
                         ),
                     )
                 )
             case Type.EmptyString:
-                work_list.append((instruction.next, groups))
+                stack.append((instruction.next, groups))
 
             case _:
                 queue.append((instruction, groups))
@@ -133,7 +131,8 @@ class PikeVM(RegexPattern, RegexNodesVisitor[tuple[Instruction, Instruction]]):
 
         queue = deque()
         queue_thread(queue, (self.start, captured_groups), start_index)
-        matched = None
+
+        match_result = None
 
         for index in range(start_index, len(text) + 1):
             if not queue:
@@ -154,16 +153,18 @@ class PikeVM(RegexPattern, RegexNodesVisitor[tuple[Instruction, Instruction]]):
                                 frontier, (instruction.next, groups), next_index
                             )
                 elif instruction.type == Type.End:
-                    matched = (index, groups)
+                    match_result = (index, groups)
                     # stop exploring threads in this queue, maybe explore higher-priority threads in `frontier`
                     break
 
             queue = frontier
 
-        return matched
+        return match_result
 
     @staticmethod
-    def _concat(instructions: list[tuple[Instruction, Instruction]]):
+    def _concat(
+        instructions: list[tuple[Instruction, Instruction]]
+    ) -> tuple[Instruction, Instruction]:
         for (_, a), (b, _) in pairwise(instructions):
             a.next = b
         return instructions[0][0], instructions[-1][1]
@@ -171,7 +172,6 @@ class PikeVM(RegexPattern, RegexNodesVisitor[tuple[Instruction, Instruction]]):
     def visit_expression(
         self, expression: Expression
     ) -> tuple[Instruction, Instruction]:
-        # an expression is just a bunch of subexpressions and an alternator
         instructions = self._concat(
             [sub_expression.accept(self) for sub_expression in expression.seq]
         )
@@ -180,13 +180,12 @@ class PikeVM(RegexPattern, RegexNodesVisitor[tuple[Instruction, Instruction]]):
             first, last = instructions
             first_alt, last_alt = expression.alternate.accept(self)
             empty = Instruction(Type.EmptyString)
-            jump = Instruction(Type.Jump, to=empty)
+            jump = Instruction(Type.Jump, first_alt, to=empty)
             split = Instruction(
                 Type.Split,
                 branches=(first, first_alt),
             )
             last.next = jump
-            jump.next = first_alt
             last_alt.next = empty
             return split, empty
         return instructions
@@ -279,11 +278,11 @@ class PikeVM(RegexPattern, RegexNodesVisitor[tuple[Instruction, Instruction]]):
                 for _ in range(start, end):
                     first, last = self._gen_instructions_for_quantifiable(node)
                     jump = Instruction(Type.Jump, first, to=empty)
-
-                    if quantifier.lazy:
-                        split = Instruction(Type.Split, first, branches=(jump, first))
-                    else:
-                        split = Instruction(Type.Split, first, branches=(first, jump))
+                    split = Instruction(
+                        Type.Split,
+                        first,
+                        branches=(jump, first) if quantifier.lazy else (first, jump),
+                    )
                     instructions.append((split, last))
                 instructions.append(self.duplicate(empty))
 
@@ -310,11 +309,12 @@ class PikeVM(RegexPattern, RegexNodesVisitor[tuple[Instruction, Instruction]]):
     ) -> tuple[Instruction, Instruction]:
         if group.is_capturing():
             first, last = instructions
-            sc = Instruction(Type.StartCapturing, index=group.group_index)
-            sc.next = first
-            ec = Instruction(Type.EndCapturing, index=group.group_index)
-            last.next = ec
-            instructions = (sc, ec)
+            start_capturing = Instruction(
+                Type.StartCapturing, first, index=group.group_index
+            )
+            end_capturing = Instruction(Type.EndCapturing, index=group.group_index)
+            last.next = end_capturing
+            instructions = (start_capturing, end_capturing)
         return instructions
 
     def visit_group(self, group: Group) -> tuple[Instruction, Instruction]:
