@@ -7,8 +7,8 @@ from pprint import pprint
 from sys import maxsize
 from typing import Final, Hashable, Optional
 
+from src.backtracking_matcher import CapturedGroup
 from src.core import CapturedGroups, Fragment, MatchResult, RegexPattern
-from src.match import CapturedGroup
 from src.parser import (
     EMPTY_STRING,
     Expression,
@@ -104,120 +104,7 @@ class Capture(Instruction):
 Thread = tuple[Instruction, list[CapturedGroup]]
 
 
-def update_capturing_groups(
-    group_index: int,
-    captured_groups: CapturedGroups,
-    text_index: int,
-    *,
-    opening: bool,
-) -> CapturedGroups:
-    """
-    Update the capturing group at index `group_index` so that it records `text_index`
-
-    Always makes a shallow copy of captured groups
-
-    Parameters
-    ----------
-    group_index: int
-        The group index of the capturing group to be updated
-    captured_groups: CapturedGroups
-        The collection of CapturedGroup items.
-    text_index: int
-        The index of the text where some group is captured
-    opening: bool
-        True if the captured part is the opening part of a group `(` or the closing part of a group `)`
-
-    Returns
-    -------
-    A shallow copy of the passed in captured groups list with the item captured_groups[group_index] updated.
-
-    """
-
-    # make a shallow copy of the list of captured groups
-    captured_groups_copy = captured_groups.copy()
-    # make a deep copy of the actual captured group we are modifying
-    group_copy: CapturedGroup = captured_groups_copy[group_index].copy()
-    if opening:
-        group_copy.start = text_index
-    else:
-        group_copy.end = text_index
-    captured_groups_copy[group_index] = group_copy
-    return captured_groups_copy
-
-
-def queue_thread(
-    queue: deque[Thread], thread: Thread, text_index: int, visited: set[Instruction]
-) -> None:
-    """
-    Queue a thread
-
-    Parameters
-    ----------
-    queue: deque[Thread]
-        A queue to add the thread to
-    thread: Thread
-        The thread to enqueue
-    text_index: int
-        The index we are at in the text. This is need to update capturing groups correctly
-    visited: set[Instruction]
-        A set of instructions which has already been visited in this lockstep
-        We maintain a separate visited set during each lockstep to prevent duplicates in the `queue`
-        Two threads with the same PC will execute identically even if they have different captured groups;
-        thus only one thread per PC needs to be kept.
-
-    Returns
-    -------
-    None:
-        To indicate the function ran to completion
-
-    Notes
-    -----
-    All the threads inside the queue are at the exact same text index
-
-    We consider all alternatives of a fork step simultaneously,
-    in lockstep with respect to the current position in the input string
-
-    """
-
-    # we use an explicit stack to traverse the instructions instead of recursion
-    stack: list[Thread] = [thread]
-
-    while stack:
-        instruction, groups = stack.pop()
-
-        if instruction in visited:
-            continue
-
-        visited.add(instruction)
-
-        match instruction:
-            case Jump(to):
-                stack.append((to, groups))
-
-            case Fork(preferred, alternative):
-                stack.append((alternative, groups))
-                stack.append((preferred, groups.copy()))
-
-            case Capture(group_index, opening, next_instruction):
-                stack.append(
-                    (
-                        next_instruction,
-                        update_capturing_groups(
-                            group_index,
-                            groups,  # make sure to pass a copy
-                            text_index,
-                            opening=opening,
-                        ),
-                    )
-                )
-            case EmptyString(next_instruction):
-                stack.append((next_instruction, groups))
-
-            case _:
-                queue.append((instruction, groups))
-
-
-class PikeVM(RegexPattern, RegexNodesVisitor[Fragment[Instruction]]):
+class RegexPikeVM(RegexPattern, RegexNodesVisitor[Fragment[Instruction]]):
     def __init__(self, pattern: str, flags: RegexFlag = RegexFlag.NOFLAG):
         self._parser = RegexParser(pattern, flags)
         self.start, last = self._parser.root.accept(self)
@@ -231,11 +118,124 @@ class PikeVM(RegexPattern, RegexNodesVisitor[Fragment[Instruction]]):
             current = current.next
         return instructions
 
+    @staticmethod
+    def update_capturing_groups(
+        group_index: int,
+        captured_groups: CapturedGroups,
+        text_index: int,
+        *,
+        opening: bool,
+    ) -> CapturedGroups:
+        """
+        Update the capturing group at index `group_index` so that it records `text_index`
+
+        Always makes a shallow copy of captured groups
+
+        Parameters
+        ----------
+        group_index: int
+            The group index of the capturing group to be updated
+        captured_groups: CapturedGroups
+            The collection of CapturedGroup items.
+        text_index: int
+            The index of the text where some group is captured
+        opening: bool
+            True if the captured part is the opening part of a group `(` or the closing part of a group `)`
+
+        Returns
+        -------
+        A shallow copy of the passed in captured groups list with the item captured_groups[group_index] updated.
+
+        """
+
+        # make a shallow copy of the list of captured groups
+        captured_groups_copy = captured_groups.copy()
+        # make a deep copy of the actual captured group we are modifying
+        group_copy: CapturedGroup = captured_groups_copy[group_index].copy()
+        if opening:
+            group_copy.start = text_index
+        else:
+            group_copy.end = text_index
+        captured_groups_copy[group_index] = group_copy
+        return captured_groups_copy
+
+    @staticmethod
+    def queue_thread(
+        queue: deque[Thread], thread: Thread, text_index: int, visited: set[Instruction]
+    ) -> None:
+        """
+        Queue a thread
+
+        Parameters
+        ----------
+        queue: deque[Thread]
+            A queue to add the thread to
+        thread: Thread
+            The thread to enqueue
+        text_index: int
+            The index we are at in the text. This is need to update capturing groups correctly
+        visited: set[Instruction]
+            A set of instructions which has already been visited in this lockstep
+            We maintain a separate visited set during each lockstep to prevent duplicates in the `queue`
+            Two threads with the same PC will execute identically even if they have different captured groups;
+            thus only one thread per PC needs to be kept.
+
+        Returns
+        -------
+        None:
+            To indicate the function ran to completion
+
+        Notes
+        -----
+        All the threads inside the queue are at the exact same text index
+
+        We consider all alternatives of a fork step simultaneously,
+        in lockstep with respect to the current position in the input string
+
+        """
+
+        # we use an explicit stack to traverse the instructions instead of recursion
+        stack: list[Thread] = [thread]
+
+        while stack:
+            instruction, groups = stack.pop()
+
+            if instruction in visited:
+                continue
+
+            visited.add(instruction)
+
+            match instruction:
+                case Jump(to):
+                    stack.append((to, groups))
+
+                case Fork(preferred, alternative):
+                    stack.append((alternative, groups))
+                    stack.append((preferred, groups.copy()))
+
+                case Capture(group_index, opening, next_instruction):
+                    stack.append(
+                        (
+                            next_instruction,
+                            RegexPikeVM.update_capturing_groups(
+                                group_index,
+                                groups,  # make sure to pass a copy
+                                text_index,
+                                opening=opening,
+                            ),
+                        )
+                    )
+                case EmptyString(next_instruction):
+                    stack.append((next_instruction, groups))
+
+                case _:
+                    queue.append((instruction, groups))
+
     def _match_at_index(self, text: str, start_index: int) -> MatchResult:
         captured_groups = [CapturedGroup() for _ in range(self._parser.group_count)]
 
         queue, visited = deque(), set()
-        queue_thread(queue, (self.start, captured_groups), start_index, visited)
+        self.queue_thread(queue, (self.start, captured_groups), start_index, visited)
 
         match_result = None
 
@@ -252,11 +252,11 @@ class PikeVM(RegexPattern, RegexNodesVisitor[Fragment[Instruction]]):
                     if matchable.match(text, index, self._parser.flags):
                         if (next_index := matchable.increment(index)) == index:
                             # process all anchors immediately
-                            queue_thread(
+                            self.queue_thread(
                                 queue, (instruction.next, groups), index, visited
                             )
                         else:
-                            queue_thread(
+                            self.queue_thread(
                                 frontier,
                                 (instruction.next, groups),
                                 next_index,
@@ -469,20 +469,16 @@ if __name__ == "__main__":
     #     r"(a*)*b",
     #     "a" * 22,
     # )
-    regex, t = (
-        r"^([a-zA-Z0-9._%-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,6})*$",
-        "erastus.murungi@mit.edu",
-    )
-
+    regex, t = ("($)|()", "xxx")
     a = time.monotonic()
     pprint(list(re.finditer(regex, t)))
     pprint([m.groups() for m in re.finditer(regex, t)])
     print(f"{time.monotonic() - a} seconds")
 
     a = time.monotonic()
-    p = PikeVM(regex)
+    p = RegexPikeVM(regex)
     pprint(list(p.finditer(t)))
     pprint([m.groups() for m in p.finditer(t)])
     print(f"{time.monotonic() - a} seconds")
 
-    pprint(p.linearize())
+    # pprint(p.linearize())

@@ -1,19 +1,11 @@
 from typing import Optional
 
-from src.core import (
-    DFA,
-    NFA,
-    CapturedGroup,
-    CapturedGroups,
-    MatchResult,
-    RegexPattern,
-    State,
-    Transition,
-)
-from src.parser import EPSILON, Anchor, AnchorType, Matchable, RegexFlag, RegexParser
+from .core import CapturedGroup, CapturedGroups, MatchResult, RegexPattern
+from .fsm import DFA, NFA, State, Transition
+from .parser import EPSILON, Anchor, AnchorType, Matchable, RegexFlag, RegexParser
 
 
-class Regex(NFA, RegexPattern):
+class RegexNFA(NFA, RegexPattern):
     def __init__(self, pattern: str, flags: RegexFlag = RegexFlag.NOFLAG):
         super().__init__()
         self._parser = RegexParser(pattern, flags)
@@ -205,7 +197,7 @@ class Regex(NFA, RegexPattern):
 if __name__ == "__main__":
     regex, t = "(a*)*", "-"
 
-    p = Regex(regex)
+    p = RegexNFA(regex)
     d = p.graph()
     print(d)
 

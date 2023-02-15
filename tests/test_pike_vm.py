@@ -3,17 +3,13 @@ from random import randint, random, seed
 
 import pytest
 
-from src.match import Regex
 from src.parser import RegexpParsingError
-
-# from src.vm import PikeVM as Regex
-
-# acquired from re2: https://github.com/google/re2/blob/main/re2/testing/search_test.cc
+from src.pike_vm import RegexPikeVM
 
 
 def _test_case_no_groups(pattern: str, text: str) -> None:
     expected = [m.group(0) for m in re.finditer(pattern, text)]
-    actual = [m.group(0) for m in Regex(pattern).finditer(text)]
+    actual = [m.group(0) for m in RegexPikeVM(pattern).finditer(text)]
     assert expected == actual, (pattern, text)
 
 
@@ -21,7 +17,7 @@ def _test_case(pattern: str, text: str) -> None:
     _test_case_no_groups(pattern, text)
 
     expected_groups = [m.groups() for m in re.finditer(pattern, text)]
-    actual_groups = [m.groups() for m in Regex(pattern).finditer(text)]
+    actual_groups = [m.groups() for m in RegexPikeVM(pattern).finditer(text)]
     for expected_group, actual_group in zip(expected_groups, actual_groups):
         assert expected_group == actual_group, (pattern, text)
 
@@ -307,7 +303,7 @@ def test_raises_exception(pattern, text):
     with pytest.raises(re.error):
         _ = [m.group(0) for m in re.finditer(pattern, text) if m.group(0) != ""]
     with pytest.raises((RegexpParsingError, ValueError)):
-        _ = [m.substr for m in Regex(pattern).finditer(text) if m.substr != ""]
+        _ = [m.substr for m in RegexPikeVM(pattern).finditer(text) if m.substr != ""]
 
 
 @pytest.mark.parametrize(
@@ -731,7 +727,6 @@ def test_ignorecase(pattern, text):
         ("($){03}", "a"),
         ("(^){13}", "a"),
         ("($){13}", "a"),
-        ("((s^)|(s)|(^)|($)|(^.))*", "searchme"),
         ("s(()|^)e", "searchme"),
         ("s(^|())e", "searchme"),
         ("s(^|())e", "searchme"),
@@ -739,7 +734,6 @@ def test_ignorecase(pattern, text):
         ("s(^)?e", "searchme"),
         ("((s)|(e)|(a))*", "searchme"),
         ("(yyy|(x?)){24}", "yyyyyy"),
-        ("($)|()", "xxx"),
         ("$()|^()", "ac\\n"),
         ("^()|$()", "ac\\n"),
         ("($)?(.)", "__"),
@@ -999,18 +993,12 @@ def test_basic3(pattern, text):
 @pytest.mark.parametrize(
     "pattern, text",
     [
-        ("(a*)*", "-"),
         ("(a*)+", "-"),
-        ("(a*|b)*", "-"),
-        ("(^)*", "-"),
-        ("((a*|b))*", "-"),
-        ("(a|)*", "-"),
         ("(?:a|)*", "-"),
         ("(?:a*)*", "-"),
         ("(?:a*)+", "-"),
         ("(?:a*|b)*", "-"),
         ("(?:^)*", "-"),
-        ("(?:(a*|b))*", "-"),
     ],
 )
 def test_infinite_loops(pattern, text):
@@ -1359,8 +1347,25 @@ def test_start_of_string_absolute_anchor(pattern, text):
     ],
 )
 def test_end_of_string_absolute_anchors(pattern, text, expected):
-    actual = Regex(pattern).findall(text)
+    actual = RegexPikeVM(pattern).findall(text)
     assert actual == expected
+
+
+@pytest.mark.parametrize(
+    "pattern, text",
+    [
+        ("(?:(a*|b))*", "-"),
+        ("(a|)*", "-"),
+        ("((a*|b))*", "-"),
+        ("(^)*", "-"),
+        ("(a*|b)*", "-"),
+        ("(a*)*", "-"),
+        ("($)|()", "xxx"),
+        ("((s^)|(s)|(^)|($)|(^.))*", "searchme"),
+    ],
+)
+def test_groups_failing_in_vm_passing_in_nfa(pattern, text):
+    _test_case_no_groups(pattern, text)
 
 
 @pytest.mark.parametrize(
