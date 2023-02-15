@@ -14,7 +14,7 @@ A simple Backtracking NFA-based regular expression engine.
   7. ``()`` Non-capturing grouping
   8. ``.`` Match any character operator
   9. Lazy ops: ``*?``, ``+?``, ``??``, ``{x, y?}?`` 
-  10. Anchors such as ``$, ^, \b, \B``
+  10. Anchors such as ``$, ^, \b, \B \Z \z \A``
 
 
 ### Extras
