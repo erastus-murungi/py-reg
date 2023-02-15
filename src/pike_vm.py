@@ -7,9 +7,8 @@ from pprint import pprint
 from sys import maxsize
 from typing import Final, Hashable, Optional
 
-from src.backtracking_matcher import CapturedGroup
-from src.core import CapturedGroups, Fragment, MatchResult, RegexPattern
-from src.parser import (
+from .core import CapturedGroup, CapturedGroups, Fragment, MatchResult, RegexPattern
+from .parser import (
     EMPTY_STRING,
     Expression,
     Group,
@@ -206,12 +205,11 @@ class RegexPikeVM(RegexPattern, RegexNodesVisitor[Fragment[Instruction]]):
             visited.add(instruction)
 
             match instruction:
-                case Jump(to):
-                    stack.append((to, groups))
+                case Jump(target):
+                    stack.append((target, groups))
 
                 case Fork(preferred, alternative):
-                    stack.append((alternative, groups))
-                    stack.append((preferred, groups.copy()))
+                    stack.extend(((alternative, groups), (preferred, groups)))
 
                 case Capture(group_index, opening, next_instruction):
                     stack.append(
@@ -240,33 +238,31 @@ class RegexPikeVM(RegexPattern, RegexNodesVisitor[Fragment[Instruction]]):
         match_result = None
 
         for index in range(start_index, len(text) + 1):
-            if not queue:
-                break
-
             frontier, next_visited = deque(), set()
 
             while queue:
                 instruction, groups = queue.popleft()
-                if isinstance(instruction, Consume):
-                    matchable = instruction.matchable
-                    if matchable.match(text, index, self._parser.flags):
-                        if (next_index := matchable.increment(index)) == index:
-                            # process all anchors immediately
-                            self.queue_thread(
-                                queue, (instruction.next, groups), index, visited
-                            )
-                        else:
-                            self.queue_thread(
-                                frontier,
-                                (instruction.next, groups),
-                                next_index,
-                                next_visited,
-                            )
-                elif isinstance(instruction, End):
-                    match_result = (index, groups)
-                    # stop exploring threads in this queue, maybe explore higher-priority threads in `frontier`
-                    break
-
+                match instruction:
+                    case Consume(matchable, next_instruction):
+                        if matchable.match(text, index, self._parser.flags):
+                            if (next_index := matchable.increment(index)) == index:
+                                # process all anchors immediately
+                                self.queue_thread(
+                                    queue, (next_instruction, groups), index, visited
+                                )
+                            else:
+                                self.queue_thread(
+                                    frontier,
+                                    (next_instruction, groups),
+                                    next_index,
+                                    next_visited,
+                                )
+                    case End():
+                        match_result = (index, groups)
+                        # stop exploring threads in this queue, maybe explore higher-priority threads in `frontier`
+                        break
+            if not frontier:
+                break
             queue, visited = frontier, next_visited
 
         return match_result
