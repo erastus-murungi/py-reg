@@ -5,8 +5,6 @@ from typing import Callable, Generic, Optional, TypeVar
 
 from more_itertools import first_true, take
 
-from .parser import Match
-
 T = TypeVar("T")
 
 
@@ -42,7 +40,7 @@ MatchResult = tuple[int, CapturedGroups]
 
 
 @dataclass(frozen=True, slots=True)
-class Match:
+class RegexMatch:
     start: int
     end: int
     text: str
@@ -82,7 +80,7 @@ class RegexPattern(ABC):
         while index <= len(text):
             if (result := self._match_at_index(text, index)) is not None:
                 position, captured_groups = result
-                yield Match(
+                yield RegexMatch(
                     index,
                     position,
                     text,
@@ -101,7 +99,10 @@ class RegexPattern(ABC):
         return [m.group(0) for m in self.finditer(text)]
 
     def _sub(
-        self, string: str, replacer: str | Callable[[Match], str], count: int = maxsize
+        self,
+        string: str,
+        replacer: str | Callable[[RegexMatch], str],
+        count: int = maxsize,
     ) -> tuple[str, int]:
         if isinstance(replacer, str):
 
@@ -123,11 +124,17 @@ class RegexPattern(ABC):
         return "".join(chunks), subs
 
     def subn(
-        self, string: str, replacer: str | Callable[[Match], str], count: int = maxsize
+        self,
+        string: str,
+        replacer: str | Callable[[RegexMatch], str],
+        count: int = maxsize,
     ) -> tuple[str, int]:
         return self._sub(string, replacer, count)
 
     def sub(
-        self, string: str, replacer: str | Callable[[Match], str], count: int = maxsize
+        self,
+        string: str,
+        replacer: str | Callable[[RegexMatch], str],
+        count: int = maxsize,
     ):
         return self._sub(string, replacer, count)[0]

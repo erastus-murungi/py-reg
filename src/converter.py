@@ -1,7 +1,8 @@
 from itertools import product
 from typing import Iterable
 
-from src.core import NFA, State, Tag, Transition, gen_state
+from .fsm import NFA, State, Transition, gen_state
+from .parser import EPSILON
 
 
 def _remove_unreachable_states(
@@ -45,7 +46,7 @@ def _mutate_and_gen_accept_states(
     added_transitions = {}
     for state in new_nfa.states:
         if any(v in old_nfa.accepting_states for v in state2closure[state]):
-            transition = Transition(Tag.epsilon(), final_accept)
+            transition = Transition(EPSILON, final_accept)
             added_transitions[state] = transition
     if len(added_transitions) == 0:
         raise RuntimeError(f"No accept states found in {old_nfa}")
