@@ -84,6 +84,10 @@ class Fragment(Generic[T]):
     def __iter__(self):
         yield from [self.start, self.end]
 
+    @staticmethod
+    def duplicate(item: T) -> "Fragment[T]":
+        return Fragment(item, item)
+
 
 def gen_state_fragment() -> Fragment[State]:
     return Fragment(gen_state(), gen_state())

@@ -3,9 +3,10 @@ from random import randint, random, seed
 
 import pytest
 
-# from src.match import Regex
+from src.match import Regex
 from src.parser import RegexpParsingError
-from src.vm import PikeVM as Regex
+
+# from src.vm import PikeVM as Regex
 
 # acquired from re2: https://github.com/google/re2/blob/main/re2/testing/search_test.cc
 

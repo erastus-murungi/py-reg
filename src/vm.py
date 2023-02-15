@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from itertools import pairwise
 from pprint import pprint
 from sys import maxsize
-from typing import Hashable, Optional
+from typing import Final, Hashable, Optional
 
 from src.core import CapturedGroups, Fragment, MatchResult, RegexPattern
 from src.match import CapturedGroup
@@ -32,7 +32,13 @@ class Instruction(Hashable):
 
 @dataclass(slots=True, eq=False)
 class End(Instruction):
-    next: Optional[Instruction] = field(repr=False, default=None)
+    """
+    Indicates that we have found a match
+    Important to have the `next` attribute because each instruction has a next attribute
+    """
+
+    next: Final = None
+    ...
 
 
 @dataclass(slots=True, eq=False)
@@ -42,15 +48,49 @@ class EmptyString(Instruction):
 
 @dataclass(slots=True, eq=False)
 class Jump(Instruction):
-    to: Instruction
-    next: Optional["Instruction"] = field(repr=False, default=None)
+    """
+    An unconditional jump to another instruction
+
+    Attributes
+    ----------
+    target: Instruction
+        The target instruction of this unconditional jump
+    next: Instruction
+        The instruction to follow when after printing this jump
+        It is not actually followed during the matching process
+    """
+
+    target: Instruction
+    next: Instruction
 
 
 @dataclass(slots=True, eq=False)
 class Fork(Instruction):
-    x: Instruction
-    y: Instruction
-    next: Optional["Instruction"] = field(repr=False, default=None)
+    """
+    Indicates that we can follow two paths in the NFA.
+    The number of paths is a max of 2 at all times.
+    We usually create forks because of instructions like '+', '-', '|', '?'
+
+
+    Attributes
+    ----------
+    preferred: Instruction
+        The first branch of the split instruction that we explore
+    alternative: Instruction
+        The alternative branch we explore after exploring preferred without success
+    next: Instruction
+        The instruction to follow when after printing this fork
+
+    Notes
+    -----
+    The next attribute here is only used when printing the instruction list in sequence
+    It is never actually followed during the matching process because a fork doesn't consume any characters
+
+    """
+
+    preferred: Instruction
+    alternative: Instruction
+    next: Instruction
 
 
 @dataclass(slots=True, eq=False)
@@ -61,32 +101,91 @@ class Consume(Instruction):
 
 @dataclass(slots=True, eq=False)
 class Capture(Instruction):
-    opening: bool
     index: int
+    opening: bool
     next: Optional["Instruction"] = field(repr=False, default=None)
 
 
 Thread = tuple[Instruction, list[CapturedGroup]]
 
 
-def queue_thread(queue: deque[Thread], thread: Thread, index: int):
-    def update_capturing_groups(
-        group_index: int,
-        captured_groups: CapturedGroups,
-        *,
-        opening: bool,
-    ):
-        group_copy: CapturedGroup = captured_groups[group_index].copy()
-        if opening:
-            group_copy.start = index
-        else:
-            group_copy.end = index
-        captured_groups[group_index] = group_copy
-        return captured_groups
+def update_capturing_groups(
+    group_index: int,
+    captured_groups: CapturedGroups,
+    text_index: int,
+    *,
+    opening: bool,
+) -> CapturedGroups:
+    """
+    Update the capturing group at index `group_index` so that it records `text_index`
+
+    Always makes a shallow copy of captured groups
+
+    Parameters
+    ----------
+    group_index: int
+        The group index of the capturing group to be updated
+    captured_groups: CapturedGroups
+        The collection of CapturedGroup items.
+    text_index: int
+        The index of the text where some group is captured
+    opening: bool
+        True if the captured part is the opening part of a group `(` or the closing part of a group `)`
+
+    Returns
+    -------
+    A shallow copy of the passed in captured groups list with the item captured_groups[group_index] updated.
+
+    """
+
+    # make a shallow copy of the list of captured groups
+    captured_groups_copy = captured_groups.copy()
+    # make a deep copy of the actual captured group we are modifying
+    group_copy: CapturedGroup = captured_groups_copy[group_index].copy()
+    if opening:
+        group_copy.start = text_index
+    else:
+        group_copy.end = text_index
+    captured_groups_copy[group_index] = group_copy
+    return captured_groups_copy
+
+
+def queue_thread(
+    queue: deque[Thread], thread: Thread, text_index: int, visited: set[Instruction]
+) -> None:
+    """
+    Queue a thread
+
+    Parameters
+    ----------
+    queue: deque[Thread]
+        A queue to add the thread to
+    thread: Thread
+        The thread to enqueue
+    text_index: int
+        The index we are at in the text. This is need to update capturing groups correctly
+    visited: set[Instruction]
+        A set of instructions which has already been visited in this lockstep
+        We maintain a separate visited set during each lockstep to prevent duplicates in the `queue`
+        Two threads with the same PC will execute identically even if they have different captured groups;
+        thus only one thread per PC needs to be kept.
+
+    Returns
+    -------
+    None:
+        To indicate the function ran to completion
+
+    Notes
+    -----
+    All the threads inside the queue are at the exact same text index
+
+    We consider all alternatives of a fork step simultaneously,
+    in lockstep with respect to the current position in the input string
+    """
+
+    # we use an explicit stack to traverse the instructions instead of recursion
 
     stack: list[Thread] = [thread]
-
-    visited = set()
 
     while stack:
         instruction, groups = stack.pop()
@@ -104,13 +203,14 @@ def queue_thread(queue: deque[Thread], thread: Thread, index: int):
                 stack.append((y, groups))
                 stack.append((x, groups.copy()))
 
-            case Capture(opening, group_index, next_instruction):
+            case Capture(group_index, opening, next_instruction):
                 stack.append(
                     (
                         next_instruction,
                         update_capturing_groups(
                             group_index,
-                            groups.copy(),  # make sure to pass a copy
+                            groups,  # make sure to pass a copy
+                            text_index,
                             opening=opening,
                         ),
                     )
@@ -139,8 +239,8 @@ class PikeVM(RegexPattern, RegexNodesVisitor[Fragment[Instruction]]):
     def _match_at_index(self, text: str, start_index: int) -> MatchResult:
         captured_groups = [CapturedGroup() for _ in range(self._parser.group_count)]
 
-        queue = deque()
-        queue_thread(queue, (self.start, captured_groups), start_index)
+        queue, visited = deque(), set()
+        queue_thread(queue, (self.start, captured_groups), start_index, visited)
 
         match_result = None
 
@@ -148,7 +248,7 @@ class PikeVM(RegexPattern, RegexNodesVisitor[Fragment[Instruction]]):
             if not queue:
                 break
 
-            frontier = deque()
+            frontier, next_visited = deque(), set()
 
             while queue:
                 instruction, groups = queue.popleft()
@@ -157,72 +257,110 @@ class PikeVM(RegexPattern, RegexNodesVisitor[Fragment[Instruction]]):
                     if matchable.match(text, index, self._parser.flags):
                         if (next_index := matchable.increment(index)) == index:
                             # process all anchors immediately
-                            queue_thread(queue, (instruction.next, groups), index)
+                            queue_thread(
+                                queue, (instruction.next, groups), index, visited
+                            )
                         else:
                             queue_thread(
-                                frontier, (instruction.next, groups), next_index
+                                frontier,
+                                (instruction.next, groups),
+                                next_index,
+                                next_visited,
                             )
                 elif isinstance(instruction, End):
                     match_result = (index, groups)
                     # stop exploring threads in this queue, maybe explore higher-priority threads in `frontier`
                     break
 
-            queue = frontier
+            queue, visited = frontier, next_visited
 
         return match_result
 
     @staticmethod
-    def _concat(fragments: list[Fragment[Instruction]]) -> Fragment[Instruction]:
+    def _concat_fragments(
+        fragments: list[Fragment[Instruction]],
+    ) -> Fragment[Instruction]:
         for fragment1, fragment2 in pairwise(fragments):
             fragment1.end.next = fragment2.start
         return Fragment(fragments[0].start, fragments[-1].end)
 
     def visit_expression(self, expression: Expression) -> Fragment[Instruction]:
-        instructions = self._concat(
+        """
+        Parameters
+        ----------
+        expression: Expression
+            The expression to convert to a sequence of instructions
+
+        Notes
+        ----
+
+            Alternate e1|e2       fork L1, L2
+            (first, last)         L1: codes for e1
+                                  jump L3
+            (first_alt, last_alt) L2: codes for e2
+            (empty)               L3:
+        """
+        codes = self._concat_fragments(
             [sub_expression.accept(self) for sub_expression in expression.seq]
         )
 
         if expression.alternate:
-            first, last = instructions
-            first_alt, last_alt = expression.alternate.accept(self)
+            alt_codes = expression.alternate.accept(self)
             empty = EmptyString()
-            jump = Jump(empty, first_alt)
-            split = Fork(first, first_alt, first)
-            last.next = jump
-            last_alt.next = empty
-            return Fragment(split, empty)
-        return instructions
+            codes.end.next = Jump(empty, alt_codes.start)
+            alt_codes.end.next = empty
+            return Fragment(Fork(codes.start, alt_codes.start, codes.start), empty)
+        return codes
 
     @staticmethod
-    def one_or_more(
-        instructions: Fragment[Instruction], lazy: bool
-    ) -> Fragment[Instruction]:
-        first, last = instructions
+    def one_or_more(codes: Fragment[Instruction], lazy: bool) -> Fragment[Instruction]:
+        """
+        Notes
+        -----
+        L1: codes for e
+            fork L1, L3
+        L3: empty
+        """
         empty = EmptyString()
-        split = Fork(*((empty, first) if lazy else (first, empty)), empty)
-        last.next = split
-        return Fragment(first, empty)
+        codes.end.next = Fork(
+            *((empty, codes.start) if lazy else (codes.start, empty)), empty
+        )
+        return Fragment(codes.start, empty)
 
     @staticmethod
-    def zero_or_more(
-        instructions: Fragment[Instruction], lazy: bool
-    ) -> Fragment[Instruction]:
+    def zero_or_more(codes: Fragment[Instruction], lazy: bool) -> Fragment[Instruction]:
+        """
+        Notes
+        -----
+        L1: fork L2, L3
+        L2: codes for e
+            jmp L1
+        L3:
+        """
         empty = EmptyString()
-        first, last = instructions
-        split = Fork(*((empty, first) if lazy else (first, empty)), first)
-        jump = Jump(split, empty)
-        last.next = jump
+        split = Fork(
+            *((empty, codes.start) if lazy else (codes.start, empty)), codes.start
+        )
+        codes.end.next = Jump(split, empty)
         return Fragment(split, empty)
 
     @staticmethod
-    def zero_or_one(
-        instructions: Fragment[Instruction], lazy: bool
-    ) -> Fragment[Instruction]:
+    def zero_or_one(codes: Fragment[Instruction], lazy: bool) -> Fragment[Instruction]:
+        """
+        Notes
+        -----
+        fork L1, L2
+        L1: codes for e
+        L2:
+        """
         empty = EmptyString()
-        first, last = instructions
-        split = Fork(*((empty, first) if lazy else (first, empty)), first)
-        last.next = empty
-        return Fragment(split, empty)
+        codes.end.next = empty
+        return Fragment(
+            Fork(
+                *((empty, codes.start) if lazy else (codes.start, empty)), codes.start
+            ),
+            empty,
+        )
 
     def _apply_quantifier(self, node: Group | Match) -> Fragment[Instruction]:
         quantifier = node.quantifier
@@ -252,7 +390,7 @@ class PikeVM(RegexPattern, RegexNodesVisitor[Fragment[Instruction]]):
                 )
             elif end is None:
                 # a{0} = ''
-                return self.duplicate_instruction(EmptyString())
+                return Fragment.duplicate(EmptyString())
 
         if end is not None:
             if end == maxsize:
@@ -273,7 +411,7 @@ class PikeVM(RegexPattern, RegexNodesVisitor[Fragment[Instruction]]):
                     self._gen_instructions_for_quantifiable(node) for _ in range(start)
                 ]
 
-                empty = EmptyString()
+                empty: Final[EmptyString] = EmptyString()
                 for _ in range(start, end):
                     first, last = self._gen_instructions_for_quantifiable(node)
                     jump = Jump(empty, first)
@@ -281,14 +419,14 @@ class PikeVM(RegexPattern, RegexNodesVisitor[Fragment[Instruction]]):
                         *((jump, first) if quantifier.lazy else (first, jump)), first
                     )
                     instructions.append(Fragment(split, last))
-                instructions.append(self.duplicate_instruction(empty))
+                instructions.append(Fragment.duplicate(empty))
 
         else:
             instructions = [
                 self._gen_instructions_for_quantifiable(node) for _ in range(start)
             ]
 
-        return self._concat(instructions)
+        return self._concat_fragments(instructions)
 
     def _gen_instructions_for_quantifiable(
         self, node: Group | Match
@@ -302,15 +440,20 @@ class PikeVM(RegexPattern, RegexNodesVisitor[Fragment[Instruction]]):
 
     @staticmethod
     def _add_capturing_markers(
-        instructions: tuple[Instruction, Instruction], group: Group
+        codes: Fragment[Instruction], group: Group
     ) -> Fragment[Instruction]:
         if group.is_capturing():
-            first, last = instructions
-            start_capturing = Capture(True, group.index, first)
-            end_capturing = Capture(False, group.index)
-            last.next = end_capturing
-            instructions = Fragment(start_capturing, end_capturing)
-        return instructions
+            # All we are doing here is just wrapping our fragment between two capturing instructions
+
+            start_capturing, end_capturing = Capture(
+                group.index, opening=True
+            ), Capture(group.index, opening=False)
+
+            start_capturing.next = codes.start
+            codes.end.next = end_capturing
+            return Fragment(start_capturing, end_capturing)
+
+        return codes
 
     def visit_group(self, group: Group) -> Fragment[Instruction]:
         if group.quantifier:
@@ -322,25 +465,21 @@ class PikeVM(RegexPattern, RegexNodesVisitor[Fragment[Instruction]]):
             return self._apply_quantifier(match)
         return match.item.accept(self)
 
-    @staticmethod
-    def duplicate_instruction(item: Instruction) -> Fragment[Instruction]:
-        return Fragment(item, item)
-
     def visit_anchor(self, anchor: Anchor) -> Fragment[Instruction]:
         if anchor is EMPTY_STRING:
-            return self.duplicate_instruction(EmptyString())
-        return self.duplicate_instruction(Consume(anchor))
+            return Fragment.duplicate(EmptyString())
+        return Fragment.duplicate(Consume(anchor))
 
     def visit_any_character(self, any_character: AnyCharacter) -> Fragment[Instruction]:
-        return self.duplicate_instruction(Consume(any_character))
+        return Fragment.duplicate(Consume(any_character))
 
     def visit_character(self, character: Character) -> Fragment[Instruction]:
-        return self.duplicate_instruction(Consume(character))
+        return Fragment.duplicate(Consume(character))
 
     def visit_character_group(
         self, character_group: CharacterGroup
     ) -> Fragment[Instruction]:
-        return self.duplicate_instruction(Consume(character_group))
+        return Fragment.duplicate(Consume(character_group))
 
 
 if __name__ == "__main__":
@@ -348,7 +487,10 @@ if __name__ == "__main__":
     #     r"(a*)*b",
     #     "a" * 22,
     # )
-    regex, t = "((a))", "abc"
+    regex, t = (
+        r"^([a-zA-Z0-9._%-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,6})*$",
+        "erastus.murungi@mit.edu",
+    )
 
     a = time.monotonic()
     pprint(list(re.finditer(regex, t)))
