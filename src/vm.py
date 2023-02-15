@@ -11,10 +11,6 @@ from src.core import CapturedGroups, Fragment, MatchResult, RegexPattern
 from src.match import CapturedGroup
 from src.parser import (
     EMPTY_STRING,
-    Anchor,
-    AnyCharacter,
-    Character,
-    CharacterGroup,
     Expression,
     Group,
     Match,
@@ -38,7 +34,6 @@ class End(Instruction):
     """
 
     next: Final = None
-    ...
 
 
 @dataclass(slots=True, eq=False)
@@ -181,10 +176,10 @@ def queue_thread(
 
     We consider all alternatives of a fork step simultaneously,
     in lockstep with respect to the current position in the input string
+
     """
 
     # we use an explicit stack to traverse the instructions instead of recursion
-
     stack: list[Thread] = [thread]
 
     while stack:
@@ -199,9 +194,9 @@ def queue_thread(
             case Jump(to):
                 stack.append((to, groups))
 
-            case Fork(x, y):
-                stack.append((y, groups))
-                stack.append((x, groups.copy()))
+            case Fork(preferred, alternative):
+                stack.append((alternative, groups))
+                stack.append((preferred, groups.copy()))
 
             case Capture(group_index, opening, next_instruction):
                 stack.append(
@@ -465,21 +460,14 @@ class PikeVM(RegexPattern, RegexNodesVisitor[Fragment[Instruction]]):
             return self._apply_quantifier(match)
         return match.item.accept(self)
 
-    def visit_anchor(self, anchor: Anchor) -> Fragment[Instruction]:
-        if anchor is EMPTY_STRING:
+    def consume_char(_, matchable) -> Fragment[Instruction]:
+        if matchable is EMPTY_STRING:
             return Fragment.duplicate(EmptyString())
-        return Fragment.duplicate(Consume(anchor))
+        return Fragment.duplicate(Consume(matchable))
 
-    def visit_any_character(self, any_character: AnyCharacter) -> Fragment[Instruction]:
-        return Fragment.duplicate(Consume(any_character))
-
-    def visit_character(self, character: Character) -> Fragment[Instruction]:
-        return Fragment.duplicate(Consume(character))
-
-    def visit_character_group(
-        self, character_group: CharacterGroup
-    ) -> Fragment[Instruction]:
-        return Fragment.duplicate(Consume(character_group))
+    visit_character = (
+        visit_character_group
+    ) = visit_any_character = visit_anchor = consume_char
 
 
 if __name__ == "__main__":
