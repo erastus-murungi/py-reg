@@ -375,11 +375,11 @@ class Match(RegexNode):
 @dataclass
 class Group(RegexNode):
     expression: "Expression"
-    group_index: Optional[int]
+    index: Optional[int]
     quantifier: Optional[Quantifier]
 
     def is_capturing(self):
-        return self.group_index is not None
+        return self.index is not None
 
     def string(self):
         expression = (

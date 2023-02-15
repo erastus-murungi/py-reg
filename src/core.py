@@ -1,12 +1,12 @@
 import json
 from abc import ABC, abstractmethod
 from collections import defaultdict
-from dataclasses import astuple, dataclass, field
+from dataclasses import dataclass
 from functools import reduce
 from itertools import chain, combinations, count, product
 from string import ascii_uppercase
 from sys import maxsize
-from typing import Any, Callable, Iterable, Iterator, Optional, Union
+from typing import Any, Callable, Generic, Iterable, Iterator, Optional, TypeVar, Union
 
 import graphviz
 from more_itertools import first, first_true, minmax, pairwise, take
@@ -73,13 +73,20 @@ def gen_dfa_state(
     return strid
 
 
+T = TypeVar("T")
+
+
 @dataclass(frozen=True, slots=True)
-class Fragment:
-    start: State = field(default_factory=gen_state)
-    end: State = field(default_factory=gen_state)
+class Fragment(Generic[T]):
+    start: T
+    end: T
 
     def __iter__(self):
-        yield from astuple(self)
+        yield from [self.start, self.end]
+
+
+def gen_state_fragment() -> Fragment[State]:
+    return Fragment(gen_state(), gen_state())
 
 
 @dataclass(eq=True, slots=True)
@@ -91,7 +98,7 @@ class Transition:
         yield from [self.matchable, self.end]
 
 
-class NFA(defaultdict[State, list[Transition]], RegexNodesVisitor[Fragment]):
+class NFA(defaultdict[State, list[Transition]], RegexNodesVisitor[Fragment[State]]):
     """Formally, an NFA is a 5-tuple (Q, Σ, q0, T, δ) where
         • Q is finite set of states;
         • Σ is alphabet of input symbols;
@@ -126,7 +133,7 @@ class NFA(defaultdict[State, list[Transition]], RegexNodesVisitor[Fragment]):
     def set_start(self, state: State):
         self.start_state = state
 
-    def set_terminals(self, fragment: Fragment):
+    def set_terminals(self, fragment: Fragment[State]):
         self.set_start(fragment.start)
         self.set_accept(fragment.end)
 
@@ -215,7 +222,7 @@ class NFA(defaultdict[State, list[Transition]], RegexNodesVisitor[Fragment]):
             )
         )
 
-    def zero_or_more(self, fragment: Fragment, lazy: bool) -> Fragment:
+    def zero_or_more(self, fragment: Fragment[State], lazy: bool) -> Fragment[State]:
         empty_fragment = self.base(EMPTY_STRING)
 
         self.epsilon(fragment.end, empty_fragment.end)
@@ -227,7 +234,7 @@ class NFA(defaultdict[State, list[Transition]], RegexNodesVisitor[Fragment]):
             self.reverse_transitions(fragment.end)
         return empty_fragment
 
-    def one_or_more(self, fragment: Fragment, lazy: bool) -> Fragment:
+    def one_or_more(self, fragment: Fragment[State], lazy: bool) -> Fragment[State]:
         s = gen_state()
 
         self.epsilon(fragment.end, fragment.start)
@@ -237,14 +244,16 @@ class NFA(defaultdict[State, list[Transition]], RegexNodesVisitor[Fragment]):
             self.reverse_transitions(fragment.end)
         return Fragment(fragment.start, s)
 
-    def zero_or_one(self, fragment: Fragment, lazy: bool) -> Fragment:
+    def zero_or_one(self, fragment: Fragment[State], lazy: bool) -> Fragment[State]:
         self.add_transition(fragment.start, fragment.end, EMPTY_STRING)
         if lazy:
             self.reverse_transitions(fragment.start)
         return fragment
 
-    def alternation(self, lower: Fragment, upper: Fragment) -> Fragment:
-        fragment = Fragment()
+    def alternation(
+        self, lower: Fragment[State], upper: Fragment[State]
+    ) -> Fragment[State]:
+        fragment = gen_state_fragment()
 
         self.epsilon(fragment.start, lower.start)
         self.epsilon(fragment.start, upper.start)
@@ -253,14 +262,14 @@ class NFA(defaultdict[State, list[Transition]], RegexNodesVisitor[Fragment]):
 
         return fragment
 
-    def concatenate(self, fragment1: Fragment, fragment2: Fragment):
+    def concatenate(self, fragment1: Fragment[State], fragment2: Fragment[State]):
         self.epsilon(fragment1.end, fragment2.start)
 
     def base(
-        self, matchable: Matchable, fragment: Optional[Fragment] = None
+        self, matchable: Matchable, fragment: Optional[Fragment[State]] = None
     ) -> Fragment:
         if fragment is None:
-            fragment = Fragment()
+            fragment = gen_state_fragment()
         self.add_transition(fragment.start, fragment.end, matchable)
         return fragment
 
@@ -307,11 +316,11 @@ class NFA(defaultdict[State, list[Transition]], RegexNodesVisitor[Fragment]):
         dot.edge("start", f"{self.start_state}", arrowhead="vee")
         dot.render(view=True, directory="graphs", filename=str(id(self)))
 
-    def _concat_fragments(self, fragments: Iterable[Fragment]):
+    def _concat_fragments(self, fragments: Iterable[Fragment[[State]]]):
         for fragment1, fragment2 in pairwise(fragments):
             self.epsilon(fragment1.end, fragment2.start)
 
-    def _apply_range_quantifier(self, node: Group | Match) -> Fragment:
+    def _apply_range_quantifier(self, node: Group | Match) -> Fragment[State]:
         """
         Generate a fragment for a group or match node with a range quantifier
         """
@@ -356,7 +365,7 @@ class NFA(defaultdict[State, list[Transition]], RegexNodesVisitor[Fragment]):
         self._concat_fragments(fragments)
         return Fragment(fragments[0].start, fragments[-1].end)
 
-    def _gen_frag_for_quantifiable(self, node: Group | Match) -> Fragment:
+    def _gen_frag_for_quantifiable(self, node: Group | Match) -> Fragment[State]:
         """
         Helper method to generate fragments for nodes and matches
         """
@@ -383,15 +392,17 @@ class NFA(defaultdict[State, list[Transition]], RegexNodesVisitor[Fragment]):
         else:
             return self._apply_range_quantifier(node)
 
-    def _add_capturing_markers(self, fragment: Fragment, group: Group) -> Fragment:
+    def _add_capturing_markers(
+        self, fragment: Fragment[State], group: Group
+    ) -> Fragment[State]:
         if group.is_capturing():
-            markers_fragment = Fragment()
+            markers_fragment = gen_state_fragment()
             self.base(
-                Anchor.group_entry(group.group_index),
+                Anchor.group_entry(group.index),
                 Fragment(markers_fragment.start, fragment.start),
             )
             self.base(
-                Anchor.group_exit(group.group_index),
+                Anchor.group_exit(group.index),
                 Fragment(fragment.end, markers_fragment.end),
             )
             self.add_transition(markers_fragment.end, fragment.start, GROUP_LINK)
@@ -406,12 +417,12 @@ class NFA(defaultdict[State, list[Transition]], RegexNodesVisitor[Fragment]):
             return fragment
         return self.alternation(fragment, expression.alternate.accept(self))
 
-    def visit_group(self, group: Group):
+    def visit_group(self, group: Group) -> Fragment[State]:
         if group.quantifier:
             return self._apply_quantifier(group)
         return self._add_capturing_markers(group.expression.accept(self), group)
 
-    def visit_match(self, match: Match) -> Fragment:
+    def visit_match(self, match: Match) -> Fragment[State]:
         if match.quantifier:
             return self._apply_quantifier(match)
         return match.item.accept(self)
@@ -419,13 +430,13 @@ class NFA(defaultdict[State, list[Transition]], RegexNodesVisitor[Fragment]):
     def visit_anchor(self, anchor: Anchor):
         return self.base(anchor)
 
-    def visit_any_character(self, any_character: AnyCharacter) -> Fragment:
+    def visit_any_character(self, any_character: AnyCharacter) -> Fragment[State]:
         return self.base(any_character)
 
-    def visit_character(self, character: Character) -> Fragment:
+    def visit_character(self, character: Character) -> Fragment[State]:
         return self.base(character)
 
-    def visit_character_group(self, character_group: CharacterGroup) -> Fragment:
+    def visit_character_group(self, character_group: CharacterGroup) -> Fragment[State]:
         return self.base(character_group)
 
 
