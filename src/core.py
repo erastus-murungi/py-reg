@@ -16,9 +16,6 @@ from .parser import (
     EPSILON,
     GROUP_LINK,
     Anchor,
-    AnyCharacter,
-    Character,
-    CharacterGroup,
     Expression,
     Group,
     Match,
@@ -431,17 +428,11 @@ class NFA(defaultdict[State, list[Transition]], RegexNodesVisitor[Fragment[State
             return self._apply_quantifier(match)
         return match.item.accept(self)
 
-    def visit_anchor(self, anchor: Anchor):
-        return self.base(anchor)
-
-    def visit_any_character(self, any_character: AnyCharacter) -> Fragment[State]:
-        return self.base(any_character)
-
-    def visit_character(self, character: Character) -> Fragment[State]:
-        return self.base(character)
-
-    def visit_character_group(self, character_group: CharacterGroup) -> Fragment[State]:
-        return self.base(character_group)
+    visit_character = (
+        visit_character_group
+    ) = visit_any_character = visit_anchor = lambda self, matchable: self.base(
+        matchable
+    )
 
 
 class DFA(NFA):

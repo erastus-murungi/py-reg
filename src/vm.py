@@ -460,14 +460,11 @@ class PikeVM(RegexPattern, RegexNodesVisitor[Fragment[Instruction]]):
             return self._apply_quantifier(match)
         return match.item.accept(self)
 
-    def consume_char(_, matchable) -> Fragment[Instruction]:
-        if matchable is EMPTY_STRING:
-            return Fragment.duplicate(EmptyString())
-        return Fragment.duplicate(Consume(matchable))
-
     visit_character = (
         visit_character_group
-    ) = visit_any_character = visit_anchor = consume_char
+    ) = visit_any_character = visit_anchor = lambda _, matchable: Fragment.duplicate(
+        EmptyString() if matchable is EMPTY_STRING else Consume(matchable)
+    )
 
 
 if __name__ == "__main__":
@@ -492,4 +489,3 @@ if __name__ == "__main__":
     print(f"{time.monotonic() - a} seconds")
 
     pprint(p.linearize())
-    # pattern.graph()
