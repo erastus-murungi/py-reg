@@ -290,6 +290,7 @@ class NFA(defaultdict[State, list[Transition]], RegexNodesVisitor[Fragment[State
                         shape="doublecircle"
                         if end in self.accepting_states
                         else "circle",
+                        style="filled",
                     )
                     seen.add(end)
                 if symbol is GROUP_LINK:
