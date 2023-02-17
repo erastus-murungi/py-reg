@@ -1,6 +1,6 @@
 import re
 from abc import ABC, ABCMeta, abstractmethod
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from sys import maxsize
 from typing import Final, Generic, Hashable, Optional, TypeVar, cast
@@ -145,7 +145,7 @@ class Matcher(Hashable):
 
         Examples
         --------
-        >>> character_matcher = Character(0, 'a')
+        >>> character_matcher = Character('a')
         >>> cs = (0, [])
         >>> ctx = Context('abaaaa', RegexFlag.NOFLAG)
         >>> character_matcher(cs, ctx)
@@ -179,8 +179,6 @@ class Matcher(Hashable):
 
 @dataclass
 class RegexNode(ABC):
-    pos: int = field(repr=False)
-
     def accept(self, visitor: "RegexNodesVisitor"):
         method_name = f"visit_{pattern.sub('_', self.__class__.__name__).lower()}"
         visit_method = getattr(visitor, method_name)
@@ -322,11 +320,11 @@ class Anchor(MatchingNode):
 
     @staticmethod
     def group_entry(group_index: int):
-        return Anchor(maxsize, AnchorType.GroupEntry, group_index * 2)
+        return Anchor(AnchorType.GroupEntry, group_index * 2)
 
     @staticmethod
     def group_exit(group_index: int):
-        return Anchor(maxsize, AnchorType.GroupExit, group_index * 2 + 1)
+        return Anchor(AnchorType.GroupExit, group_index * 2 + 1)
 
     def __call__(self, cursor: Cursor, context: Context) -> bool:
         (text, flags), (position, _) = context, cursor
@@ -392,9 +390,9 @@ class Anchor(MatchingNode):
         return self.anchor_type.name
 
 
-EPSILON: Final[Anchor] = Anchor(maxsize, AnchorType.Epsilon)
-GROUP_LINK: Final[Anchor] = Anchor(maxsize, AnchorType.GroupLink)
-EMPTY_STRING: Final[Anchor] = Anchor(maxsize, AnchorType.EmptyString)
+EPSILON: Final[Anchor] = Anchor(AnchorType.Epsilon)
+GROUP_LINK: Final[Anchor] = Anchor(AnchorType.GroupLink)
+EMPTY_STRING: Final[Anchor] = Anchor(AnchorType.EmptyString)
 
 
 @dataclass
@@ -628,7 +626,7 @@ class RegexParser:
         self.parse_inline_modifiers()
 
         if self.matches("^"):
-            anchor = Anchor(self._pos, char2anchor_type[self.consume_and_return()])
+            anchor = Anchor(char2anchor_type[self.consume_and_return()])
             if self.remainder():
                 expr = self.parse_expression()
                 expr.seq.insert(0, anchor)
@@ -667,7 +665,6 @@ class RegexParser:
 
     def parse_expression(self) -> Expression:
         # Expression ::= Subexpression ("|" Expression)?
-        pos = self._pos
         sub_exprs = self.parse_sub_expression()
         expr = None
         if self.matches("|"):
@@ -677,7 +674,7 @@ class RegexParser:
                 if self.can_parse_sub_expression_item()
                 else EMPTY_STRING
             )
-        return Expression(pos, sub_exprs, expr)
+        return Expression(sub_exprs, expr)
 
     def parse_sub_expression(self):
         # Subexpression ::= SubexpressionItem+
@@ -695,7 +692,6 @@ class RegexParser:
             return self.parse_match()
 
     def parse_group(self) -> Group | Expression:
-        start = self._pos
         self.consume("(")
         group_index = self._group_count
         self._group_count += 1
@@ -711,7 +707,7 @@ class RegexParser:
         quantifier = None
         if self.can_parse_quantifier():
             quantifier = self.parse_quantifier()
-        return Group(start, expression, group_index, quantifier)
+        return Group(expression, group_index, quantifier)
 
     def can_parse_quantifier(self):
         return self.matches_any(("*", "+", "?", "{"))
@@ -746,12 +742,11 @@ class RegexParser:
 
     def parse_match(self) -> Match | Expression:
         # Match ::= MatchItem Quantifier?
-        pos = self._pos
         match_item = self.parse_match_item()
         quantifier = None
         if self.can_parse_quantifier():
             quantifier = self.parse_quantifier()
-        return Match(pos, match_item, quantifier)
+        return Match(match_item, quantifier)
 
     def can_parse_character_group(self):
         return self.matches("[")
@@ -761,25 +756,23 @@ class RegexParser:
         if self.matches_any(("w", "W")):
             c = self.consume_and_return()
             return CharacterGroup(
-                self._pos,
                 (
                     CharacterRange("0", "9"),
                     CharacterRange("A", "Z"),
-                    Character(self._pos, "_"),
+                    Character("_"),
                     CharacterRange("a", "z"),
                 ),
                 c == "W",
             )
         elif self.matches_any(("d", "D")):
             c = self.consume_and_return()
-            return CharacterGroup(self._pos, (CharacterRange("0", "9"),), c == "D")
+            return CharacterGroup((CharacterRange("0", "9"),), c == "D")
         elif self.matches_any(("s", "S")):
             c = self.consume_and_return()
             return CharacterGroup(
-                self._pos,
                 tuple(
                     map(
-                        lambda char: Character(self._pos, char),
+                        lambda char: Character(char),
                         [" ", "\t", "\n", "\r", "\v", "\f"],
                     )
                 ),
@@ -809,7 +802,7 @@ class RegexParser:
             if self.matches_any(UNESCAPED_IN_CHAR_GROUP):
                 if self.matches("\\"):
                     self.consume("\\")
-                return Character(self._pos, self.consume_and_return())
+                return Character(self.consume_and_return())
             char = self.parse_char()
             if self.matches("-"):
                 return self.parse_character_range(char.char)
@@ -840,7 +833,7 @@ class RegexParser:
         except ValueError:
             self._pos, self._flags = state
             while self.can_parse_char() or self.matches_any(UNESCAPED_IN_CHAR_GROUP):
-                items.append(Character(self._pos, self.consume_and_return()))
+                items.append(Character(self.consume_and_return()))
             self.consume("]")
 
         if not items:
@@ -850,7 +843,7 @@ class RegexParser:
                 f"left   = {' ' * self._pos + self._regex[self._pos:]}"
             )
 
-        return CharacterGroup(state[0], tuple(items), negated)
+        return CharacterGroup(tuple(items), negated)
 
     def parse_char(self):
         if self.can_parse_escaped():
@@ -861,7 +854,7 @@ class RegexParser:
                 f"regexp = {self._regex}\n"
                 f"left   = {' ' * self._pos + self.remainder()}"
             )
-        return Character(self._pos - 1, self.consume_and_return())
+        return Character(self.consume_and_return())
 
     def can_parse_escaped(self):
         return self.matches("\\") and self.matches_any(ESCAPED, 1)
@@ -873,7 +866,7 @@ class RegexParser:
 
     def parse_escaped(self):
         self.consume("\\")
-        return Character(self._pos - 1, self.consume_and_return())
+        return Character(self.consume_and_return())
 
     def can_parse_character_class_or_group(self):
         return self.can_parse_character_class() or self.can_parse_character_group()
@@ -887,18 +880,17 @@ class RegexParser:
     def parse_match_item(self):
         if self.matches("."):  # parse AnyCharacter
             self.consume(".")
-            return AnyCharacter(self._pos)
+            return AnyCharacter()
         elif self.can_parse_character_class_or_group():
             return self.parse_character_class_or_group()
         else:
             return self.parse_char()
 
     def parse_anchor(self):
-        pos = self._pos
         if self.matches("\\"):
             self.consume("\\")
             assert self.current() in {"A", "z", "Z", "G", "b", "B"}
-        return Anchor(pos, char2anchor_type[self.consume_and_return()])
+        return Anchor(char2anchor_type[self.consume_and_return()])
 
     def __repr__(self):
         return f"Parser({self._regex})"
