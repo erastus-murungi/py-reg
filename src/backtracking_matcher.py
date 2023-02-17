@@ -148,7 +148,7 @@ class RegexNFA(NFA, RegexPattern):
 
 
 if __name__ == "__main__":
-    regex, t = "ab", "abab"
+    regex, t = "(ab)+", "abab"
 
     p = RegexNFA(regex)
     import re

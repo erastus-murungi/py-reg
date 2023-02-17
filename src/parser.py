@@ -61,18 +61,9 @@ class Matcher(Hashable):
         ...
 
     def update_groups_no_check(self, cursor: Cursor):
-        anchor = cast(Anchor, self)
-        group_index = anchor.group_index
-        # must create copy of the list
+        # must create a shallow copy
         groups_copy = cursor.groups[:]
-        # copy actual group object
-        captured_group_copy = groups_copy[group_index].copy()
-        if anchor.anchor_type == AnchorType.GroupEntry:
-            captured_group_copy.start = cursor.position
-        else:
-            captured_group_copy.end = cursor.position
-
-        groups_copy[group_index] = captured_group_copy
+        groups_copy[cast(Anchor, self).offset] = cursor.position
         return Cursor(
             cursor.text, self.increment(cursor.position), cursor.flags, groups_copy
         )
@@ -235,15 +226,16 @@ class MatchingNode(RegexNode, Matcher, ABC):
 @dataclass(slots=True)
 class Anchor(MatchingNode):
     anchor_type: AnchorType
-    group_index: Optional[int] = None
+    # this field is reserved for anchors which capture groups
+    offset: Optional[int] = None
 
     @staticmethod
-    def group_entry(group_index: int):
-        return Anchor(maxsize, AnchorType.GroupEntry, group_index)
+    def group_entry(offset: int):
+        return Anchor(maxsize, AnchorType.GroupEntry, offset)
 
     @staticmethod
-    def group_exit(group_index: int):
-        return Anchor(maxsize, AnchorType.GroupExit, group_index)
+    def group_exit(offset: int):
+        return Anchor(maxsize, AnchorType.GroupExit, offset)
 
     def __call__(self, cursor: Cursor) -> bool:
         text, position, flags = cursor.text, cursor.position, cursor.flags
@@ -305,7 +297,7 @@ class Anchor(MatchingNode):
             self.anchor_type == AnchorType.GroupEntry
             or self.anchor_type == AnchorType.GroupExit
         ):
-            return f"{self.anchor_type.name}({self.group_index})"
+            return f"{self.anchor_type.name}({self.offset >> 1})"
         return self.anchor_type.name
 
 

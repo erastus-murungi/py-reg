@@ -8,26 +8,21 @@ from more_itertools import first_true, take
 from src.utils import RegexFlag
 
 
-@dataclass(slots=True)
-class CapturingGroup:
-    start: Optional[int] = None
-    end: Optional[int] = None
-
-    def copy(self):
-        return CapturingGroup(self.start, self.end)
-
-    def string(self, text: str):
-        if self.start is not None and self.end is not None:
-            return text[self.start : self.end]
-        return None
-
-
 @dataclass(frozen=True, slots=True)
 class RegexMatch:
     start: int
     end: int
     text: str
-    captured_groups: list[CapturingGroup]
+    captured_groups: list[int]
+
+    def group_to_string(self, group_index: int) -> Optional[str]:
+        frm, to = (
+            self.captured_groups[group_index * 2],
+            self.captured_groups[group_index * 2 + 1],
+        )
+        if frm is not maxsize and frm is not maxsize:
+            return self.text[frm:to]
+        return None
 
     @property
     def span(self):
@@ -41,16 +36,14 @@ class RegexMatch:
         )
 
     def groups(self) -> tuple[str, ...]:
-        return tuple(
-            captured_group.string(self.text) for captured_group in self.captured_groups
-        )
+        return tuple(map(self.group_to_string, range(len(self.captured_groups) >> 1)))
 
     def group(self, index: int = 0) -> Optional[str]:
         if index < 0 or index > len(self.captured_groups):
             raise IndexError(f"index should be 0 <= {len(self.captured_groups)}")
         if index == 0:
             return self.text[self.start : self.end]
-        return self.captured_groups[index - 1].string(self.text)
+        return self.group_to_string(index - 1)
 
 
 @dataclass(slots=True, frozen=True)
@@ -67,7 +60,7 @@ class Cursor:
     text: str
     position: int
     flags: RegexFlag
-    groups: list[CapturingGroup]
+    groups: list[int]
 
 
 class RegexPattern(ABC):
@@ -101,7 +94,7 @@ class RegexPattern(ABC):
                 text,
                 start,
                 self.parser.flags,
-                [CapturingGroup() for _ in range(self.parser.group_count)],
+                [maxsize for _ in range(self.parser.group_count * 2)],
             )
             if (result := self.match_suffix(cursor)) is not None:
                 position, captured_groups = result.position, result.groups

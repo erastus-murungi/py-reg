@@ -384,8 +384,8 @@ class RegexPikeVM(RegexPattern, RegexNodesVisitor[Fragment[Instruction]]):
             # All we are doing here is just wrapping our fragment between two capturing instructions
 
             start_capturing, end_capturing = Capture(
-                Anchor.group_entry(group.index)
-            ), Capture(Anchor.group_exit(group.index))
+                Anchor.group_entry(group.index * 2)
+            ), Capture(Anchor.group_exit(group.index * 2 + 1))
 
             start_capturing.next = codes.start
             codes.end.next = end_capturing
@@ -412,7 +412,7 @@ if __name__ == "__main__":
     #     r"(a*)*b",
     #     "a" * 22,
     # )
-    regex, t = ("a", "a")
+    regex, t = ("(a)", "a")
     a = time.monotonic()
     pprint(list(re.finditer(regex, t)))
     pprint([m.groups() for m in re.finditer(regex, t)])

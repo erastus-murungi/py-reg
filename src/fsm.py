@@ -382,11 +382,11 @@ class NFA(defaultdict[State, list[Transition]], RegexNodesVisitor[Fragment[State
         if group.is_capturing():
             markers_fragment = gen_state_fragment()
             self.base(
-                Anchor.group_entry(group.index),
+                Anchor.group_entry(group.index * 2),
                 Fragment(markers_fragment.start, fragment.start),
             )
             self.base(
-                Anchor.group_exit(group.index),
+                Anchor.group_exit(group.index * 2 + 1),
                 Fragment(fragment.end, markers_fragment.end),
             )
             self.add_transition(markers_fragment.end, fragment.start, GROUP_LINK)
