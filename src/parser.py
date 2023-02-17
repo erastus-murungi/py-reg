@@ -3,12 +3,14 @@ from abc import ABC, ABCMeta, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
 from sys import maxsize
-from typing import Final, Generic, Hashable, Optional, TypeVar
+from typing import Final, Generic, Hashable, Optional, TypeVar, cast
 
-from core import RegexFlag
+from src.matching import Cursor
+
+# from src.matching import Cursor
+from src.utils import RegexFlag
 
 T = TypeVar("T")
-
 
 INLINE_MODIFIER_START = "(?"
 pattern = re.compile(r"(?<!^)(?=[A-Z])")
@@ -55,8 +57,38 @@ def is_word_boundary(text: str, position: int) -> bool:
 
 class Matcher(Hashable):
     @abstractmethod
-    def __call__(self, text: str, position: int, flags: RegexFlag) -> bool:
+    def __call__(self, cursor: Cursor) -> bool:
         ...
+
+    def update_groups_no_check(self, cursor: Cursor):
+        anchor = cast(Anchor, self)
+        group_index = anchor.group_index
+        # must create copy of the list
+        groups_copy = cursor.groups[:]
+        # copy actual group object
+        captured_group_copy = groups_copy[group_index].copy()
+        if anchor.anchor_type == AnchorType.GroupEntry:
+            captured_group_copy.start = cursor.position
+        else:
+            captured_group_copy.end = cursor.position
+
+        groups_copy[group_index] = captured_group_copy
+        return Cursor(
+            cursor.text, self.increment(cursor.position), cursor.flags, groups_copy
+        )
+
+    def update(self, cursor: Cursor) -> Cursor:
+        if isinstance(self, Anchor) and self.anchor_type in (
+            AnchorType.GroupEntry,
+            AnchorType.GroupExit,
+        ):
+            return self.update_groups_no_check(cursor)
+        return self.update_index(cursor)
+
+    def update_index(self, cursor: Cursor) -> Cursor:
+        return Cursor(
+            cursor.text, self.increment(cursor.position), cursor.flags, cursor.groups
+        )
 
     def increment(self, index: int) -> int:
         """We keep the index the same only when we are an Anchor"""
@@ -141,9 +173,10 @@ class CharacterRange(Matcher):
     start: str
     end: str
 
-    def __call__(self, text, position, flags) -> bool:
+    def __call__(self, cursor: Cursor) -> bool:
+        position, text = cursor.position, cursor.text
         if position < len(text):
-            if flags & RegexFlag.IGNORECASE:
+            if cursor.flags & RegexFlag.IGNORECASE:
                 return (
                     self.start.casefold()
                     <= text[position].casefold()
@@ -212,7 +245,8 @@ class Anchor(MatchingNode):
     def group_exit(group_index: int):
         return Anchor(maxsize, AnchorType.GroupExit, group_index)
 
-    def __call__(self, text: str, position: int, flags: RegexFlag) -> bool:
+    def __call__(self, cursor: Cursor) -> bool:
+        text, position, flags = cursor.text, cursor.position, cursor.flags
         match self.anchor_type:
             case AnchorType.StartOfString:
                 # match the start of the string
@@ -282,7 +316,8 @@ EMPTY_STRING: Final[Anchor] = Anchor(maxsize, AnchorType.EmptyString)
 
 @dataclass
 class AnyCharacter(MatchingNode):
-    def __call__(self, text, position, flags) -> bool:
+    def __call__(self, cursor) -> bool:
+        text, position, flags = cursor.text, cursor.position, cursor.flags
         return position < len(text) and (
             bool(flags & RegexFlag.DOTALL) or text[position] != "\n"
         )
@@ -301,7 +336,8 @@ class AnyCharacter(MatchingNode):
 class Character(MatchingNode):
     char: str
 
-    def __call__(self, text, position, flags) -> bool:
+    def __call__(self, cursor) -> bool:
+        text, position, flags = cursor.text, cursor.position, cursor.flags
         if position < len(text):
             if flags & RegexFlag.IGNORECASE:
                 return self.char.casefold() == text[position].casefold()
@@ -328,27 +364,30 @@ class Character(MatchingNode):
 
 @dataclass
 class CharacterGroup(MatchingNode):
-    items: tuple[Character | CharacterRange, ...]
+    matching_nodes: tuple[Character | CharacterRange, ...]
     negated: bool = False
 
-    def __call__(self, text, position, flags) -> bool:
+    def __call__(self, cursor) -> bool:
+        text, position, flags = cursor.text, cursor.position, cursor.flags
         if position >= len(text):
             return False
-        return self.negated ^ any(item(text, position, flags) for item in self.items)
+        return self.negated ^ any(
+            matching_node(cursor) for matching_node in self.matching_nodes
+        )
 
     def __eq__(self, other):
         if isinstance(other, CharacterGroup):
-            return self.items == other.items
+            return self.matching_nodes == other.matching_nodes
         return False
 
     def __repr__(self):
-        return f"[{('^' if self.negated else '')}{''.join(map(repr, self.items))}]"
+        return f"[{('^' if self.negated else '')}{''.join(map(repr, self.matching_nodes))}]"
 
     def __lt__(self, other):
         return id(self) < id(other)
 
     def __hash__(self):
-        return hash((self.items, self.negated))
+        return hash((self.matching_nodes, self.negated))
 
     def string(self):
         return self.__repr__()

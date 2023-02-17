@@ -7,9 +7,10 @@ from pprint import pprint
 from sys import maxsize
 from typing import Final, Hashable, Optional
 
-from .core import CapturedGroup, CapturedGroups, Fragment, MatchResult, RegexPattern
-from .parser import (
+from src.matching import Cursor, MatchResult, RegexPattern
+from src.parser import (
     EMPTY_STRING,
+    Anchor,
     Expression,
     Group,
     Match,
@@ -18,6 +19,7 @@ from .parser import (
     RegexNodesVisitor,
     RegexParser,
 )
+from src.utils import Fragment
 
 
 class Instruction(Hashable):
@@ -95,18 +97,17 @@ class Consume(Instruction):
 
 @dataclass(slots=True, eq=False)
 class Capture(Instruction):
-    index: int
-    opening: bool
+    capturing_anchor: Anchor
     next: Optional["Instruction"] = field(repr=False, default=None)
 
 
-Thread = tuple[Instruction, list[CapturedGroup]]
+Thread = tuple[Instruction, Cursor]
 
 
 class RegexPikeVM(RegexPattern, RegexNodesVisitor[Fragment[Instruction]]):
     def __init__(self, pattern: str, flags: RegexFlag = RegexFlag.NOFLAG):
-        self._parser = RegexParser(pattern, flags)
-        self.start, last = self._parser.root.accept(self)
+        super().__init__(RegexParser(pattern, flags))
+        self.start, last = self.parser.root.accept(self)
         last.next = End()
 
     def linearize(self) -> list[Instruction]:
@@ -118,49 +119,8 @@ class RegexPikeVM(RegexPattern, RegexNodesVisitor[Fragment[Instruction]]):
         return instructions
 
     @staticmethod
-    def update_capturing_groups(
-        group_index: int,
-        captured_groups: CapturedGroups,
-        text_index: int,
-        *,
-        opening: bool,
-    ) -> CapturedGroups:
-        """
-        Update the capturing group at index `group_index` so that it records `text_index`
-
-        Always makes a shallow copy of captured groups
-
-        Parameters
-        ----------
-        group_index: int
-            The group index of the capturing group to be updated
-        captured_groups: CapturedGroups
-            The collection of CapturedGroup items.
-        text_index: int
-            The index of the text where some group is captured
-        opening: bool
-            True if the captured part is the opening part of a group `(` or the closing part of a group `)`
-
-        Returns
-        -------
-        A shallow copy of the passed in captured groups list with the item captured_groups[group_index] updated.
-
-        """
-
-        # make a shallow copy of the list of captured groups
-        captured_groups_copy = captured_groups.copy()
-        # make a deep copy of the actual captured group we are modifying
-        group_copy: CapturedGroup = captured_groups_copy[group_index].copy()
-        if opening:
-            group_copy.start = text_index
-        else:
-            group_copy.end = text_index
-        captured_groups_copy[group_index] = group_copy
-        return captured_groups_copy
-
-    @staticmethod
     def queue_thread(
-        queue: deque[Thread], thread: Thread, text_index: int, visited: set[Instruction]
+        queue: deque[Thread], thread: Thread, visited: set[Instruction]
     ) -> None:
         """
         Queue a thread
@@ -171,8 +131,6 @@ class RegexPikeVM(RegexPattern, RegexNodesVisitor[Fragment[Instruction]]):
             A queue to add the thread to
         thread: Thread
             The thread to enqueue
-        text_index: int
-            The index we are at in the text. This is need to update capturing groups correctly
         visited: set[Instruction]
             A set of instructions which has already been visited in this lockstep
             We maintain a separate visited set during each lockstep to prevent duplicates in the `queue`
@@ -197,7 +155,7 @@ class RegexPikeVM(RegexPattern, RegexNodesVisitor[Fragment[Instruction]]):
         stack: list[Thread] = [thread]
 
         while stack:
-            instruction, groups = stack.pop()
+            instruction, cursor = stack.pop()
 
             if instruction in visited:
                 continue
@@ -206,62 +164,51 @@ class RegexPikeVM(RegexPattern, RegexNodesVisitor[Fragment[Instruction]]):
 
             match instruction:
                 case Jump(target):
-                    stack.append((target, groups))
+                    stack.append((target, cursor))
 
                 case Fork(preferred, alternative):
-                    stack.extend(((alternative, groups), (preferred, groups)))
+                    stack.extend(((alternative, cursor), (preferred, cursor)))
 
-                case Capture(group_index, opening, next_instruction):
-                    stack.append(
-                        (
-                            next_instruction,
-                            RegexPikeVM.update_capturing_groups(
-                                group_index,
-                                groups,  # make sure to pass a copy
-                                text_index,
-                                opening=opening,
-                            ),
-                        )
-                    )
+                case Capture(capturing_anchor, next_instruction):
+                    stack.append((next_instruction, capturing_anchor.update(cursor)))
+
                 case EmptyString(next_instruction):
-                    stack.append((next_instruction, groups))
+                    stack.append((next_instruction, cursor))
 
                 case _:
-                    queue.append((instruction, groups))
+                    queue.append((instruction, cursor))
 
-    def match_suffix(self, text: str, start_index: int) -> MatchResult:
-        captured_groups = [CapturedGroup() for _ in range(self._parser.group_count)]
-
+    def match_suffix(self, cursor: Cursor) -> MatchResult:
         queue, visited = deque(), set()  # type: (deque[Thread], set[Instruction])
-        self.queue_thread(queue, (self.start, captured_groups), start_index, visited)
+        self.queue_thread(queue, (self.start, cursor), visited)
 
         match_result = None
 
-        for index in range(start_index, len(text) + 1):
+        while True:
             frontier, next_visited = (
                 deque(),
                 set(),
             )  # type: (deque[Thread], set[Instruction])
 
             while queue:
-                instruction, groups = queue.popleft()
+                instruction, cursor = queue.popleft()
                 match instruction:
                     case Consume(matcher, next_instruction):
-                        if matcher(text, index, self._parser.flags):
-                            if (next_index := matcher.increment(index)) == index:
+                        if matcher(cursor):
+                            next_cursor = matcher.update_index(cursor)
+                            if next_cursor.position == cursor.position:
                                 # process all anchors immediately
                                 self.queue_thread(
-                                    queue, (next_instruction, groups), index, visited
+                                    queue, (next_instruction, next_cursor), visited
                                 )
                             else:
                                 self.queue_thread(
                                     frontier,
-                                    (next_instruction, groups),
-                                    next_index,
+                                    (next_instruction, next_cursor),
                                     next_visited,
                                 )
                     case End():
-                        match_result = (index, groups)
+                        match_result = (cursor.position, cursor.groups)
                         # stop exploring threads in this queue, maybe explore higher-priority threads in `frontier`
                         break
             if not frontier:
@@ -440,8 +387,8 @@ class RegexPikeVM(RegexPattern, RegexNodesVisitor[Fragment[Instruction]]):
             # All we are doing here is just wrapping our fragment between two capturing instructions
 
             start_capturing, end_capturing = Capture(
-                group.index, opening=True
-            ), Capture(group.index, opening=False)
+                Anchor.group_entry(group.index)
+            ), Capture(Anchor.group_exit(group.index))
 
             start_capturing.next = codes.start
             codes.end.next = end_capturing
@@ -468,7 +415,7 @@ if __name__ == "__main__":
     #     r"(a*)*b",
     #     "a" * 22,
     # )
-    regex, t = ("($)|()", "xxx")
+    regex, t = ("a", "a")
     a = time.monotonic()
     pprint(list(re.finditer(regex, t)))
     pprint([m.groups() for m in re.finditer(regex, t)])

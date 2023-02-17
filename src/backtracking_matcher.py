@@ -1,43 +1,40 @@
 from typing import Optional
 
-from src.core import CapturedGroup, CapturedGroups, MatchResult, RegexPattern
 from src.fsm import DFA, NFA, State, Transition
-from src.parser import EPSILON, Anchor, AnchorType, Matcher, RegexFlag, RegexParser
+from src.matching import Cursor, MatchResult, RegexPattern
+from src.parser import EPSILON, RegexFlag, RegexParser
 
 
 class RegexNFA(NFA, RegexPattern):
     def __init__(self, pattern: str, flags: RegexFlag = RegexFlag.NOFLAG):
-        super().__init__()
-        self._parser = RegexParser(pattern, flags)
-        self.set_terminals(self._parser.root.accept(self))
+        NFA.__init__(self)
+        RegexPattern.__init__(self, RegexParser(pattern, flags))
+        self.set_terminals(self.parser.root.accept(self))
         self.update_symbols_and_states()
 
     def recover(self) -> str:
-        return self._parser.root.string()
+        return self.parser.root.string()
 
-    def _match_suffix_dfa(self, state: State, text: str, index: int) -> Optional[int]:
+    def _match_suffix_dfa(self, state: State, cursor: Cursor) -> Optional[int]:
         """
         This a fast matcher when you don't have groups or greedy quantifiers
         """
-        assert self._parser.group_count == 0
+        assert self.parser.group_count == 0
 
         if state is not None:
             matching_indices = []
 
             if state in self.accepting_states:
-                matching_indices.append(index)
+                matching_indices.append(cursor.position)
 
             transitions = [
-                transition
-                for transition in self[state]
-                if transition.matcher(text, index, self._parser.flags)
+                transition for transition in self[state] if transition.matcher(cursor)
             ]
 
-            for matchable, end_state in transitions:
+            for matcher, end_state in transitions:
                 result = self._match_suffix_dfa(
                     end_state,
-                    text,
-                    matchable.increment(index),
+                    matcher.update_index(cursor),
                 )
 
                 if result is not None:
@@ -48,7 +45,7 @@ class RegexNFA(NFA, RegexPattern):
 
         return None
 
-    def step(self, start_state: State, text: str, index: int) -> list[Transition]:
+    def step(self, start_state: State, cursor: Cursor) -> list[Transition]:
         """
         Performs a depth first search to collect valid transitions the transitions reachable through epsilon transitions
         """
@@ -69,7 +66,7 @@ class RegexNFA(NFA, RegexPattern):
                     if (
                         transition.matcher is EPSILON
                         and transition.end in self.accepting_states
-                    ) or (transition.matcher(text, index, self._parser.flags)):
+                    ) or (transition.matcher(cursor)):
                         transitions.append(transition)
 
             if state in explored:
@@ -84,58 +81,28 @@ class RegexNFA(NFA, RegexPattern):
             )
         return transitions
 
-    @staticmethod
-    def _update_captured_groups(
-        index: int, matchable: Matcher, captured_groups: CapturedGroups
-    ) -> CapturedGroups:
-        if isinstance(matchable, Anchor) and matchable.anchor_type in (
-            AnchorType.GroupEntry,
-            AnchorType.GroupExit,
-        ):
-            group_index = matchable.group_index
-            # must create copy of the list
-            groups_copy = captured_groups[:]
-            # copy actual group object
-            captured_group_copy = captured_groups[group_index].copy()
-            if matchable.anchor_type == AnchorType.GroupEntry:
-                captured_group_copy.start = index
-            else:
-                captured_group_copy.end = index
-
-            groups_copy[group_index] = captured_group_copy
-            return groups_copy
-        return captured_groups
-
     def _match_suffix_with_groups(
         self,
-        text: str,
-        index: int,
+        cursor: Cursor,
     ) -> Optional[MatchResult]:
-
-        captured_groups = [CapturedGroup() for _ in range(self._parser.group_count)]
-
         # we only need to keep track of 3 state variables
-        work_list = [(self.start_state, index, captured_groups, ())]
+        work_list = [(self.start_state, cursor, ())]
 
         while work_list:
-            current_state, index, captured_groups, path = work_list.pop()
+            current_state, cursor, path = work_list.pop()
 
             if current_state in self.accepting_states:
-                return index, captured_groups
+                return cursor.position, cursor.groups
 
-            for matchable, end_state in reversed(self.step(current_state, text, index)):
-                if (current_state, end_state, index) in path:
+            for matcher, end_state in reversed(self.step(current_state, cursor)):
+                if (current_state, end_state, cursor.position) in path:
                     continue
 
-                path_copy = path + ((current_state, end_state, index),)
-                updated_captured_groups = self._update_captured_groups(
-                    index, matchable, captured_groups
-                )
+                path_copy = path + ((current_state, end_state, cursor.position),)
                 work_list.append(
                     (
                         end_state,
-                        matchable.increment(index),
-                        updated_captured_groups,
+                        matcher.update(cursor),
                         path_copy,
                     )
                 )
@@ -144,43 +111,40 @@ class RegexNFA(NFA, RegexPattern):
 
     def _match_suffix_no_groups(
         self,
-        text: str,
-        index: int,
+        cursor: Cursor,
     ) -> Optional[int]:
         # we only need to keep track of 2 state variables
-        work_list = [(self.start_state, index, ())]
+        work_list = [(self.start_state, cursor, ())]
 
         while work_list:
-            current_state, index, path = work_list.pop()
+            current_state, cursor, path = work_list.pop()
 
             if current_state in self.accepting_states:
-                return index
+                return cursor.position
 
             work_list.extend(
                 (
                     end_state,
-                    matchable.increment(index),
-                    path + ((current_state, end_state, index),),
+                    matcher.update(cursor),
+                    path + ((current_state, end_state, cursor.position),),
                 )
-                for matchable, end_state in reversed(
-                    self.step(current_state, text, index)
-                )
-                if (current_state, end_state, index) not in path
+                for matcher, end_state in reversed(self.step(current_state, cursor))
+                if (current_state, end_state, cursor.position) not in path
             )
 
         return None
 
-    def match_suffix(self, text: str, index: int) -> Optional[MatchResult]:
+    def match_suffix(self, cursor: Cursor) -> Optional[MatchResult]:
         if isinstance(super(), DFA):
             if (
-                position := self._match_suffix_dfa(self.start_state, text, index)
+                position := self._match_suffix_dfa(self.start_state, cursor)
             ) is not None:
                 return position, []
             return None
-        if self._parser.group_count > 0:
-            return self._match_suffix_with_groups(text, index)
+        if self.parser.group_count > 0:
+            return self._match_suffix_with_groups(cursor)
         else:
-            if (position := self._match_suffix_no_groups(text, index)) is not None:
+            if (position := self._match_suffix_no_groups(cursor)) is not None:
                 return position, []
             return None
 
@@ -189,13 +153,13 @@ class RegexNFA(NFA, RegexPattern):
 
 
 if __name__ == "__main__":
-    regex, t = "(a*)*", "-"
+    regex, t = "(ab)+", "abab"
 
     p = RegexNFA(regex)
     import re
 
     print(list(re.finditer(regex, t)))
     print([m.groups() for m in re.finditer(regex, t)])
-    # pattern.graph()
+    # p.graph()
     print(list(p.finditer(t)))
     print([m.groups() for m in p.finditer(t)])

@@ -1,33 +1,11 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from enum import IntFlag, auto
 from sys import maxsize
-from typing import Callable, Generic, Optional, TypeVar
+from typing import Callable, Optional
 
 from more_itertools import first_true, take
 
-T = TypeVar("T", covariant=True)
-
-
-@dataclass(frozen=True, slots=True)
-class Fragment(Generic[T]):
-    start: T
-    end: T
-
-    def __iter__(self):
-        yield from [self.start, self.end]
-
-    @staticmethod
-    def duplicate(item: T) -> "Fragment[T]":
-        return Fragment(item, item)
-
-
-class RegexFlag(IntFlag):
-    NOFLAG = auto()
-    IGNORECASE = auto()
-    MULTILINE = auto()
-    DOTALL = auto()  # make dot match newline
-    FREESPACING = auto()
+from src.utils import RegexFlag
 
 
 @dataclass(slots=True)
@@ -79,18 +57,36 @@ class RegexMatch:
         return self.captured_groups[index - 1].string(self.text)
 
 
+@dataclass(slots=True, frozen=True)
+class Cursor:
+    """
+    Attributes
+    ----------
+    text: str
+            The string we are matching against this pattern
+    position: int
+            An index specifying the suffix of `text` (`text[index]`) against this pattern
+    """
+
+    text: str
+    position: int
+    flags: RegexFlag
+    groups: CapturedGroups
+
+
 class RegexPattern(ABC):
+    def __init__(self, parser):
+        self.parser = parser
+
     @abstractmethod
-    def match_suffix(self, text: str, index: int) -> Optional[MatchResult]:
+    def match_suffix(self, cursor: Cursor) -> Optional[MatchResult]:
         """
         Match this pattern on the substring text[index:]
 
         Parameters
         ----------
-        text: str
-            The string we are matching against this pattern
-        index: int
-            An index specifying the suffix of `text` (`text[index]`) against this pattern
+        cursor: Cursor
+            a cursor object for the suffix
 
         Notes
         -----
@@ -102,9 +98,16 @@ class RegexPattern(ABC):
         pass
 
     def finditer(self, text: str):
+        assert self.parser.flags is not None
         index = 0
         while index <= len(text):
-            if (result := self.match_suffix(text, index)) is not None:
+            cursor = Cursor(
+                text,
+                index,
+                self.parser.flags,
+                [CapturedGroup() for _ in range(self.parser.group_count)],
+            )
+            if (result := self.match_suffix(cursor)) is not None:
                 position, captured_groups = result
                 yield RegexMatch(
                     index,
