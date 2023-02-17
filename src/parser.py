@@ -175,6 +175,11 @@ class Matcher(Hashable):
         >>> character_matcher = Character('a')
         >>> character_matcher.update(cs)
         (1, [])
+        >>> from sys import maxsize
+        >>> cs = (1, [-1, -1])
+        >>> group_entry = Anchor.group_entry(0)
+        >>> group_entry.update(cs)
+        (1, [1, -1])
 
         Notes
         -----

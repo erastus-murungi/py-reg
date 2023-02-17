@@ -1,5 +1,4 @@
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
 from sys import maxsize
 from typing import Callable, Final, NamedTuple, Optional
 
@@ -8,8 +7,7 @@ from more_itertools import first_true, take
 from src.utils import RegexFlag
 
 
-@dataclass(frozen=True, slots=True)
-class RegexMatch:
+class RegexMatch(NamedTuple):
     start: int
     end: int
     text: str

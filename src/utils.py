@@ -1,18 +1,13 @@
 from collections import defaultdict
-from dataclasses import dataclass
 from enum import IntFlag, auto
-from typing import Generic, TypeVar
+from typing import NamedTuple, TypeVar
 
 T = TypeVar("T", covariant=True)
 
 
-@dataclass(frozen=True, slots=True)
-class Fragment(Generic[T]):
+class Fragment(NamedTuple):
     start: T
     end: T
-
-    def __iter__(self):
-        yield from [self.start, self.end]
 
     @staticmethod
     def duplicate(item: T) -> "Fragment[T]":
