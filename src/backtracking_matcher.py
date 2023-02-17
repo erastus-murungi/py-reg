@@ -87,10 +87,10 @@ class RegexNFA(NFA, RegexPattern):
         cursor: Cursor,
     ) -> Optional[Cursor]:
         # we only need to keep track of 3 state variables
-        stack = [(self.start_state, cursor, ())]
+        stack = [(self.start_state, cursor, set())]
 
         while stack:
-            state, cursor, path = stack.pop()
+            state, cursor, path = stack.pop()  # type: (int, Cursor, set)
 
             if state in self.accepting_states:
                 return cursor
@@ -99,12 +99,11 @@ class RegexNFA(NFA, RegexPattern):
                 if (state, end_state, cursor.position) in path:
                     continue
 
-                path_copy = path + ((state, end_state, cursor.position),)
                 stack.append(
                     (
                         end_state,
                         matcher.update(cursor),
-                        path_copy,
+                        path | {(state, end_state, cursor.position)},
                     )
                 )
 
@@ -115,7 +114,7 @@ class RegexNFA(NFA, RegexPattern):
         cursor: Cursor,
     ) -> Optional[int]:
         # we only need to keep track of 2 state variables
-        stack = [(self.start_state, cursor, ())]
+        stack = [(self.start_state, cursor, set())]
 
         while stack:
             state, cursor, path = stack.pop()
@@ -127,7 +126,7 @@ class RegexNFA(NFA, RegexPattern):
                 (
                     end_state,
                     matcher.update(cursor),
-                    path + ((state, end_state, cursor.position),),
+                    path | {(state, end_state, cursor.position)},
                 )
                 for matcher, end_state in reversed(self.step(state, cursor))
                 if (state, end_state, cursor.position) not in path
