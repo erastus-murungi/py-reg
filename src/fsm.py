@@ -19,7 +19,7 @@ from .parser import (
     Expression,
     Group,
     Match,
-    Matchable,
+    Matcher,
     RegexNode,
     RegexNodesVisitor,
 )
@@ -56,11 +56,11 @@ def gen_state_fragment() -> Fragment[State]:
 
 @dataclass(eq=True, slots=True)
 class Transition:
-    matchable: Matchable
+    matcher: Matcher
     end: State
 
     def __iter__(self):
-        yield from [self.matchable, self.end]
+        yield from [self.matcher, self.end]
 
 
 def gen_dfa_state(
@@ -97,7 +97,7 @@ class NFA(defaultdict[State, list[Transition]], RegexNodesVisitor[Fragment[State
 
     def __init__(self):
         super(NFA, self).__init__(list)
-        self.symbols: set[Matchable] = set()
+        self.symbols: set[Matcher] = set()
         self.states: set[State] = set()
         self.accepting_states: set[State] = set()
         self.start_state: State = -1
@@ -112,7 +112,7 @@ class NFA(defaultdict[State, list[Transition]], RegexNodesVisitor[Fragment[State
 
     def update_symbols(self):
         for transition in chain.from_iterable(self.values()):
-            self.symbols.add(transition.matchable)
+            self.symbols.add(transition.matcher)
         self.symbols.discard(EPSILON)
 
     def set_start(self, state: State):
@@ -126,16 +126,14 @@ class NFA(defaultdict[State, list[Transition]], RegexNodesVisitor[Fragment[State
         self.accepting_states = {accept}
 
     def transition(
-        self, state: State, symbol: Matchable, _: bool = False
+        self, state: State, symbol: Matcher, _: bool = False
     ) -> tuple[State, ...]:
         return tuple(
-            transition.end
-            for transition in self[state]
-            if transition.matchable == symbol
+            transition.end for transition in self[state] if transition.matcher == symbol
         )
 
-    def add_transition(self, start: State, end: State, matchable: Matchable):
-        self[start].append(Transition(matchable, end))
+    def add_transition(self, start: State, end: State, matcher: Matcher):
+        self[start].append(Transition(matcher, end))
 
     def reverse_transitions(self, state: State):
         self[state].reverse()
@@ -156,7 +154,7 @@ class NFA(defaultdict[State, list[Transition]], RegexNodesVisitor[Fragment[State
         class CustomEncoder(json.JSONEncoder):
             def default(self, o: Any) -> Any:
                 if isinstance(o, Transition):
-                    return [o.matchable, o.end]
+                    return [o.matcher, o.end]
                 if isinstance(o, RegexNode):
                     return o.string()
                 if isinstance(o, set):
@@ -198,7 +196,7 @@ class NFA(defaultdict[State, list[Transition]], RegexNodesVisitor[Fragment[State
 
         return tuple(closure)
 
-    def move(self, states: Iterable[State], symbol: Matchable) -> frozenset[State]:
+    def move(self, states: Iterable[State], symbol: Matcher) -> frozenset[State]:
         return frozenset(
             reduce(
                 set.union,
@@ -251,11 +249,11 @@ class NFA(defaultdict[State, list[Transition]], RegexNodesVisitor[Fragment[State
         self.epsilon(fragment1.end, fragment2.start)
 
     def base(
-        self, matchable: Matchable, fragment: Optional[Fragment[State]] = None
+        self, matcher: Matcher, fragment: Optional[Fragment[State]] = None
     ) -> Fragment:
         if fragment is None:
             fragment = gen_state_fragment()
-        self.add_transition(fragment.start, fragment.end, matchable)
+        self.add_transition(fragment.start, fragment.end, matcher)
         return fragment
 
     def graph(self):
@@ -412,9 +410,7 @@ class NFA(defaultdict[State, list[Transition]], RegexNodesVisitor[Fragment[State
 
     visit_character = (
         visit_character_group
-    ) = visit_any_character = visit_anchor = lambda self, matchable: self.base(
-        matchable
-    )
+    ) = visit_any_character = visit_anchor = lambda self, matcher: self.base(matcher)
 
 
 class DFA(NFA):
@@ -426,12 +422,12 @@ class DFA(NFA):
             self._subset_construction(nfa)
 
     def transition(
-        self, state: State, symbol: Matchable, wrapped: bool = False
+        self, state: State, symbol: Matcher, wrapped: bool = False
     ) -> State | tuple[State, ...]:
         result = first_true(
             self[state],
             None,
-            lambda transition: transition.matchable == symbol,
+            lambda transition: transition.matcher == symbol,
         )
         if result is None:
             return () if wrapped else ""
@@ -531,7 +527,7 @@ class DFA(NFA):
                 if transition.end in lost:
 
                     new_transitions.append(
-                        Transition(transition.matchable, lost.get(transition.end))
+                        Transition(transition.matcher, lost.get(transition.end))
                     )
                 else:
                     new_transitions.append(transition)

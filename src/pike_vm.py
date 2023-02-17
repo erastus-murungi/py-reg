@@ -13,7 +13,7 @@ from .parser import (
     Expression,
     Group,
     Match,
-    Matchable,
+    Matcher,
     RegexFlag,
     RegexNodesVisitor,
     RegexParser,
@@ -89,7 +89,7 @@ class Fork(Instruction):
 
 @dataclass(slots=True, eq=False)
 class Consume(Instruction):
-    matchable: Matchable
+    matcher: Matcher
     next: Optional["Instruction"] = field(repr=False, default=None)
 
 
@@ -246,9 +246,9 @@ class RegexPikeVM(RegexPattern, RegexNodesVisitor[Fragment[Instruction]]):
             while queue:
                 instruction, groups = queue.popleft()
                 match instruction:
-                    case Consume(matchable, next_instruction):
-                        if matchable.match(text, index, self._parser.flags):
-                            if (next_index := matchable.increment(index)) == index:
+                    case Consume(matcher, next_instruction):
+                        if matcher(text, index, self._parser.flags):
+                            if (next_index := matcher.increment(index)) == index:
                                 # process all anchors immediately
                                 self.queue_thread(
                                     queue, (next_instruction, groups), index, visited
@@ -458,8 +458,8 @@ class RegexPikeVM(RegexPattern, RegexNodesVisitor[Fragment[Instruction]]):
 
     visit_character = (
         visit_character_group
-    ) = visit_any_character = visit_anchor = lambda _, matchable: Fragment.duplicate(
-        EmptyString() if matchable is EMPTY_STRING else Consume(matchable)
+    ) = visit_any_character = visit_anchor = lambda _, matcher: Fragment.duplicate(
+        EmptyString() if matcher is EMPTY_STRING else Consume(matcher)
     )
 
 

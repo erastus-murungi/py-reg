@@ -59,9 +59,9 @@ def is_word_boundary(text: str, position: int) -> bool:
     return case1 or case2 or case3
 
 
-class Matchable(Hashable):
+class Matcher(Hashable):
     @abstractmethod
-    def match(self, text: str, position: int, flags: RegexFlag) -> bool:
+    def __call__(self, text: str, position: int, flags: RegexFlag) -> bool:
         ...
 
     def increment(self, index: int) -> int:
@@ -143,11 +143,11 @@ class Quantifier:
 
 
 @dataclass
-class CharacterRange(Matchable):
+class CharacterRange(Matcher):
     start: str
     end: str
 
-    def match(self, text, position, flags) -> bool:
+    def __call__(self, text, position, flags) -> bool:
         if position < len(text):
             if flags & RegexFlag.IGNORECASE:
                 return (
@@ -201,12 +201,12 @@ char2anchor_type: Final[dict[str, AnchorType]] = {
 }
 
 
-class MatchableRegexNode(RegexNode, Matchable, ABC):
+class MatchingNode(RegexNode, Matcher, ABC):
     ...
 
 
 @dataclass(slots=True)
-class Anchor(MatchableRegexNode):
+class Anchor(MatchingNode):
     anchor_type: AnchorType
     group_index: Optional[int] = None
 
@@ -218,7 +218,7 @@ class Anchor(MatchableRegexNode):
     def group_exit(group_index: int):
         return Anchor(maxsize, AnchorType.GroupExit, group_index)
 
-    def match(self, text: str, position: int, flags: RegexFlag) -> bool:
+    def __call__(self, text: str, position: int, flags: RegexFlag) -> bool:
         match self.anchor_type:
             case AnchorType.StartOfString:
                 # match the start of the string
@@ -258,9 +258,10 @@ class Anchor(MatchableRegexNode):
                 return is_word_boundary(text, position)
             case AnchorType.NonWordBoundary:
                 return text != "" and not is_word_boundary(text, position)
-            case AnchorType.EmptyString | AnchorType.Epsilon | AnchorType.GroupEntry | AnchorType.GroupExit:
+            case AnchorType.EmptyString | AnchorType.GroupEntry | AnchorType.GroupExit:
                 return True
-            case AnchorType.GroupLink:
+            # By design, group links and epsilon's never match anything
+            case AnchorType.GroupLink | AnchorType.Epsilon:
                 return False
 
         raise NotImplementedError
@@ -286,8 +287,8 @@ EMPTY_STRING: Final[Anchor] = Anchor(maxsize, AnchorType.EmptyString)
 
 
 @dataclass
-class AnyCharacter(MatchableRegexNode):
-    def match(self, text, position, flags) -> bool:
+class AnyCharacter(MatchingNode):
+    def __call__(self, text, position, flags) -> bool:
         return position < len(text) and (
             bool(flags & RegexFlag.DOTALL) or text[position] != "\n"
         )
@@ -303,10 +304,10 @@ class AnyCharacter(MatchableRegexNode):
 
 
 @dataclass
-class Character(MatchableRegexNode):
+class Character(MatchingNode):
     char: str
 
-    def match(self, text, position, flags) -> bool:
+    def __call__(self, text, position, flags) -> bool:
         if position < len(text):
             if flags & RegexFlag.IGNORECASE:
                 return self.char.casefold() == text[position].casefold()
@@ -332,16 +333,14 @@ class Character(MatchableRegexNode):
 
 
 @dataclass
-class CharacterGroup(MatchableRegexNode):
+class CharacterGroup(MatchingNode):
     items: tuple[Character | CharacterRange, ...]
     negated: bool = False
 
-    def match(self, text, position, flags) -> bool:
+    def __call__(self, text, position, flags) -> bool:
         if position >= len(text):
             return False
-        return self.negated ^ any(
-            item.match(text, position, flags) for item in self.items
-        )
+        return self.negated ^ any(item(text, position, flags) for item in self.items)
 
     def __eq__(self, other):
         if isinstance(other, CharacterGroup):
