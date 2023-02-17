@@ -176,7 +176,7 @@ class RegexNFA(NFA, RegexPattern):
 
         return None
 
-    def _match_at_index(self, text: str, index: int) -> Optional[MatchResult]:
+    def match_suffix(self, text: str, index: int) -> Optional[MatchResult]:
         if isinstance(super(), DFA):
             if (
                 position := self._match_at_index_dfa(self.start_state, text, index)

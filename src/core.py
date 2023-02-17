@@ -5,7 +5,7 @@ from typing import Callable, Generic, Optional, TypeVar
 
 from more_itertools import first_true, take
 
-T = TypeVar("T")
+T = TypeVar("T", covariant=True)
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,13 +72,30 @@ class RegexMatch:
 
 class RegexPattern(ABC):
     @abstractmethod
-    def _match_at_index(self, text: str, index: int) -> Optional[MatchResult]:
-        ...
+    def match_suffix(self, text: str, index: int) -> Optional[MatchResult]:
+        """
+        Match this pattern on the substring text[index:]
+
+        Parameters
+        ----------
+        text: str
+            The string we are matching against this pattern
+        index: int
+            An index specifying the suffix of `text` (`text[index]`) against this pattern
+
+        Notes
+        -----
+        We only need a regex matcher to implement this method
+        All the others can be constructed as long as we have this method implemented
+
+        """
+
+        pass
 
     def finditer(self, text: str):
         index = 0
         while index <= len(text):
-            if (result := self._match_at_index(text, index)) is not None:
+            if (result := self.match_suffix(text, index)) is not None:
                 position, captured_groups = result
                 yield RegexMatch(
                     index,

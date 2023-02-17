@@ -229,16 +229,19 @@ class RegexPikeVM(RegexPattern, RegexNodesVisitor[Fragment[Instruction]]):
                 case _:
                     queue.append((instruction, groups))
 
-    def _match_at_index(self, text: str, start_index: int) -> MatchResult:
+    def match_suffix(self, text: str, start_index: int) -> MatchResult:
         captured_groups = [CapturedGroup() for _ in range(self._parser.group_count)]
 
-        queue, visited = deque(), set()
+        queue, visited = deque(), set()  # type: (deque[Thread], set[Instruction])
         self.queue_thread(queue, (self.start, captured_groups), start_index, visited)
 
         match_result = None
 
         for index in range(start_index, len(text) + 1):
-            frontier, next_visited = deque(), set()
+            frontier, next_visited = (
+                deque(),
+                set(),
+            )  # type: (deque[Thread], set[Instruction])
 
             while queue:
                 instruction, groups = queue.popleft()
