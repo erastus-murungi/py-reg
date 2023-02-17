@@ -9,12 +9,12 @@ from src.utils import RegexFlag
 
 
 @dataclass(slots=True)
-class CapturedGroup:
+class CapturingGroup:
     start: Optional[int] = None
     end: Optional[int] = None
 
     def copy(self):
-        return CapturedGroup(self.start, self.end)
+        return CapturingGroup(self.start, self.end)
 
     def string(self, text: str):
         if self.start is not None and self.end is not None:
@@ -22,16 +22,12 @@ class CapturedGroup:
         return None
 
 
-CapturedGroups = list[CapturedGroup]
-MatchResult = tuple[int, CapturedGroups]
-
-
 @dataclass(frozen=True, slots=True)
 class RegexMatch:
     start: int
     end: int
     text: str
-    captured_groups: CapturedGroups
+    captured_groups: list[CapturingGroup]
 
     @property
     def span(self):
@@ -71,7 +67,7 @@ class Cursor:
     text: str
     position: int
     flags: RegexFlag
-    groups: CapturedGroups
+    groups: list[CapturingGroup]
 
 
 class RegexPattern(ABC):
@@ -79,7 +75,7 @@ class RegexPattern(ABC):
         self.parser = parser
 
     @abstractmethod
-    def match_suffix(self, cursor: Cursor) -> Optional[MatchResult]:
+    def match_suffix(self, cursor: Cursor) -> Optional[Cursor]:
         """
         Match this pattern on the substring text[index:]
 
@@ -99,25 +95,25 @@ class RegexPattern(ABC):
 
     def finditer(self, text: str):
         assert self.parser.flags is not None
-        index = 0
-        while index <= len(text):
+        start = 0
+        while start <= len(text):
             cursor = Cursor(
                 text,
-                index,
+                start,
                 self.parser.flags,
-                [CapturedGroup() for _ in range(self.parser.group_count)],
+                [CapturingGroup() for _ in range(self.parser.group_count)],
             )
             if (result := self.match_suffix(cursor)) is not None:
-                position, captured_groups = result
+                position, captured_groups = result.position, result.groups
                 yield RegexMatch(
-                    index,
+                    start,
                     position,
                     text,
                     captured_groups,
                 )
-                index = position + 1 if position == index else position
+                start = position + 1 if position == start else position
             else:
-                index = index + 1
+                start = start + 1
 
     def match(self, text: str):
         """Try to apply the pattern at the start of the string, returning

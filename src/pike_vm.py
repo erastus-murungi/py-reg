@@ -7,7 +7,7 @@ from pprint import pprint
 from sys import maxsize
 from typing import Final, Hashable, Optional
 
-from src.matching import Cursor, MatchResult, RegexPattern
+from src.matching import Cursor, RegexPattern
 from src.parser import (
     EMPTY_STRING,
     Anchor,
@@ -178,17 +178,14 @@ class RegexPikeVM(RegexPattern, RegexNodesVisitor[Fragment[Instruction]]):
                 case _:
                     queue.append((instruction, cursor))
 
-    def match_suffix(self, cursor: Cursor) -> MatchResult:
+    def match_suffix(self, cursor: Cursor) -> Optional[Cursor]:
         queue, visited = deque(), set()  # type: (deque[Thread], set[Instruction])
         self.queue_thread(queue, (self.start, cursor), visited)
 
-        match_result = None
+        match = None
 
         while True:
-            frontier, next_visited = (
-                deque(),
-                set(),
-            )  # type: (deque[Thread], set[Instruction])
+            frontier, next_visited = deque(), set()
 
             while queue:
                 instruction, cursor = queue.popleft()
@@ -208,14 +205,14 @@ class RegexPikeVM(RegexPattern, RegexNodesVisitor[Fragment[Instruction]]):
                                     next_visited,
                                 )
                     case End():
-                        match_result = (cursor.position, cursor.groups)
+                        match = cursor
                         # stop exploring threads in this queue, maybe explore higher-priority threads in `frontier`
                         break
             if not frontier:
                 break
             queue, visited = frontier, next_visited
 
-        return match_result
+        return match
 
     @staticmethod
     def _concat_fragments(
