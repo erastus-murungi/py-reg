@@ -230,12 +230,12 @@ class Anchor(MatchingNode):
     offset: Optional[int] = None
 
     @staticmethod
-    def group_entry(offset: int):
-        return Anchor(maxsize, AnchorType.GroupEntry, offset)
+    def group_entry(group_index: int):
+        return Anchor(maxsize, AnchorType.GroupEntry, group_index * 2)
 
     @staticmethod
-    def group_exit(offset: int):
-        return Anchor(maxsize, AnchorType.GroupExit, offset)
+    def group_exit(group_index: int):
+        return Anchor(maxsize, AnchorType.GroupExit, group_index * 2 + 1)
 
     def __call__(self, cursor: Cursor) -> bool:
         text, position, flags = cursor.text, cursor.position, cursor.flags
