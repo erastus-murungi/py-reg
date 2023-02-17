@@ -1,4 +1,4 @@
-from operator import attrgetter
+from operator import itemgetter
 from typing import Optional
 
 from src.fsm import DFA, NFA, State, Transition
@@ -45,7 +45,7 @@ class RegexNFA(NFA, RegexPattern):
                     matching_cursors.append(result)
 
             if matching_cursors:
-                return max(matching_cursors, key=attrgetter("position"))
+                return max(matching_cursors, key=itemgetter(0))
 
         return None
 
