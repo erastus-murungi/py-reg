@@ -7,7 +7,7 @@ from pprint import pprint
 from sys import maxsize
 from typing import Final, Hashable, Optional
 
-from src.matching import Cursor, RegexPattern
+from src.matching import Context, Cursor, RegexPattern
 from src.parser import (
     EMPTY_STRING,
     Anchor,
@@ -178,7 +178,7 @@ class RegexPikeVM(RegexPattern, RegexNodesVisitor[Fragment[Instruction]]):
                 case _:
                     queue.append((instruction, cursor))
 
-    def match_suffix(self, cursor: Cursor) -> Optional[Cursor]:
+    def match_suffix(self, cursor: Cursor, context: Context) -> Optional[Cursor]:
         queue, visited = deque(), set()  # type: (deque[Thread], set[Instruction])
         self.queue_thread(queue, (self.start, cursor), visited)
 
@@ -191,9 +191,9 @@ class RegexPikeVM(RegexPattern, RegexNodesVisitor[Fragment[Instruction]]):
                 instruction, cursor = queue.popleft()
                 match instruction:
                     case Consume(matcher, next_instruction):
-                        if matcher(cursor):
+                        if matcher(cursor, context):
                             next_cursor = matcher.update_index(cursor)
-                            if next_cursor.position == cursor.position:
+                            if next_cursor[0] == cursor[0]:
                                 # process all anchors immediately
                                 self.queue_thread(
                                     queue, (next_instruction, next_cursor), visited

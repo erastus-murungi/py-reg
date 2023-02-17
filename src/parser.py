@@ -5,7 +5,7 @@ from enum import Enum
 from sys import maxsize
 from typing import Final, Generic, Hashable, Optional, TypeVar, cast
 
-from src.matching import Cursor
+from src.matching import Context, Cursor
 from src.utils import RegexFlag
 
 T = TypeVar("T")
@@ -55,16 +55,15 @@ def is_word_boundary(text: str, position: int) -> bool:
 
 class Matcher(Hashable):
     @abstractmethod
-    def __call__(self, cursor: Cursor) -> bool:
+    def __call__(self, cursor: Cursor, context: Context) -> bool:
         ...
 
     def update_groups_no_check(self, cursor: Cursor):
         # must create a shallow copy
-        groups_copy = cursor.groups[:]
-        groups_copy[cast(Anchor, self).offset] = cursor.position
-        return Cursor(
-            cursor.text, self.increment(cursor.position), cursor.flags, groups_copy
-        )
+        position, groups = cursor
+        groups_copy = groups[:]
+        groups_copy[cast(Anchor, self).offset] = position
+        return self.increment(position), groups_copy
 
     def update(self, cursor: Cursor) -> Cursor:
         if isinstance(self, Anchor) and self.anchor_type in (
@@ -75,9 +74,8 @@ class Matcher(Hashable):
         return self.update_index(cursor)
 
     def update_index(self, cursor: Cursor) -> Cursor:
-        return Cursor(
-            cursor.text, self.increment(cursor.position), cursor.flags, cursor.groups
-        )
+        position, groups = cursor
+        return self.increment(position), groups
 
     def increment(self, index: int) -> int:
         """We keep the index the same only when we are an Anchor"""
@@ -162,10 +160,10 @@ class CharacterRange(Matcher):
     start: str
     end: str
 
-    def __call__(self, cursor: Cursor) -> bool:
-        position, text = cursor.position, cursor.text
+    def __call__(self, cursor: Cursor, context: Context) -> bool:
+        position, text = cursor[0], context.text
         if position < len(text):
-            if cursor.flags & RegexFlag.IGNORECASE:
+            if context.flags & RegexFlag.IGNORECASE:
                 return (
                     self.start.casefold()
                     <= text[position].casefold()
@@ -235,8 +233,8 @@ class Anchor(MatchingNode):
     def group_exit(group_index: int):
         return Anchor(maxsize, AnchorType.GroupExit, group_index * 2 + 1)
 
-    def __call__(self, cursor: Cursor) -> bool:
-        text, position, flags = cursor.text, cursor.position, cursor.flags
+    def __call__(self, cursor: Cursor, context: Context) -> bool:
+        (text, flags), (position, _) = context, cursor
         match self.anchor_type:
             case AnchorType.StartOfString:
                 # match the start of the string
@@ -248,7 +246,7 @@ class Anchor(MatchingNode):
             case AnchorType.EndOfString:
                 # . foo matches both ‘foo’ and ‘foobar’,
                 # while the regular expression foo$ matches only ‘foo’.
-                # More interestingly, searching for foo.$ in 'foo1\nfoo2\n' matches ‘foo2’ normally,
+                # More interestingly, searching for foo.$ in `foo1\n foo2\n` matches ‘foo2’ normally,
                 # but ‘foo1’ in MULTILINE mode; searching for a single $ in 'foo\n' will find two (empty) matches:
                 # one just before the newline, and one at the end of the string.
 
@@ -306,10 +304,10 @@ EMPTY_STRING: Final[Anchor] = Anchor(maxsize, AnchorType.EmptyString)
 
 @dataclass
 class AnyCharacter(MatchingNode):
-    def __call__(self, cursor) -> bool:
-        text, position, flags = cursor.text, cursor.position, cursor.flags
-        return position < len(text) and (
-            bool(flags & RegexFlag.DOTALL) or text[position] != "\n"
+    def __call__(self, cursor: Cursor, context: Context) -> bool:
+        position, _ = cursor
+        return position < len(context.text) and (
+            bool(context.flags & RegexFlag.DOTALL) or context.text[position] != "\n"
         )
 
     def __repr__(self):
@@ -326,8 +324,8 @@ class AnyCharacter(MatchingNode):
 class Character(MatchingNode):
     char: str
 
-    def __call__(self, cursor) -> bool:
-        text, position, flags = cursor.text, cursor.position, cursor.flags
+    def __call__(self, cursor: Cursor, context: Context) -> bool:
+        (text, flags), (position, _) = context, cursor
         if position < len(text):
             if flags & RegexFlag.IGNORECASE:
                 return self.char.casefold() == text[position].casefold()
@@ -357,12 +355,12 @@ class CharacterGroup(MatchingNode):
     matching_nodes: tuple[Character | CharacterRange, ...]
     negated: bool = False
 
-    def __call__(self, cursor) -> bool:
-        text, position, flags = cursor.text, cursor.position, cursor.flags
+    def __call__(self, cursor, context) -> bool:
+        (text, flags), (position, _) = context, cursor
         if position >= len(text):
             return False
         return self.negated ^ any(
-            matching_node(cursor) for matching_node in self.matching_nodes
+            matching_node(cursor, context) for matching_node in self.matching_nodes
         )
 
     def __eq__(self, other):
@@ -686,7 +684,7 @@ class RegexParser:
                 self._pos,
                 tuple(
                     map(
-                        lambda c: Character(self._pos, c),
+                        lambda char: Character(self._pos, char),
                         [" ", "\t", "\n", "\r", "\v", "\f"],
                     )
                 ),

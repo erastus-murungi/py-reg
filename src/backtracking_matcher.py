@@ -2,7 +2,7 @@ from operator import attrgetter
 from typing import Optional
 
 from src.fsm import DFA, NFA, State, Transition
-from src.matching import Cursor, RegexPattern
+from src.matching import Context, Cursor, RegexPattern
 from src.parser import EPSILON, Anchor, RegexFlag, RegexParser
 
 
@@ -16,7 +16,9 @@ class RegexNFA(NFA, RegexPattern):
     def recover(self) -> str:
         return self.parser.root.string()
 
-    def _match_suffix_dfa(self, state: State, cursor: Cursor) -> Optional[int]:
+    def _match_suffix_dfa(
+        self, state: State, cursor: Cursor, context: Context
+    ) -> Optional[int]:
         """
         This a fast matcher when you don't have groups or greedy quantifiers
         """
@@ -29,13 +31,14 @@ class RegexNFA(NFA, RegexPattern):
                 matching_cursors.append(cursor)
 
             transitions = [
-                transition for transition in self[state] if transition.matcher(cursor)
+                transition
+                for transition in self[state]
+                if transition.matcher(cursor, context)
             ]
 
             for matcher, end_state in transitions:
                 result = self._match_suffix_dfa(
-                    end_state,
-                    matcher.update_index(cursor),
+                    end_state, matcher.update_index(cursor), context
                 )
 
                 if result is not None:
@@ -46,7 +49,9 @@ class RegexNFA(NFA, RegexPattern):
 
         return None
 
-    def step(self, start_state: State, cursor: Cursor) -> list[Transition]:
+    def step(
+        self, start_state: State, cursor: Cursor, context: Context
+    ) -> list[Transition]:
         """
         Performs a depth first search to collect valid transitions the transitions reachable through epsilon transitions
         """
@@ -64,7 +69,7 @@ class RegexNFA(NFA, RegexPattern):
                     # augment to match epsilon transitions which lead to accepting states
                     # we could rewrite things by passing more context into the match method so that
                     # this becomes just a one-liner: transition.matcher(context)
-                    if transition.matcher(cursor) or (
+                    if transition.matcher(cursor, context) or (
                         transition.matcher is EPSILON
                         and transition.end in self.accepting_states
                     ):
@@ -83,8 +88,7 @@ class RegexNFA(NFA, RegexPattern):
         return transitions
 
     def _match_suffix_with_groups(
-        self,
-        cursor: Cursor,
+        self, cursor: Cursor, context: Context
     ) -> Optional[Cursor]:
         # we only need to keep track of 3 state variables
         stack = [(self.start_state, cursor, ())]
@@ -95,7 +99,7 @@ class RegexNFA(NFA, RegexPattern):
             if state in self.accepting_states:
                 return cursor
 
-            for matcher, end_state in reversed(self.step(state, cursor)):
+            for matcher, end_state in reversed(self.step(state, cursor, context)):
                 if isinstance(matcher, Anchor):
                     if end_state in path:
                         continue
@@ -114,8 +118,7 @@ class RegexNFA(NFA, RegexPattern):
         return None
 
     def _match_suffix_no_groups(
-        self,
-        cursor: Cursor,
+        self, cursor: Cursor, context: Context
     ) -> Optional[int]:
         # we only need to keep track of 2 state variables
         stack = [(self.start_state, cursor, ())]
@@ -126,7 +129,7 @@ class RegexNFA(NFA, RegexPattern):
             if state in self.accepting_states:
                 return cursor
 
-            for matcher, end_state in reversed(self.step(state, cursor)):
+            for matcher, end_state in reversed(self.step(state, cursor, context)):
                 if isinstance(matcher, Anchor):
                     if end_state in path:
                         continue
@@ -144,13 +147,13 @@ class RegexNFA(NFA, RegexPattern):
 
         return None
 
-    def match_suffix(self, cursor: Cursor) -> Optional[Cursor]:
+    def match_suffix(self, cursor: Cursor, context: Context) -> Optional[Cursor]:
         if isinstance(super(), DFA):
-            return self._match_suffix_dfa(self.start_state, cursor)
+            return self._match_suffix_dfa(self.start_state, cursor, context)
         elif self.parser.group_count > 0:
-            return self._match_suffix_with_groups(cursor)
+            return self._match_suffix_with_groups(cursor, context)
         else:
-            return self._match_suffix_no_groups(cursor)
+            return self._match_suffix_no_groups(cursor, context)
 
     def __repr__(self):
         return super().__repr__()

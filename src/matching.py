@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from sys import maxsize
-from typing import Callable, Optional
+from typing import Callable, Final, NamedTuple, Optional
 
 from more_itertools import first_true, take
 
@@ -46,21 +46,22 @@ class RegexMatch:
         return self.group_to_string(index - 1)
 
 
-@dataclass(slots=True, frozen=True)
-class Cursor:
+class Context(NamedTuple):
     """
+    These are attributes which don't change during the matching process
+
     Attributes
-    ----------
+    ---------
     text: str
-            The string we are matching against this pattern
-    position: int
-            An index specifying the suffix of `text` (`text[index]`) against this pattern
+        The string we are matching against this pattern
+
     """
 
     text: str
-    position: int
     flags: RegexFlag
-    groups: list[int]
+
+
+Cursor = tuple[int, list[int]]
 
 
 class RegexPattern(ABC):
@@ -68,14 +69,16 @@ class RegexPattern(ABC):
         self.parser = parser
 
     @abstractmethod
-    def match_suffix(self, cursor: Cursor) -> Optional[Cursor]:
+    def match_suffix(self, cursor: Cursor, context: Context) -> Optional[Cursor]:
         """
         Match this pattern on the substring text[index:]
 
         Parameters
         ----------
         cursor: Cursor
-            a cursor object for the suffix
+            a Cursor object for the suffix
+        context: Context
+            a Context object
 
         Notes
         -----
@@ -88,22 +91,13 @@ class RegexPattern(ABC):
 
     def finditer(self, text: str):
         assert self.parser.flags is not None
+        context: Final[Context] = Context(text, self.parser.flags)
         start = 0
         while start <= len(text):
-            cursor = Cursor(
-                text,
-                start,
-                self.parser.flags,
-                [maxsize for _ in range(self.parser.group_count * 2)],
-            )
-            if (result := self.match_suffix(cursor)) is not None:
-                position, captured_groups = result.position, result.groups
-                yield RegexMatch(
-                    start,
-                    position,
-                    text,
-                    captured_groups,
-                )
+            cursor = (start, [maxsize] * (self.parser.group_count * 2))
+            if (cursor := self.match_suffix(cursor, context)) is not None:
+                position, groups = cursor
+                yield RegexMatch(start, position, text, groups)
                 start = position + 1 if position == start else position
             else:
                 start = start + 1
@@ -123,10 +117,7 @@ class RegexPattern(ABC):
         count: int = maxsize,
     ) -> tuple[str, int]:
         if isinstance(replacer, str):
-
-            def r(_):
-                return replacer
-
+            r = lambda _: replacer
         else:
             r = replacer
         matches = take(count, self.finditer(string))
