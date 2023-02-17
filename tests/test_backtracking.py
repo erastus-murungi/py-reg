@@ -3,7 +3,7 @@ from random import randint, random, seed
 
 import pytest
 
-from src.backtracking_matcher import RegexNFA
+from src.nfa_matcher import RegexNFA
 from src.parser import RegexpParsingError
 
 # acquired from re2: https://github.com/google/re2/blob/main/re2/testing/search_test.cc

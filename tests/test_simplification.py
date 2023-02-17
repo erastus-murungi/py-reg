@@ -1,6 +1,6 @@
 import pytest
 
-from src.backtracking_matcher import RegexNFA
+from src.nfa_matcher import RegexNFA
 
 
 @pytest.mark.parametrize(

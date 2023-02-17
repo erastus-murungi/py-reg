@@ -1,13 +1,10 @@
-import re
-import time
 from collections import deque
 from dataclasses import dataclass, field
 from itertools import pairwise
-from pprint import pprint
 from sys import maxsize
 from typing import Final, Hashable, Optional
 
-from src.matching import Context, Cursor, RegexPattern
+from src.matcher import Context, Cursor, RegexPattern
 from src.parser import (
     EMPTY_STRING,
     Anchor,
@@ -105,6 +102,21 @@ Thread = tuple[Instruction, Cursor]
 
 
 class RegexPikeVM(RegexPattern, RegexNodesVisitor[Fragment[Instruction]]):
+    """
+    Examples
+    --------
+    >>> from sys import maxsize
+    >>> pattern, text = '(ab)+', 'abab'
+    >>> compiled_regex = RegexPikeVM(pattern)
+    >>> ctx = Context(text, RegexFlag.NOFLAG)
+    >>> start = 0
+    >>> c = compiled_regex.match_suffix((start, [maxsize, maxsize]), ctx)
+    >>> c
+    (4, [2, 4])
+    >>> end, groups = c
+    >>> assert text[start: end] == 'abab'
+    """
+
     def __init__(self, pattern: str, flags: RegexFlag = RegexFlag.NOFLAG):
         super().__init__(RegexParser(pattern, flags))
         self.start, last = self.parser.root.accept(self)
@@ -382,7 +394,6 @@ class RegexPikeVM(RegexPattern, RegexNodesVisitor[Fragment[Instruction]]):
     ) -> Fragment[Instruction]:
         if group.is_capturing():
             # All we are doing here is just wrapping our fragment between two capturing instructions
-
             start_capturing, end_capturing = Capture(
                 Anchor.group_entry(group.index)
             ), Capture(Anchor.group_exit(group.index))
@@ -408,20 +419,6 @@ class RegexPikeVM(RegexPattern, RegexNodesVisitor[Fragment[Instruction]]):
 
 
 if __name__ == "__main__":
-    # regex, t = (
-    #     r"(a*)*b",
-    #     "a" * 22,
-    # )
-    regex, t = "(ab)*", "(ab)*"
-    a = time.monotonic()
-    pprint(list(re.finditer(regex, t)))
-    pprint([m.groups() for m in re.finditer(regex, t)])
-    print(f"{time.monotonic() - a} seconds")
+    import doctest
 
-    a = time.monotonic()
-    p = RegexPikeVM(regex)
-    pprint(list(p.finditer(t)))
-    pprint([m.groups() for m in p.finditer(t)])
-    print(f"{time.monotonic() - a} seconds")
-
-    # pprint(p.linearize())
+    doctest.testmod()

@@ -5,10 +5,10 @@ from enum import Enum
 from sys import maxsize
 from typing import Final, Generic, Hashable, Optional, TypeVar, cast
 
-from src.matching import Context, Cursor
+from src.matcher import Context, Cursor
 from src.utils import RegexFlag
 
-T = TypeVar("T")
+V = TypeVar("V")
 
 INLINE_MODIFIER_START = "(?"
 pattern = re.compile(r"(?<!^)(?=[A-Z])")
@@ -22,40 +22,135 @@ class RegexpParsingError(Exception):
 
 
 def is_word_character(char: str) -> bool:
+    """
+    Check if `char` is just a single alphabetic character or an underscore
+
+    Parameters
+    ----------
+    char: str
+        The character to check
+
+    Returns
+    -------
+        True if `char` is just a single alphabetic character or an underscore
+        False otherwise
+    Examples
+    --------
+    >>> is_word_character('a')
+    True
+    >>> is_word_character('1')
+    False
+    >>> is_word_character('_')
+    True
+    >>> is_word_character('abc')
+    False
+    >>> is_word_character('')
+    False
+    """
     return len(char) == 1 and char.isalpha() or char == "_"
 
 
 def is_word_boundary(text: str, position: int) -> bool:
-    # There are three different positions that qualify as word boundaries:
-    #
-    # 1. Before the first character in the string, if the first character is a word character.
-    # 2. After the last character in the string, if the last character is a word character.
-    # 3. Between two characters in the string,
-    #           where one is a word character and the other is not a word character.
+    """
+    Check if text[position:] is a word boundary
 
-    case1 = len(text) > 0 and position == 0 and is_word_character(text[position])
-    case2 = (1 <= len(text) <= position and is_word_character(text[position - 1])) or (
-        len(text) >= 2
-        and position == len(text) - 1
-        and text[position] == "\n"
-        and is_word_character(text[position - 2])
-    )
-    case3 = (position - 1 >= 0 and position < len(text)) and (
-        (
-            not is_word_character(text[position - 1])
-            and is_word_character(text[position])
-        )
-        or (
-            is_word_character(text[position - 1])
-            and not is_word_character(text[position])
-        )
+    There are three different positions that qualify as word boundaries:
+
+        1. Before the first character in the string, if the first character is a word character.
+        2. After the last character in the string, if the last character is a word character.
+        3. Between two characters in the string, where one is a word character and
+            the other is not a word character.
+
+    Parameters
+    ---------
+    text: str
+        a text to check for the word boundary
+    position: int
+        the position in the text to check the word boundary
+
+    Returns
+    -------
+    bool
+        True is text[position:] is a word boundary and False otherwise
+
+    Raises
+    ------
+    ValueError
+        If given text is the empty string
+
+
+    Examples
+    --------
+    >>> txt = 'abc'
+    >>> is_word_boundary(txt, 0)
+    True
+    >>> is_word_boundary(txt, 1)
+    False
+    >>> is_word_boundary('1abc', 0)  # first letter not a word character
+    True
+    >>> is_word_boundary('', 0)  # empty string
+    Traceback (most recent call last):
+        ...
+    ValueError: expected a non-empty string
+    >>> is_word_boundary('ab', 2)  # past last letter
+    True
+    >>> is_word_boundary('ab', 1)  # at last letter
+    False
+    >>> is_word_boundary('a c', 0)
+    True
+    >>> is_word_boundary('a c', 1)
+    True
+    >>> is_word_boundary('a c', 2)
+    True
+    >>> is_word_boundary('abc', 1)
+    False
+    """
+    if len(text) == 0:
+        raise ValueError("expected a non-empty string")
+
+    case1 = position == 0 and is_word_character(text[position])
+    case2 = position == len(text) and is_word_character(text[position - 1])
+    case3 = position < len(text) and (
+        is_word_character(text[position - 1]) ^ is_word_character(text[position])
     )
     return case1 or case2 or case3
 
 
 class Matcher(Hashable):
+    """
+    Base class for all matching functions
+
+    Notes
+    -----
+    If a matcher accepts, then we can proceed in one or both the text and the pattern
+    There are essentially two types of matching functions, those that consume characters and those
+    that don't, but instead consume a conditon, eg a word boundary
+
+    We override the call method so that a Matcher class instance can be called just like a function
+    E.g x(cursor, context)
+
+    Examples
+    --------
+    >>> Matcher()
+    Traceback (most recent call last):
+        ...
+    TypeError: Can't instantiate abstract class Matcher with abstract methods __call__, __hash__
+
+    """
+
     @abstractmethod
     def __call__(self, cursor: Cursor, context: Context) -> bool:
+        """
+        Check if this matcher accepts the cursor and context given
+
+        Examples
+        --------
+        >>> character_matcher = Character(0, 'a')
+        >>> cs = (0, [])
+        >>> ctx = Context('abaaaa', RegexFlag.NOFLAG)
+        >>> character_matcher(cs, ctx)
+        True
+        """
         ...
 
     def update_groups_no_check(self, cursor: Cursor):
@@ -271,9 +366,9 @@ class Anchor(MatchingNode):
             case AnchorType.EndOfStringOnlyNotNewline:
                 return position >= len(text)
             case AnchorType.WordBoundary:
-                return is_word_boundary(text, position)
+                return text and is_word_boundary(text, position)
             case AnchorType.NonWordBoundary:
-                return text != "" and not is_word_boundary(text, position)
+                return text and not is_word_boundary(text, position)
             case AnchorType.EmptyString | AnchorType.GroupEntry | AnchorType.GroupExit:
                 return True
             # By design, group links and epsilon's never match anything
@@ -422,33 +517,33 @@ class Expression(RegexNode):
         return seq
 
 
-class RegexNodesVisitor(Generic[T], metaclass=ABCMeta):
+class RegexNodesVisitor(Generic[V], metaclass=ABCMeta):
     @abstractmethod
-    def visit_expression(self, expression: Expression) -> T:
+    def visit_expression(self, expression: Expression) -> V:
         ...
 
     @abstractmethod
-    def visit_group(self, group: Group) -> T:
+    def visit_group(self, group: Group) -> V:
         ...
 
     @abstractmethod
-    def visit_match(self, match: Match) -> T:
+    def visit_match(self, match: Match) -> V:
         ...
 
     @abstractmethod
-    def visit_anchor(self, anchor: Anchor) -> T:
+    def visit_anchor(self, anchor: Anchor) -> V:
         ...
 
     @abstractmethod
-    def visit_any_character(self, any_character: AnyCharacter) -> T:
+    def visit_any_character(self, any_character: AnyCharacter) -> V:
         ...
 
     @abstractmethod
-    def visit_character(self, character: Character) -> T:
+    def visit_character(self, character: Character) -> V:
         ...
 
     @abstractmethod
-    def visit_character_group(self, character_group: CharacterGroup) -> T:
+    def visit_character_group(self, character_group: CharacterGroup) -> V:
         ...
 
 
@@ -811,3 +906,9 @@ class RegexParser:
     @property
     def flags(self):
         return self._flags
+
+
+if __name__ == "__main__":
+    import doctest
+
+    doctest.testmod()

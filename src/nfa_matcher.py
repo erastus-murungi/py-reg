@@ -2,11 +2,24 @@ from operator import itemgetter
 from typing import Optional
 
 from src.fsm import DFA, NFA, State, Transition
-from src.matching import Context, Cursor, RegexPattern
+from src.matcher import Context, Cursor, RegexPattern
 from src.parser import EPSILON, Anchor, RegexFlag, RegexParser
 
 
 class RegexNFA(NFA, RegexPattern):
+    """
+    A backtracking NFA based regex pattern matcher
+
+    Examples
+    --------
+    >>> pattern, text = '(ab)+', 'abab'
+    >>> compiled_regex = RegexNFA(pattern)
+    >>> print(list(compiled_regex.finditer(text)))
+    [RegexMatch(span=(0, 4), match='abab')]
+    >>> print([m.groups() for m in compiled_regex.finditer(text)])
+    [('ab',)]
+    """
+
     def __init__(self, pattern: str, flags: RegexFlag = RegexFlag.NOFLAG):
         NFA.__init__(self)
         RegexPattern.__init__(self, RegexParser(pattern, flags))
@@ -148,6 +161,36 @@ class RegexNFA(NFA, RegexPattern):
         return None
 
     def match_suffix(self, cursor: Cursor, context: Context) -> Optional[Cursor]:
+        """
+        Given a cursor, and context. Match the pattern against the cursor and return
+        a final cursor that matches the pattern or none if the pattern could not match
+
+        Parameters
+        ----------
+        cursor: Cursor
+            An initial cursor object
+        context: Context
+            A static context object
+
+        Returns
+        -------
+        Optional[Cursor]
+            A cursor object in which cursor[0] is the position where the pattern ends in context.txt
+            and cursor[1] are the filled out groups
+
+        Examples
+        --------
+        >>> from sys import maxsize
+        >>> pattern, text = '(ab)+', 'abab'
+        >>> compiled_regex = RegexNFA(pattern)
+        >>> ctx = Context(text, RegexFlag.NOFLAG)
+        >>> start = 0
+        >>> c = compiled_regex.match_suffix((start, [maxsize, maxsize]), ctx)
+        >>> c
+        (4, [2, 4])
+        >>> end, groups = c
+        >>> assert text[start: end] == 'abab'
+        """
         if isinstance(super(), DFA):
             return self._match_suffix_dfa(self.start_state, cursor, context)
         elif self.parser.group_count > 0:
@@ -160,13 +203,6 @@ class RegexNFA(NFA, RegexPattern):
 
 
 if __name__ == "__main__":
-    regex, t = "(ab)+", "abab"
+    import doctest
 
-    p = RegexNFA(regex)
-    import re
-
-    print(list(re.finditer(regex, t)))
-    print([m.groups() for m in re.finditer(regex, t)])
-    # p.graph()
-    print(list(p.finditer(t)))
-    print([m.groups() for m in p.finditer(t)])
+    doctest.testmod()
