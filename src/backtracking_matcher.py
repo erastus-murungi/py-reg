@@ -3,7 +3,7 @@ from typing import Optional
 
 from src.fsm import DFA, NFA, State, Transition
 from src.matching import Cursor, RegexPattern
-from src.parser import EPSILON, RegexFlag, RegexParser
+from src.parser import EPSILON, Anchor, RegexFlag, RegexParser
 
 
 class RegexNFA(NFA, RegexPattern):
@@ -87,23 +87,27 @@ class RegexNFA(NFA, RegexPattern):
         cursor: Cursor,
     ) -> Optional[Cursor]:
         # we only need to keep track of 3 state variables
-        stack = [(self.start_state, cursor, set())]
+        stack = [(self.start_state, cursor, ())]
 
         while stack:
-            state, cursor, path = stack.pop()  # type: (int, Cursor, set)
+            state, cursor, path = stack.pop()  # type: (int, Cursor, tuple[int, ...])
 
             if state in self.accepting_states:
                 return cursor
 
             for matcher, end_state in reversed(self.step(state, cursor)):
-                if (state, end_state, cursor.position) in path:
-                    continue
+                if isinstance(matcher, Anchor):
+                    if end_state in path:
+                        continue
+                    updated_path = path + (end_state,)
+                else:
+                    updated_path = ()
 
                 stack.append(
                     (
                         end_state,
                         matcher.update(cursor),
-                        path | {(state, end_state, cursor.position)},
+                        updated_path,
                     )
                 )
 
@@ -114,7 +118,7 @@ class RegexNFA(NFA, RegexPattern):
         cursor: Cursor,
     ) -> Optional[int]:
         # we only need to keep track of 2 state variables
-        stack = [(self.start_state, cursor, set())]
+        stack = [(self.start_state, cursor, ())]
 
         while stack:
             state, cursor, path = stack.pop()
@@ -122,15 +126,21 @@ class RegexNFA(NFA, RegexPattern):
             if state in self.accepting_states:
                 return cursor
 
-            stack.extend(
-                (
-                    end_state,
-                    matcher.update(cursor),
-                    path | {(state, end_state, cursor.position)},
+            for matcher, end_state in reversed(self.step(state, cursor)):
+                if isinstance(matcher, Anchor):
+                    if end_state in path:
+                        continue
+                    updated_path = path + (end_state,)
+                else:
+                    updated_path = ()
+
+                stack.append(
+                    (
+                        end_state,
+                        matcher.update_index(cursor),
+                        updated_path,
+                    )
                 )
-                for matcher, end_state in reversed(self.step(state, cursor))
-                if (state, end_state, cursor.position) not in path
-            )
 
         return None
 

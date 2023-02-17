@@ -6,8 +6,6 @@ from sys import maxsize
 from typing import Final, Generic, Hashable, Optional, TypeVar, cast
 
 from src.matching import Cursor
-
-# from src.matching import Cursor
 from src.utils import RegexFlag
 
 T = TypeVar("T")
