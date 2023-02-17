@@ -27,7 +27,7 @@ class RegexNFA(NFA, RegexPattern):
         self.update_symbols_and_states()
 
     def recover(self) -> str:
-        return self.parser.root.string()
+        return self.parser.root.to_string()
 
     def _match_suffix_dfa(
         self, state: State, cursor: Cursor, context: Context

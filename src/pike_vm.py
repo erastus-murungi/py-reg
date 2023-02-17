@@ -314,9 +314,9 @@ class RegexPikeVM(RegexPattern, RegexNodesVisitor[Fragment[Instruction]]):
 
     def _apply_quantifier(self, node: Group | Match) -> Fragment[Instruction]:
         quantifier = node.quantifier
-        if quantifier.char is not None:
+        if isinstance(quantifier.param, str):
             fragment = self._gen_instructions_for_quantifiable(node)
-            match quantifier.char:
+            match quantifier.param:
                 case "+":
                     return self.one_or_more(fragment, quantifier.lazy)
                 case "*":
@@ -324,31 +324,30 @@ class RegexPikeVM(RegexPattern, RegexNodesVisitor[Fragment[Instruction]]):
                 case "?":
                     return self.zero_or_one(fragment, quantifier.lazy)
                 case _:
-                    raise RuntimeError(f"unrecognized quantifier {quantifier.char}")
+                    raise RuntimeError(f"unrecognized quantifier {quantifier.param}")
         else:
             return self._apply_range_quantifier(node)
 
     def _apply_range_quantifier(self, node: Group | Match) -> Fragment[Instruction]:
         quantifier = node.quantifier
-        start, end = quantifier.range_quantifier
+        n, m = quantifier.param
 
-        if start == 0:
-            if end == maxsize:
+        if n == 0:
+            if m == maxsize:
                 # 'a{0,} = a{0,maxsize}' expands to a*
                 return self.zero_or_more(
                     self._gen_instructions_for_quantifiable(node), quantifier.lazy
                 )
-            elif end is None:
+            elif m is None:
                 # a{0} = ''
                 return Fragment.duplicate(EmptyString())
 
-        if end is not None:
-            if end == maxsize:
+        if m is not None:
+            if m == maxsize:
                 # a{3,} expands to aaa+.
                 # 'a{3,maxsize}
                 instructions = [
-                    self._gen_instructions_for_quantifiable(node)
-                    for _ in range(start - 1)
+                    self._gen_instructions_for_quantifiable(node) for _ in range(n - 1)
                 ] + [
                     self.one_or_more(
                         self._gen_instructions_for_quantifiable(node), quantifier.lazy
@@ -358,11 +357,11 @@ class RegexPikeVM(RegexPattern, RegexNodesVisitor[Fragment[Instruction]]):
                 # a{,5} = a{0,5} or a{3,5}
 
                 instructions = [
-                    self._gen_instructions_for_quantifiable(node) for _ in range(start)
+                    self._gen_instructions_for_quantifiable(node) for _ in range(n)
                 ]
 
                 empty: Final[EmptyString] = EmptyString()
-                for _ in range(start, end):
+                for _ in range(n, m):
                     first, last = self._gen_instructions_for_quantifiable(node)
                     jump = Jump(empty, first)
                     split = Fork(
@@ -373,7 +372,7 @@ class RegexPikeVM(RegexPattern, RegexNodesVisitor[Fragment[Instruction]]):
 
         else:
             instructions = [
-                self._gen_instructions_for_quantifiable(node) for _ in range(start)
+                self._gen_instructions_for_quantifiable(node) for _ in range(n)
             ]
 
         return self._concat_fragments(instructions)

@@ -3,7 +3,7 @@ from abc import ABC, ABCMeta, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
 from sys import maxsize
-from typing import Final, Generic, Hashable, Optional, TypeVar, cast
+from typing import Final, Generic, Hashable, Optional, TypeVar
 
 from src.matcher import Context, Cursor
 from src.utils import RegexFlag
@@ -11,10 +11,11 @@ from src.utils import RegexFlag
 V = TypeVar("V")
 
 INLINE_MODIFIER_START = "(?"
-pattern = re.compile(r"(?<!^)(?=[A-Z])")
 ESCAPED = set(". \\ + * ? [ ^ ] $ ( ) { } = < > | -".split())
 CHARACTER_CLASSES = {"w", "W", "s", "S", "d", "D"}
+ANCHORS = {"A", "z", "Z", "G", "b", "B"}
 UNESCAPED_IN_CHAR_GROUP = ESCAPED - {"]"}
+QUANTIFIER_OPTIONS = ("?", "+", "*")
 
 
 class RegexpParsingError(Exception):
@@ -146,105 +147,275 @@ class Matcher(Hashable):
         Examples
         --------
         >>> character_matcher = Character('a')
-        >>> cs = (0, [])
-        >>> ctx = Context('abaaaa', RegexFlag.NOFLAG)
+        >>> cs = (1, [])
+        >>> ctx = Context('baba', RegexFlag.NOFLAG)
         >>> character_matcher(cs, ctx)
         True
         """
         ...
 
-    def update_groups_no_check(self, cursor: Cursor):
-        # must create a shallow copy
-        position, groups = cursor
-        groups_copy = groups[:]
-        groups_copy[cast(Anchor, self).offset] = position
-        return self.increment(position), groups_copy
-
     def update(self, cursor: Cursor) -> Cursor:
-        if isinstance(self, Anchor) and self.anchor_type in (
-            AnchorType.GroupEntry,
-            AnchorType.GroupExit,
+        """
+        Update the index and groups of a cursor object
+        It is assumed that the cursor has already been accepted by this matcher
+
+        Parameters
+        ----------
+        cursor: Cursor
+            A cursor to update
+
+        Returns
+        -------
+        Cursor
+            A new cursor with updated parameters
+
+        Examples
+        --------
+        >>> cs = (0, [])
+        >>> character_matcher = Character('a')
+        >>> character_matcher.update(cs)
+        (1, [])
+
+        Notes
+        -----
+        We have to create a new cursor object because cursor objects are immutable
+        We update groups only if this object is a group anchor
+        Else, we just update the cursor position and pass in the same groups object to
+        the new cursor
+
+        """
+        if isinstance(self, Anchor) and (
+            self.anchor_type == AnchorType.GroupEntry
+            or self.anchor_type == AnchorType.GroupExit
         ):
-            return self.update_groups_no_check(cursor)
+            return self._update_groups_and_index(cursor)
         return self.update_index(cursor)
 
     def update_index(self, cursor: Cursor) -> Cursor:
+        """
+        Only increment the position of the cursor
+        Pass in the groups object as is
+        """
         position, groups = cursor
-        return self.increment(position), groups
+        return self.increment_index(position), groups
 
-    def increment(self, index: int) -> int:
-        """We keep the index the same only when we are an Anchor"""
+    def increment_index(self, index: int) -> int:
+        """
+        Depending on the type of the matcher, increment the index to a new value
+        We keep the index the same only when we are an Anchor
+
+        Parameters
+        ----------
+        index: int
+            The index to increment
+
+        Notes
+        -----
+        As an optimization, if we have a multi-character matcher, then we have to update this method
+        to return the length of the multi-character match
+
+        """
         return index + (not isinstance(self, Anchor))
 
 
 @dataclass
 class RegexNode(ABC):
+    # finds upper case letters which are not at the beginning of a string
+    pattern = re.compile(r"(?<!^)(?=[A-Z])")
+
     def accept(self, visitor: "RegexNodesVisitor"):
-        method_name = f"visit_{pattern.sub('_', self.__class__.__name__).lower()}"
+        """
+        This is the acceptor of an instance of RegexNodesVisitor
+        Works by finding the appropriate method in the visitor.
+
+        The appropriate visit method for a class X is `visit_ + to_camel_case(X)`
+
+        Examples
+        --------
+        >>> PrintNode = type(
+        ...     "PrintNode",
+        ...     (),
+        ...     {
+        ...         "visit_match": lambda _self, _: NotImplemented,
+        ...         "visit_group": lambda _self, _: NotImplemented,
+        ...         "visit_expression": lambda _self, expression: print(f"Yay an "
+        ...             f"expression {expression}"),
+        ...         "visit_any_character": lambda _self, _: NotImplemented,
+        ...         "visit_character_group": lambda _self, character_group: print(f"Yay a "
+        ...             f"character group {character_group}"),
+        ...         "visit_character": lambda _self, character: print(f"Yay a character {character}"),
+        ...    })
+        >>> printer = PrintNode()
+        >>> character_matcher = Character('a')
+        >>> character_matcher.accept(printer)
+        Yay a character a
+        >>>
+        >>> character_group_matcher = CharacterGroup((CharacterRange('a', 'z'),), True)
+        >>> character_group_matcher.accept(printer)
+        Yay a character group [^a-z]
+        >>> q = Quantifier('+', lazy=True)
+        >>> expr = Expression([Match(character_matcher, q)], Expression([Match(character_group_matcher, None)]))
+        >>> expr.accept(printer)
+        Yay an expression Expression(seq=[Match(item=a, quantifier=Quantifier(param='+', lazy=True))], alternate=Expression(seq=[Match(item=[^a-z], quantifier=None)], alternate=None))
+
+        """
+        method_name = f"visit_{self.pattern.sub('_', self.__class__.__name__).lower()}"
         visit_method = getattr(visitor, method_name)
         return visit_method(self)
 
     @abstractmethod
-    def string(self) -> str:
+    def to_string(self) -> str:
+        """
+        Converts ("reverse engineers) a regex node to its sources string
+        """
         ...
 
 
-@dataclass
+class InvalidQuantifier(Exception):
+    ...
+
+
+@dataclass(slots=True, frozen=True)
 class Quantifier:
+    """
+    A class representing a regular expression quantifier
+
+    Attributes
+    ----------
+    param: str | tuple[int, Optional[int]]
+        A generically named union of the single character quantifiers and a range quantifier
+            `*`, `+`, `?` are represented by str
+            Range quantifiers are represented a tuple of 2 elements, (n, m).
+                See the notes section for more information
     lazy: bool
-    char: Optional[str]
-    range_quantifier: Optional[tuple[int, Optional[int]]] = None
+        True if the quantifier is lazy
+
+
+    Raises
+    ------
+    InvalidQuantifier
+        If an invalid parameter is given to the constructor
+
+    Notes
+    -----
+    Supported are both lazy and greedy variants of:
+    *	    Matches zero or more times.
+    +       Matches one or more times.
+    ?	    Matches zero or one time.
+    {n}     Matches exactly n times. (n >= 0) ; Represented by m = None
+    {n,}    Matches at least n times. (n >= 0);   Represented by m = maxsize
+    {n,m}	Matches from n to m times.  (n >= 0, m >= n)
+    {,m}    Matches from 0 to m times (m >= 1);  Represented by n = 0
+    """
+
+    param: str | tuple[int, Optional[int]]
+    lazy: bool
 
     def _validate_range(self):
-        assert self.range_quantifier is not None
-        start, end = self.range_quantifier
-        if end is None:
-            if start < 0:
-                raise RegexpParsingError(
-                    f"Invalid Range Quantifier: fixed quantifier, {{n}} must be >= 0: not {start}"
+        """
+        Validates a range quantifier
+
+        Raises
+        ------
+        InvalidQuantifier
+            If an invalid range is given to the constructor
+
+        Examples
+        --------
+        >>> Quantifier((-1, None), lazy=False)
+        Traceback (most recent call last):
+            ...
+        parser.InvalidQuantifier: fixed quantifier: {n} must be >= 0: -1 < 0
+        >>> Quantifier((-1, maxsize), lazy=False)
+        Traceback (most recent call last):
+            ...
+        parser.InvalidQuantifier: {n,} quantifier: n>=0 constraint violated: -1 < 0
+        >>> Quantifier((-1, 1), lazy=False)
+        Traceback (most recent call last):
+            ...
+        parser.InvalidQuantifier: {n,m} quantifier: n>=0 constraint violated: -1 < 0
+        >>> Quantifier((1, 0), lazy=False)
+        Traceback (most recent call last):
+            ...
+        parser.InvalidQuantifier: {n,m} quantifier: m>=n constraint violated: 0 < 1
+
+        """
+
+        assert self.param is not None
+        n, m = self.param
+        if m is None:
+            if n < 0:
+                raise InvalidQuantifier(
+                    f"fixed quantifier: {{n}} must be >= 0: {n} < 0"
                 )
-        elif isinstance(end, int):
-            if end == maxsize:
-                if start < 0:
-                    raise RegexpParsingError(
-                        f"Invalid Range Quantifier: for {{n,}} quantifier, {{n}} must be >= 0: not {start}"
+        elif isinstance(m, int):
+            if m == maxsize:
+                if n < 0:
+                    raise InvalidQuantifier(
+                        f"{{n,}} quantifier: n>=0 constraint violated: {n} < 0"
                     )
             else:
-                if start < 0:
-                    raise RegexpParsingError(
-                        f"Invalid Range Quantifier: for {{n, m}} quantifier, {{n}} must be >= 0: not {start}"
+                if n < 0:
+                    raise InvalidQuantifier(
+                        f"{{n,m}} quantifier: n>=0 constraint violated: {n} < 0"
                     )
-                if end < start:
-                    raise RegexpParsingError(
-                        f"Invalid Range Quantifier: for {{n, m}} quantifier, {{m}} must be >= {{n}}: not {end}"
+                if m < n:
+                    raise InvalidQuantifier(
+                        f"{{n,m}} quantifier: m>=n constraint violated: {m} < {n}"
                     )
-        elif start == 0:
-            if not isinstance(end, int):
-                raise RegexpParsingError(
-                    f"Invalid Range Quantifier: invalid upper bound {end}"
-                )
-            if end < 1:
-                raise RegexpParsingError(
-                    f"Invalid Range Quantifier: for {{, m}} quantifier, {{m}} must be >= 1: not {end}"
-                )
         else:
-            raise RegexpParsingError(
-                f"Invalid Range Quantifier: invalid range {{{start}, {end}}}"
+            raise InvalidQuantifier(
+                f"Invalid Range Quantifier: invalid range {{{n}, {m}}}"
+            )
+
+    def _validate_single_letter_quantifier(self):
+        """
+        Check that a quantifier is among the supported options: ('?', '+', '*')
+
+        Raises
+        ------
+        InvalidQuantifier
+            If an invalid letter is given to the constructor
+
+        Examples
+        --------
+        >>> Quantifier('&', lazy=False)
+        Traceback (most recent call last):
+            ...
+        parser.InvalidQuantifier: invalid quantifier '&': options are ('?', '+', '*')
+        """
+        if self.param not in QUANTIFIER_OPTIONS:
+            raise InvalidQuantifier(
+                f"invalid quantifier {self.param!r}: options are {QUANTIFIER_OPTIONS!r}"
             )
 
     def __post_init__(self):
-        if self.char is not None:
-            assert self.char in ("?", "+", "*"), f"invalid quantifier {self.char}"
+        """
+        Validates parameter passed to the dataclass
+        See helper methods for details
+        """
+
+        if isinstance(self.param, str):
+            self._validate_single_letter_quantifier()
         else:
-            assert self.range_quantifier is not None
+            assert self.param is not None
             self._validate_range()
 
     def string(self):
-        # TODO: Fix string method of range quantifier so that it appears as it was in original regex
-        if self.char is not None:
-            base = self.char
+        if isinstance(self.param, str):
+            base = self.param
         else:
-            base = f"{{{self.range_quantifier}}}"
+            n, m = self.param
+            if m is None:
+                base = f"{{{n}}}"  # {n}
+            elif isinstance(m, int):
+                if m == maxsize:
+                    base = f"{{{n},}}"  # {n,}
+                else:
+                    base = f"{{{n},{m}}}"  # {n,m}
+            else:
+                # start == 0
+                base = f"{{,{m}}}"  # {,m}
         return base + "?" if self.lazy else ""
 
 
@@ -375,7 +546,14 @@ class Anchor(MatchingNode):
 
         raise NotImplementedError
 
-    def string(self):
+    def _update_groups_and_index(self, cursor: Cursor) -> Cursor:
+        # must create a shallow copy
+        position, groups = cursor
+        groups_copy = groups[:]
+        groups_copy[self.offset] = position
+        return self.increment_index(position), groups_copy
+
+    def to_string(self):
         return self.anchor_type.value
 
     def __hash__(self):
@@ -409,7 +587,7 @@ class AnyCharacter(MatchingNode):
     def __hash__(self):
         return hash(".")
 
-    def string(self):
+    def to_string(self):
         return "."
 
 
@@ -437,7 +615,7 @@ class Character(MatchingNode):
     def __hash__(self):
         return hash(self.char)
 
-    def string(self):
+    def to_string(self):
         if self.char in ESCAPED:
             return "\\" + self.char
         return self.char
@@ -470,7 +648,7 @@ class CharacterGroup(MatchingNode):
     def __hash__(self):
         return hash((self.matching_nodes, self.negated))
 
-    def string(self):
+    def to_string(self):
         return self.__repr__()
 
 
@@ -479,10 +657,8 @@ class Match(RegexNode):
     item: Character | CharacterGroup | AnyCharacter
     quantifier: Optional[Quantifier]
 
-    def string(self):
-        return (
-            f'{self.item.string()}{self.quantifier.string() if self.quantifier else ""}'
-        )
+    def to_string(self):
+        return f'{self.item.to_string()}{self.quantifier.string() if self.quantifier else ""}'
 
 
 @dataclass
@@ -494,9 +670,9 @@ class Group(RegexNode):
     def is_capturing(self):
         return self.index is not None
 
-    def string(self):
+    def to_string(self):
         expression = (
-            f"({'' if self.is_capturing() else '?:'}{self.expression.string()})"
+            f"({'' if self.is_capturing() else '?:'}{self.expression.to_string()})"
         )
         if self.quantifier is not None:
             return f"{expression}{self.quantifier.string()}"
@@ -508,10 +684,10 @@ class Expression(RegexNode):
     seq: list[Anchor | Group | Match]
     alternate: Optional["Expression"] = None
 
-    def string(self):
-        seq = "".join(item.string() for item in self.seq)
+    def to_string(self):
+        seq = "".join(item.to_string() for item in self.seq)
         if self.alternate is not None:
-            return f"{seq}|{self.alternate.string()}"
+            return f"{seq}|{self.alternate.to_string()}"
         return seq
 
 
@@ -714,11 +890,10 @@ class RegexParser:
 
     def parse_quantifier(self) -> Quantifier:
         if self.matches_any(("*", "+", "?")):
-            quantifier_char = self.consume_and_return()
-            return Quantifier(self.optional("?"), quantifier_char)
+            param = self.consume_and_return()
         else:
-            quantifier_range = self.parse_range_quantifier()
-            return Quantifier(self.optional("?"), None, quantifier_range)
+            param = self.parse_range_quantifier()
+        return Quantifier(param, self.optional("?"))
 
     def parse_int(self):
         digits = []
@@ -889,7 +1064,7 @@ class RegexParser:
     def parse_anchor(self):
         if self.matches("\\"):
             self.consume("\\")
-            assert self.current() in {"A", "z", "Z", "G", "b", "B"}
+            assert self.current() in ANCHORS
         return Anchor(char2anchor_type[self.consume_and_return()])
 
     def __repr__(self):

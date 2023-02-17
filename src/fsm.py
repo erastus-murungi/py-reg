@@ -155,7 +155,7 @@ class NFA(defaultdict[State, list[Transition]], RegexNodesVisitor[Fragment[State
                 if isinstance(o, Transition):
                     return [o.matcher, o.end]
                 if isinstance(o, RegexNode):
-                    return o.string()
+                    return o.to_string()
                 if isinstance(o, set):
                     return list(o)
                 return json.JSONEncoder.default(self, o)
@@ -309,7 +309,7 @@ class NFA(defaultdict[State, list[Transition]], RegexNodesVisitor[Fragment[State
         """
 
         quantifier = node.quantifier
-        start, end = quantifier.range_quantifier
+        start, end = quantifier.param
 
         if start == 0:
             if end == maxsize:
@@ -361,9 +361,9 @@ class NFA(defaultdict[State, list[Transition]], RegexNodesVisitor[Fragment[State
         node: Group | Match,
     ) -> Fragment:
         quantifier = node.quantifier
-        if quantifier.char is not None:
+        if isinstance(quantifier.param, str):
             fragment = self._gen_frag_for_quantifiable(node)
-            match quantifier.char:
+            match quantifier.param:
                 case "+":
                     return self.one_or_more(fragment, quantifier.lazy)
                 case "*":
@@ -371,7 +371,7 @@ class NFA(defaultdict[State, list[Transition]], RegexNodesVisitor[Fragment[State
                 case "?":
                     return self.zero_or_one(fragment, quantifier.lazy)
                 case _:
-                    raise RuntimeError(f"unrecognized quantifier {quantifier.char}")
+                    raise RuntimeError(f"unrecognized quantifier {quantifier.param}")
         else:
             return self._apply_range_quantifier(node)
 
