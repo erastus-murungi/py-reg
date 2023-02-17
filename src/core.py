@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from enum import IntFlag, auto
 from sys import maxsize
 from typing import Callable, Generic, Optional, TypeVar
 
@@ -19,6 +20,14 @@ class Fragment(Generic[T]):
     @staticmethod
     def duplicate(item: T) -> "Fragment[T]":
         return Fragment(item, item)
+
+
+class RegexFlag(IntFlag):
+    NOFLAG = auto()
+    IGNORECASE = auto()
+    MULTILINE = auto()
+    DOTALL = auto()  # make dot match newline
+    FREESPACING = auto()
 
 
 @dataclass(slots=True)

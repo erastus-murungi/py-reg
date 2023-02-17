@@ -1,9 +1,11 @@
 import re
 from abc import ABC, ABCMeta, abstractmethod
 from dataclasses import dataclass, field
-from enum import Enum, IntFlag, auto
+from enum import Enum
 from sys import maxsize
 from typing import Final, Generic, Hashable, Optional, TypeVar
+
+from core import RegexFlag
 
 T = TypeVar("T")
 
@@ -13,14 +15,6 @@ pattern = re.compile(r"(?<!^)(?=[A-Z])")
 ESCAPED = set(". \\ + * ? [ ^ ] $ ( ) { } = < > | -".split())
 CHARACTER_CLASSES = {"w", "W", "s", "S", "d", "D"}
 UNESCAPED_IN_CHAR_GROUP = ESCAPED - {"]"}
-
-
-class RegexFlag(IntFlag):
-    NOFLAG = auto()
-    IGNORECASE = auto()
-    MULTILINE = auto()
-    DOTALL = auto()  # make dot match newline
-    FREESPACING = auto()
 
 
 class RegexpParsingError(Exception):
