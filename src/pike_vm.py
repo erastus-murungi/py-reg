@@ -421,3 +421,17 @@ if __name__ == "__main__":
     import doctest
 
     doctest.testmod()
+
+    import re
+    from pprint import pprint
+
+    regex, text = "($)|()", "xxx"
+    p = RegexPikeVM(regex)
+
+    expected_groups = [m.groups() for m in re.finditer(regex, text)]
+    actual_groups = [m.groups() for m in p.finditer(text)]
+    # p.graph()
+    pprint(list(p.finditer(text)))
+    pprint(list(re.finditer(regex, text)))
+    pprint(actual_groups)
+    pprint(expected_groups)

@@ -1,4 +1,6 @@
+from collections import deque
 from operator import itemgetter
+from pprint import pprint
 from typing import Optional
 
 from src.fsm import DFA, NFA, State, Transition
@@ -100,6 +102,81 @@ class RegexNFA(NFA, RegexPattern):
             )
         return transitions
 
+    def step0(
+        self,
+        start: Transition,
+        cursor: Cursor,
+        context: Context,
+        explored: set[Transition],
+    ) -> list[tuple[Transition, Cursor]]:
+        """
+        Performs a depth first search to collect valid transitions the transitions reachable through epsilon transitions
+        """
+        stack: list[tuple[Transition, Cursor]] = [
+            (nxt, start.matcher.update(cursor)) for nxt in self[start.end][::-1]
+        ]
+        transitions: list[tuple[Transition, Cursor]] = []
+
+        while stack:
+            transition, cursor = stack.pop()
+
+            if transition in explored:
+                continue
+
+            explored.add(transition)
+
+            if isinstance(transition.matcher, Anchor):
+                if transition.matcher is EPSILON or transition.matcher(cursor, context):
+                    if transition.end in self.accepting_states:
+                        transitions.append((transition, cursor))
+                    else:
+                        stack.extend(
+                            (nxt, transition.matcher.update(cursor))
+                            for nxt in self[transition.end][::-1]
+                        )
+            else:
+                transitions.append((transition, cursor))
+
+        return transitions
+
+    def _match_suffix_with_groups0(
+        self, cursor: Cursor, context: Context
+    ) -> Optional[Cursor]:
+        # we only need to keep track of 3 state variables
+        visited = set()
+        queue = deque(
+            self.step0(Transition(EPSILON, self.start_state), cursor, context, visited)
+        )
+
+        match = None
+
+        while True:
+            frontier, next_visited = deque(), set()
+
+            while queue:
+                transition, cursor = queue.popleft()
+
+                if (
+                    transition.matcher(cursor, context)
+                    or transition.matcher is EPSILON
+                    and transition.end in self.accepting_states
+                ):
+                    if transition.end in self.accepting_states:
+                        match = transition.matcher.update(cursor)
+                        break
+
+                    if transition.end not in next_visited:
+                        frontier.extend(
+                            self.step0(transition, cursor, context, next_visited)
+                        )
+
+            if not frontier:
+                break
+
+            queue, visited = frontier, next_visited
+
+        return match
+
     def _match_suffix_with_groups(
         self, cursor: Cursor, context: Context
     ) -> Optional[Cursor]:
@@ -194,7 +271,7 @@ class RegexNFA(NFA, RegexPattern):
         if isinstance(super(), DFA):
             return self._match_suffix_dfa(self.start_state, cursor, context)
         elif self.parser.group_count > 0:
-            return self._match_suffix_with_groups(cursor, context)
+            return self._match_suffix_with_groups0(cursor, context)
         else:
             return self._match_suffix_no_groups(cursor, context)
 
@@ -203,6 +280,19 @@ class RegexNFA(NFA, RegexPattern):
 
 
 if __name__ == "__main__":
-    import doctest
+    # import doctest
+    #
+    # doctest.testmod()
+    import re
 
-    doctest.testmod()
+    # regex, text = "(a+|b)*", "ab"
+    regex, text = pattern = "s()?e", "searchme"
+    p = RegexNFA(regex)
+
+    expected_groups = [m.groups() for m in re.finditer(regex, text)]
+    actual_groups = [m.groups() for m in p.finditer(text)]
+    # p.graph()
+    pprint(list(p.finditer(text)))
+    pprint(list(re.finditer(regex, text)))
+    pprint(actual_groups)
+    pprint(expected_groups)

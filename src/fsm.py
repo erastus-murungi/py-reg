@@ -53,7 +53,7 @@ def gen_state_fragment() -> Fragment[State]:
     return Fragment(gen_state(), gen_state())
 
 
-@dataclass(eq=True, slots=True)
+@dataclass(eq=False, slots=True)
 class Transition:
     matcher: Matcher
     end: State
