@@ -15,6 +15,7 @@ class Fragment(NamedTuple):
 
 
 class RegexFlag(IntFlag):
+    NO_BACKTRACK = auto()
     NOFLAG = auto()
     IGNORECASE = auto()
     MULTILINE = auto()

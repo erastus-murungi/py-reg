@@ -102,7 +102,7 @@ class RegexNFA(NFA, RegexPattern):
             )
         return transitions
 
-    def step0(
+    def queue_transition(
         self,
         start: Transition,
         cursor: Cursor,
@@ -112,9 +112,7 @@ class RegexNFA(NFA, RegexPattern):
         """
         Performs a depth first search to collect valid transitions the transitions reachable through epsilon transitions
         """
-        stack: list[tuple[Transition, Cursor]] = [
-            (nxt, start.matcher.update(cursor)) for nxt in self[start.end][::-1]
-        ]
+        stack = [(nxt, start.matcher.update(cursor)) for nxt in self[start.end][::-1]]
         transitions: list[tuple[Transition, Cursor]] = []
 
         while stack:
@@ -139,45 +137,42 @@ class RegexNFA(NFA, RegexPattern):
 
         return transitions
 
-    def _match_suffix_with_groups0(
+    def _match_suffix_no_backtrack(
         self, cursor: Cursor, context: Context
     ) -> Optional[Cursor]:
         # we only need to keep track of 3 state variables
         visited = set()
         queue = deque(
-            self.step0(Transition(EPSILON, self.start_state), cursor, context, visited)
+            self.queue_transition(
+                Transition(EPSILON, self.start_state), cursor, context, visited
+            )
         )
 
         match = None
 
         while True:
-            frontier, next_visited = deque(), set()
+            frontier, visited = deque(), set()
 
             while queue:
                 transition, cursor = queue.popleft()
 
-                if (
-                    transition.matcher(cursor, context)
-                    or transition.matcher is EPSILON
-                    and transition.end in self.accepting_states
-                ):
+                if transition.matcher is EPSILON or transition.matcher(cursor, context):
                     if transition.end in self.accepting_states:
                         match = transition.matcher.update(cursor)
                         break
 
-                    if transition.end not in next_visited:
-                        frontier.extend(
-                            self.step0(transition, cursor, context, next_visited)
-                        )
+                    frontier.extend(
+                        self.queue_transition(transition, cursor, context, visited)
+                    )
 
             if not frontier:
                 break
 
-            queue, visited = frontier, next_visited
+            queue = frontier
 
         return match
 
-    def _match_suffix_with_groups(
+    def _match_suffix_backtrack(
         self, cursor: Cursor, context: Context
     ) -> Optional[Cursor]:
         # we only need to keep track of 3 state variables
@@ -201,36 +196,6 @@ class RegexNFA(NFA, RegexPattern):
                     (
                         end_state,
                         matcher.update(cursor),
-                        updated_path,
-                    )
-                )
-
-        return None
-
-    def _match_suffix_no_groups(
-        self, cursor: Cursor, context: Context
-    ) -> Optional[int]:
-        # we only need to keep track of 2 state variables
-        stack = [(self.start_state, cursor, ())]
-
-        while stack:
-            state, cursor, path = stack.pop()
-
-            if state in self.accepting_states:
-                return cursor
-
-            for matcher, end_state in reversed(self.step(state, cursor, context)):
-                if isinstance(matcher, Anchor):
-                    if end_state in path:
-                        continue
-                    updated_path = path + (end_state,)
-                else:
-                    updated_path = ()
-
-                stack.append(
-                    (
-                        end_state,
-                        matcher.update_index(cursor),
                         updated_path,
                     )
                 )
@@ -270,29 +235,16 @@ class RegexNFA(NFA, RegexPattern):
         """
         if isinstance(super(), DFA):
             return self._match_suffix_dfa(self.start_state, cursor, context)
-        elif self.parser.group_count > 0:
-            return self._match_suffix_with_groups0(cursor, context)
+        elif RegexFlag.NO_BACKTRACK & self.parser.flags:
+            return self._match_suffix_no_backtrack(cursor, context)
         else:
-            return self._match_suffix_no_groups(cursor, context)
+            return self._match_suffix_backtrack(cursor, context)
 
     def __repr__(self):
         return super().__repr__()
 
 
 if __name__ == "__main__":
-    # import doctest
-    #
-    # doctest.testmod()
-    import re
+    import doctest
 
-    # regex, text = "(a+|b)*", "ab"
-    regex, text = pattern = "s()?e", "searchme"
-    p = RegexNFA(regex)
-
-    expected_groups = [m.groups() for m in re.finditer(regex, text)]
-    actual_groups = [m.groups() for m in p.finditer(text)]
-    # p.graph()
-    pprint(list(p.finditer(text)))
-    pprint(list(re.finditer(regex, text)))
-    pprint(actual_groups)
-    pprint(expected_groups)
+    doctest.testmod()
