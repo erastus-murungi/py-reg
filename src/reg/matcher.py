@@ -3,6 +3,7 @@ from sys import maxsize
 from typing import Callable, Final, NamedTuple, Optional
 
 from more_itertools import first_true, take
+from tqdm import tqdm
 
 from reg.utils import RegexFlag
 
@@ -93,14 +94,22 @@ class RegexPattern(ABC):
         assert self.parser.flags is not None
         context: Final[Context] = Context(text, self.parser.flags)
         start = 0
+        show_progress = self.parser.flags & RegexFlag.DEBUG
+        if show_progress:
+            t = tqdm(total=len(text))
         while start <= len(text):
             cursor = Cursor(start, [maxsize] * (self.parser.group_count * 2))
             if (cursor := self.match_suffix(cursor, context)) is not None:
                 position, groups = cursor
                 yield RegexMatch(start, position, text, groups)
-                start = position + 1 if position == start else position
+                inc = 1 if position == start else (position - start)
             else:
-                start = start + 1
+                inc = 1
+            if show_progress:
+                t.update(inc)
+            start += inc
+        if show_progress:
+            t.close()
 
     def match(self, text: str):
         """Try to apply the pattern at the start of the string, returning

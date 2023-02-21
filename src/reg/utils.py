@@ -22,6 +22,7 @@ class RegexFlag(IntFlag):
     DOTALL = auto()  # make dot match newline
     FREESPACING = auto()
     OPTIMIZE = auto()
+    DEBUG = auto()
 
 
 class UnionFind:

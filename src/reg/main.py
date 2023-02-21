@@ -1,14 +1,20 @@
+import sys
 from typing import IO
 
 import click
 
+from reg.nfa_matcher import RegexNFA
+from reg.pike_vm import RegexPikeVM
 from reg.utils import RegexFlag
 
 
 @click.command(name="re", help="Regular expression learning tool")
 @click.argument("pattern", type=click.STRING)
-@click.argument("text", type=click.STRING)
-@click.option("--out", "-o", type=click.File(), default=None, help="Output of the file")
+@click.option("--text", type=click.STRING, help="text to search pattern")
+@click.option("--input-file", type=click.File(), default=None, help="Input file")
+@click.option(
+    "--out", "-o", type=click.File("w"), default=sys.stdout, help="Output of the file"
+)
 @click.option(
     "--engine",
     "-e",
@@ -48,17 +54,53 @@ from reg.utils import RegexFlag
     default=False,
     help="Turn on dotall mode",
 )
+@click.option(
+    "--debug",
+    "-g",
+    is_flag=True,
+    show_default=True,
+    default=False,
+    help="Turn on debug mode",
+)
 def entry(
     pattern: str,
     text: str,
+    input_file: IO,
     out: IO,
     engine: str,
     optimize: bool,
     multiline: bool,
     ignorecase: bool,
     dotall: bool,
+    debug: bool,
 ):
+    if input_file is not None:
+        text = input_file.read()
+    assert text
+
     flags = RegexFlag.NOFLAG
+    if dotall:
+        flags |= RegexFlag.DOTALL
+    if optimize:
+        flags |= RegexFlag.OPTIMIZE
+    if multiline:
+        flags |= RegexFlag.MULTILINE
+    if ignorecase:
+        flags |= RegexFlag.IGNORECASE
+    if engine == "NB":
+        flags |= RegexFlag.NO_BACKTRACK
+    if debug:
+        flags |= RegexFlag.DEBUG
+
+    if engine == "VM":
+        compiled_pattern = RegexPikeVM(pattern, flags)
+    else:
+        compiled_pattern = RegexNFA(pattern, flags)
+    with out:
+        for index, m in enumerate(compiled_pattern.finditer(text)):
+            out.write(f"[{index}]   {m.span}\n")
+            out.write(m.group(0))
+            out.write("\n")
 
 
 if __name__ == "__main__":
