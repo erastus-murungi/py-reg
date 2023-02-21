@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "reg"
+version = "0.0.1"
+authors = [
+  { name="Erastus Murungi", email="erastusmurungi@gmail.com" },
+]
+description = "A small library for playing around with regular expressions"
+readme = "README.md"
+requires-python = ">=3.10"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+dynamic = ["dependencies"]
+[tool.setuptools.dynamic]
+dependencies = {file = ["requirements.txt"]}
+
+[project.urls]
+"Homepage" = "https://github.com/erastus-murungi/reg"
+"Bug Tracker" = "https://github.com/erastus-murungi/reg/issues"

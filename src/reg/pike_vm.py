@@ -4,9 +4,9 @@ from itertools import pairwise
 from sys import maxsize
 from typing import Final, Hashable, Optional
 
-from src.matcher import Context, Cursor, RegexPattern
-from src.optimizer import Optimizer
-from src.parser import (
+from reg.matcher import Context, Cursor, RegexPattern
+from reg.optimizer import Optimizer
+from reg.parser import (
     EMPTY_STRING,
     Anchor,
     Expression,
@@ -17,7 +17,7 @@ from src.parser import (
     RegexNodesVisitor,
     RegexParser,
 )
-from src.utils import Fragment
+from reg.utils import Fragment
 
 
 class Instruction(Hashable):

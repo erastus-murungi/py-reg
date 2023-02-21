@@ -5,8 +5,8 @@ from enum import Enum
 from sys import maxsize
 from typing import Final, Generic, Hashable, Optional, TypeVar
 
-from src.matcher import Context, Cursor
-from src.utils import RegexFlag
+from reg.matcher import Context, Cursor
+from reg.utils import RegexFlag
 
 V = TypeVar("V")
 

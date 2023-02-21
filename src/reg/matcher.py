@@ -4,7 +4,7 @@ from typing import Callable, Final, NamedTuple, Optional
 
 from more_itertools import first_true, take
 
-from src.utils import RegexFlag
+from reg.utils import RegexFlag
 
 
 class RegexMatch(NamedTuple):

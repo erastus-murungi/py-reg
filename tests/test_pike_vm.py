@@ -3,8 +3,8 @@ from random import randint, random, seed
 
 import pytest
 
-from src.parser import RegexpParsingError
-from src.pike_vm import RegexPikeVM
+from reg.parser import RegexpParsingError
+from reg.pike_vm import RegexPikeVM
 
 
 def _test_case_no_groups(pattern: str, text: str) -> None:

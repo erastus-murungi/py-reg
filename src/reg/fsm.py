@@ -10,7 +10,7 @@ from typing import Any, Iterable, Iterator, Optional, Union
 import graphviz
 from more_itertools import first, first_true, minmax, only, pairwise
 
-from src.parser import (
+from reg.parser import (
     EMPTY_STRING,
     EPSILON,
     GROUP_LINK,
@@ -22,7 +22,7 @@ from src.parser import (
     RegexNode,
     RegexNodesVisitor,
 )
-from src.utils import Fragment, UnionFind
+from reg.utils import Fragment, UnionFind
 
 State = Union[int, str]
 

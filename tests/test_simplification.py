@@ -1,6 +1,6 @@
 import pytest
 
-from src.nfa_matcher import RegexNFA
+from reg.nfa_matcher import RegexNFA
 
 
 @pytest.mark.parametrize(

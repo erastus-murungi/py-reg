@@ -2,10 +2,10 @@ from collections import deque
 from operator import itemgetter
 from typing import Optional
 
-from src.fsm import DFA, NFA, State, Transition
-from src.matcher import Context, Cursor, RegexPattern
-from src.optimizer import Optimizer
-from src.parser import EPSILON, Anchor, RegexFlag, RegexParser
+from reg.fsm import DFA, NFA, State, Transition
+from reg.matcher import Context, Cursor, RegexPattern
+from reg.optimizer import Optimizer
+from reg.parser import EPSILON, Anchor, RegexFlag, RegexParser
 
 
 class RegexNFA(NFA, RegexPattern):

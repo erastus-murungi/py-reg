@@ -2,3 +2,4 @@ __pycache__
 .idea
 graphs
 .DS_Store
+src/reg.egg-info/

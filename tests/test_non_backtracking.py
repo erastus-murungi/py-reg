@@ -3,9 +3,9 @@ from random import randint, random, seed
 
 import pytest
 
-from src.nfa_matcher import RegexNFA
-from src.parser import RegexpParsingError
-from src.utils import RegexFlag
+from reg.nfa_matcher import RegexNFA
+from reg.parser import RegexpParsingError
+from reg.utils import RegexFlag
 
 # acquired from re2: https://github.com/google/re2/blob/main/re2/testing/search_test.cc
 

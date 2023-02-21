@@ -1,6 +1,6 @@
 from itertools import groupby
 
-from src.parser import (
+from reg.parser import (
     Character,
     Expression,
     Group,
