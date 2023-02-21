@@ -423,17 +423,6 @@ class RegexPikeVM(RegexPattern, RegexNodesVisitor[Fragment[Instruction]]):
 
 
 if __name__ == "__main__":
-    # import doctest
-    #
-    # doctest.testmod()
+    import doctest
 
-    # [(.?)*-x
-
-    import pprint
-    import re
-
-    regex, text = (r"\B(foo|fo)\B", "xfooo")
-    p = RegexPikeVM(regex)
-    pprint.pprint(p.linearize())
-    print(list(re.finditer(regex, text)))
-    print(list(p.finditer(text)))
+    doctest.testmod()

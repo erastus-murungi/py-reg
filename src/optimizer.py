@@ -57,3 +57,9 @@ class Optimizer(RegexNodesVisitor[None]):
     ) = (
         visit_character
     ) = visit_character_group = visit_word = visit_match = lambda self, _: None
+
+
+if __name__ == "__main__":
+    import doctest
+
+    doctest.testmod()

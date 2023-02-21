@@ -105,9 +105,8 @@ class NFA(defaultdict[State, list[Transition]], RegexNodesVisitor[Fragment[State
         self.start_state: State = -1
 
     def update_symbols_and_states(self):
-        self.states = set()
+        self.states = set(self)
         for start in self:
-            self.states.add(start)
             for matchable, end in self[start]:
                 self.states.add(end)
                 self.symbols.add(matchable)
@@ -146,12 +145,15 @@ class NFA(defaultdict[State, list[Transition]], RegexNodesVisitor[Fragment[State
 
     def __repr__(self):
         return (
-            f"FSM({self.states=}, "
-            f"{self.symbols=}, "
-            f"{self.start_state=}, "
-            f"transitions = {super().__repr__()}"
+            f"FSM(states={tuple(sorted(self.states))}, "
+            f"symbols={self.symbols}, "
+            f"start_state={self.start_state=}, "
+            f"transitions={super().__repr__()}, "
             f"accept_states={self.accepting_states}) "
         )
+
+    def n_transitions(self):
+        return sum(len(transitions) for transitions in self.values())
 
     def to_json(self):
         class CustomEncoder(json.JSONEncoder):
@@ -193,8 +195,7 @@ class NFA(defaultdict[State, list[Transition]], RegexNodesVisitor[Fragment[State
 
             seen.add(state)
             # explore the states in the order which they are in
-            nxt = self.transition(state, EPSILON, True)[::-1]
-            stack.extend(nxt)
+            stack.extend(self.transition(state, EPSILON, True)[::-1])
             closure.add(state)
 
         return tuple(closure)
@@ -455,6 +456,25 @@ class NFA(defaultdict[State, list[Transition]], RegexNodesVisitor[Fragment[State
     def reduce_epsilons(self):
         """
         Attempts to reduce the number of epsilon's in the NFA while maintaining correctness
+
+        Examples
+        --------
+        >>> from src.parser import Character
+        >>> nfa = NFA()
+        >>> a, b, c = map(Character, 'abc')
+        >>> nfa.add_transition(1, 2, EPSILON)
+        >>> nfa.add_transition(2, 3, a)
+        >>> nfa.add_transition(3, 4, b)
+        >>> nfa.add_transition(4, 5, EPSILON)
+        >>> nfa.add_transition(4, 5, c)
+        >>> nfa.set_start(1)
+        >>> nfa.set_accept(5)
+        >>> nfa.update_symbols_and_states()
+        >>> nfa.n_transitions()
+        5
+        >>> nfa.reduce_epsilons()
+        >>> nfa.n_transitions()
+        4
         """
 
         def add_if_absent(_transitions: list[Transition], _transition: Transition):
@@ -659,3 +679,9 @@ class DFA(NFA):
         self.start_state = -1
         self.accepting_states.clear()
         self.states.clear()
+
+
+if __name__ == "__main__":
+    import doctest
+
+    doctest.testmod()
