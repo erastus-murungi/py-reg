@@ -52,9 +52,8 @@ class Optimizer(RegexNodesVisitor[None]):
     def visit_group(self, group: Group) -> None:
         group.expression.accept(self)
 
-    def visit_match(self, match: Match) -> None:
-        match.item.accept(self)
-
     visit_anchor = (
         visit_any_character
-    ) = visit_character = visit_character_group = visit_word = NotImplemented
+    ) = (
+        visit_character
+    ) = visit_character_group = visit_word = visit_match = lambda self, _: None

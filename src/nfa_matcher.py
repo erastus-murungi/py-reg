@@ -1,4 +1,3 @@
-import re
 from collections import deque
 from operator import itemgetter
 from typing import Optional
@@ -30,6 +29,7 @@ class RegexNFA(NFA, RegexPattern):
             Optimizer.run(self.parser.root)
         self.set_terminals(self.parser.root.accept(self))
         self.update_symbols_and_states()
+        self.reduce_epsilons()
 
     def recover(self) -> str:
         return self.parser.root.to_string()
@@ -230,7 +230,7 @@ class RegexNFA(NFA, RegexPattern):
         >>> compiled_regex = RegexNFA(pattern)
         >>> ctx = Context(text, RegexFlag.NOFLAG)
         >>> start = 0
-        >>> c = compiled_regex.match_suffix((start, [maxsize, maxsize]), ctx)
+        >>> c = compiled_regex.match_suffix(Cursor(start, [maxsize, maxsize]), ctx)
         >>> c
         Cursor(position=4, groups=[2, 4])
         >>> end, groups = c
@@ -248,12 +248,6 @@ class RegexNFA(NFA, RegexPattern):
 
 
 if __name__ == "__main__":
-    # import doctest
-    #
-    # doctest.testmod()
+    import doctest
 
-    regex, text = "yes this is it", "yes this is it"
-    p = RegexNFA(regex)
-    p.graph()
-    print(list(p.finditer(text)))
-    print(list(re.finditer(regex, text)))
+    doctest.testmod()
