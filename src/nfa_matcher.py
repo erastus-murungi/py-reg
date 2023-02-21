@@ -1,10 +1,11 @@
+import re
 from collections import deque
 from operator import itemgetter
-from pprint import pprint
 from typing import Optional
 
 from src.fsm import DFA, NFA, State, Transition
 from src.matcher import Context, Cursor, RegexPattern
+from src.optimizer import Optimizer
 from src.parser import EPSILON, Anchor, RegexFlag, RegexParser
 
 
@@ -22,9 +23,11 @@ class RegexNFA(NFA, RegexPattern):
     [('ab',)]
     """
 
-    def __init__(self, pattern: str, flags: RegexFlag = RegexFlag.NOFLAG):
+    def __init__(self, pattern: str, flags: RegexFlag = RegexFlag.OPTIMIZE):
         NFA.__init__(self)
         RegexPattern.__init__(self, RegexParser(pattern, flags))
+        if RegexFlag.OPTIMIZE & self.parser.flags:
+            Optimizer.run(self.parser.root)
         self.set_terminals(self.parser.root.accept(self))
         self.update_symbols_and_states()
 
@@ -107,7 +110,7 @@ class RegexNFA(NFA, RegexPattern):
         start: Transition,
         cursor: Cursor,
         context: Context,
-        explored: set[Transition],
+        explored: set[tuple[int, Transition]],
     ) -> list[tuple[Transition, Cursor]]:
         """
         Performs a depth first search to collect valid transitions the transitions reachable through epsilon transitions
@@ -118,10 +121,10 @@ class RegexNFA(NFA, RegexPattern):
         while stack:
             transition, cursor = stack.pop()
 
-            if transition in explored:
+            if (cursor.position, transition) in explored:
                 continue
 
-            explored.add(transition)
+            explored.add((cursor.position, transition))
 
             if isinstance(transition.matcher, Anchor):
                 if transition.matcher is EPSILON or transition.matcher(cursor, context):
@@ -229,7 +232,7 @@ class RegexNFA(NFA, RegexPattern):
         >>> start = 0
         >>> c = compiled_regex.match_suffix((start, [maxsize, maxsize]), ctx)
         >>> c
-        (4, [2, 4])
+        Cursor(position=4, groups=[2, 4])
         >>> end, groups = c
         >>> assert text[start: end] == 'abab'
         """
@@ -245,6 +248,12 @@ class RegexNFA(NFA, RegexPattern):
 
 
 if __name__ == "__main__":
-    import doctest
+    # import doctest
+    #
+    # doctest.testmod()
 
-    doctest.testmod()
+    regex, text = "yes this is it", "yes this is it"
+    p = RegexNFA(regex)
+    p.graph()
+    print(list(p.finditer(text)))
+    print(list(re.finditer(regex, text)))

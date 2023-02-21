@@ -5,6 +5,7 @@ from sys import maxsize
 from typing import Final, Hashable, Optional
 
 from src.matcher import Context, Cursor, RegexPattern
+from src.optimizer import Optimizer
 from src.parser import (
     EMPTY_STRING,
     Anchor,
@@ -110,15 +111,17 @@ class RegexPikeVM(RegexPattern, RegexNodesVisitor[Fragment[Instruction]]):
     >>> compiled_regex = RegexPikeVM(pattern)
     >>> ctx = Context(text, RegexFlag.NOFLAG)
     >>> start = 0
-    >>> c = compiled_regex.match_suffix((start, [maxsize, maxsize]), ctx)
+    >>> c = compiled_regex.match_suffix(Cursor(start, [maxsize, maxsize]), ctx)
     >>> c
-    (4, [2, 4])
+    Cursor(position=4, groups=[2, 4])
     >>> end, groups = c
     >>> assert text[start: end] == 'abab'
     """
 
-    def __init__(self, pattern: str, flags: RegexFlag = RegexFlag.NOFLAG):
+    def __init__(self, pattern: str, flags: RegexFlag = RegexFlag.OPTIMIZE):
         super().__init__(RegexParser(pattern, flags))
+        if RegexFlag.OPTIMIZE & self.parser.flags:
+            Optimizer.run(self.parser.root)
         self.start, last = self.parser.root.accept(self)
         last.next = End()
 
@@ -132,7 +135,7 @@ class RegexPikeVM(RegexPattern, RegexNodesVisitor[Fragment[Instruction]]):
 
     @staticmethod
     def queue_thread(
-        queue: deque[Thread], thread: Thread, visited: set[Instruction]
+        queue: deque[Thread], thread: Thread, visited: set[tuple[int, Instruction]]
     ) -> None:
         """
         Queue a thread
@@ -169,10 +172,10 @@ class RegexPikeVM(RegexPattern, RegexNodesVisitor[Fragment[Instruction]]):
         while stack:
             instruction, cursor = stack.pop()
 
-            if instruction in visited:
+            if (cursor.position, instruction) in visited:
                 continue
 
-            visited.add(instruction)
+            visited.add((cursor.position, instruction))
 
             match instruction:
                 case Jump(target):
@@ -191,7 +194,7 @@ class RegexPikeVM(RegexPattern, RegexNodesVisitor[Fragment[Instruction]]):
                     queue.append((instruction, cursor))
 
     def match_suffix(self, cursor: Cursor, context: Context) -> Optional[Cursor]:
-        queue, visited = deque(), set()  # type: (deque[Thread], set[Instruction])
+        queue, visited = deque(), set()
         self.queue_thread(queue, (self.start, cursor), visited)
 
         match = None
@@ -205,7 +208,7 @@ class RegexPikeVM(RegexPattern, RegexNodesVisitor[Fragment[Instruction]]):
                     case Consume(matcher, next_instruction):
                         if matcher(cursor, context):
                             next_cursor = matcher.update_index(cursor)
-                            if next_cursor[0] == cursor[0]:
+                            if next_cursor.position == cursor.position:
                                 # process all anchors immediately
                                 self.queue_thread(
                                     queue, (next_instruction, next_cursor), visited
@@ -412,12 +415,25 @@ class RegexPikeVM(RegexPattern, RegexNodesVisitor[Fragment[Instruction]]):
 
     visit_character = (
         visit_character_group
-    ) = visit_any_character = visit_anchor = lambda _, matcher: Fragment.duplicate(
+    ) = (
+        visit_any_character
+    ) = visit_anchor = visit_word = lambda _, matcher: Fragment.duplicate(
         EmptyString() if matcher is EMPTY_STRING else Consume(matcher)
     )
 
 
 if __name__ == "__main__":
-    import doctest
+    # import doctest
+    #
+    # doctest.testmod()
 
-    doctest.testmod()
+    # [(.?)*-x
+
+    import pprint
+    import re
+
+    regex, text = (r"\B(foo|fo)\B", "xfooo")
+    p = RegexPikeVM(regex)
+    pprint.pprint(p.linearize())
+    print(list(re.finditer(regex, text)))
+    print(list(p.finditer(text)))

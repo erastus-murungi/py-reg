@@ -59,7 +59,9 @@ class Context(NamedTuple):
     flags: RegexFlag
 
 
-Cursor = tuple[int, list[int]]
+class Cursor(NamedTuple):
+    position: int
+    groups: list[int]
 
 
 class RegexPattern(ABC):
@@ -92,7 +94,7 @@ class RegexPattern(ABC):
         context: Final[Context] = Context(text, self.parser.flags)
         start = 0
         while start <= len(text):
-            cursor = (start, [maxsize] * (self.parser.group_count * 2))
+            cursor = Cursor(start, [maxsize] * (self.parser.group_count * 2))
             if (cursor := self.match_suffix(cursor, context)) is not None:
                 position, groups = cursor
                 yield RegexMatch(start, position, text, groups)

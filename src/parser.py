@@ -174,12 +174,12 @@ class Matcher(Hashable):
         >>> cs = (0, [])
         >>> character_matcher = Character('a')
         >>> character_matcher.update(cs)
-        (1, [])
+        Cursor(position=1, groups=[])
         >>> from sys import maxsize
         >>> cs = (1, [-1, -1])
         >>> group_entry = Anchor.group_entry(0)
         >>> group_entry.update(cs)
-        (1, [1, -1])
+        Cursor(position=1, groups=[1, -1])
 
         Notes
         -----
@@ -202,7 +202,7 @@ class Matcher(Hashable):
         Pass in the groups object as is
         """
         position, groups = cursor
-        return self.increment_index(position), groups
+        return Cursor(self.increment_index(position), groups)
 
     def increment_index(self, index: int) -> int:
         """
@@ -406,7 +406,7 @@ class Quantifier:
             assert self.param is not None
             self._validate_range()
 
-    def string(self):
+    def string(self) -> str:
         if isinstance(self.param, str):
             base = self.param
         else:
@@ -421,7 +421,7 @@ class Quantifier:
             else:
                 # start == 0
                 base = f"{{,{m}}}"  # {,m}
-        return base + "?" if self.lazy else ""
+        return base + ("?" if self.lazy else "")
 
 
 @dataclass
@@ -556,7 +556,7 @@ class Anchor(MatchingNode):
         position, groups = cursor
         groups_copy = groups[:]
         groups_copy[self.offset] = position
-        return self.increment_index(position), groups_copy
+        return Cursor(self.increment_index(position), groups_copy)
 
     def to_string(self):
         return self.anchor_type.value
@@ -627,13 +627,40 @@ class Character(MatchingNode):
 
 
 @dataclass
+class Word(MatchingNode):
+    chars: str
+
+    def to_string(self) -> str:
+        return self.chars
+
+    def __call__(self, cursor: Cursor, context: Context) -> bool:
+        (text, flags), (position, _) = context, cursor
+        if position < len(text):
+            if flags & RegexFlag.IGNORECASE:
+                return (
+                    self.chars.casefold()
+                    == text[position : len(self.chars) + position].casefold()
+                )
+            return text.startswith(self.chars, position)
+        return False
+
+    def __hash__(self) -> int:
+        return hash(self.chars)
+
+    def increment_index(self, index: int) -> int:
+        return index + len(self.chars)
+
+    def __repr__(self):
+        return f"{self.chars}"
+
+
+@dataclass
 class CharacterGroup(MatchingNode):
     matching_nodes: tuple[Character | CharacterRange, ...]
     negated: bool = False
 
     def __call__(self, cursor, context) -> bool:
-        (text, flags), (position, _) = context, cursor
-        if position >= len(text):
+        if cursor.position >= len(context.text):
             return False
         return self.negated ^ any(
             matching_node(cursor, context) for matching_node in self.matching_nodes
@@ -659,7 +686,7 @@ class CharacterGroup(MatchingNode):
 
 @dataclass
 class Match(RegexNode):
-    item: Character | CharacterGroup | AnyCharacter
+    item: Character | CharacterGroup | AnyCharacter | Word
     quantifier: Optional[Quantifier]
 
     def to_string(self):
@@ -723,6 +750,10 @@ class RegexNodesVisitor(Generic[V], metaclass=ABCMeta):
 
     @abstractmethod
     def visit_character_group(self, character_group: CharacterGroup) -> V:
+        ...
+
+    @abstractmethod
+    def visit_word(self, word: Word) -> V:
         ...
 
 

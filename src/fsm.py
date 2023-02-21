@@ -409,7 +409,9 @@ class NFA(defaultdict[State, list[Transition]], RegexNodesVisitor[Fragment[State
 
     visit_character = (
         visit_character_group
-    ) = visit_any_character = visit_anchor = lambda self, matcher: self.base(matcher)
+    ) = (
+        visit_any_character
+    ) = visit_anchor = visit_word = lambda self, matcher: self.base(matcher)
 
 
 class DFA(NFA):
