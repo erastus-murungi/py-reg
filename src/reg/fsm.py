@@ -459,7 +459,7 @@ class NFA(defaultdict[State, list[Transition]], RegexNodesVisitor[Fragment[State
 
         Examples
         --------
-        >>> from src.parser import Character
+        >>> from reg.parser import Character
         >>> nfa = NFA()
         >>> a, b, c = map(Character, 'abc')
         >>> nfa.add_transition(1, 2, EPSILON)
