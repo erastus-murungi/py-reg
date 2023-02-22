@@ -1,3 +1,4 @@
+import json
 import sys
 from typing import IO
 
@@ -97,10 +98,11 @@ def entry(
     else:
         compiled_pattern = RegexNFA(pattern, flags)
     with out:
-        for index, m in enumerate(compiled_pattern.finditer(text)):
-            out.write(f"[{index}]   {m.span}\n")
-            out.write(m.group(0))
-            out.write("\n")
+        results = {
+            index: {"span": m.span, "match": m.group(0), "groups": m.groups()}
+            for index, m in enumerate(compiled_pattern.finditer(text))
+        }
+        out.write(json.dumps(results, indent=4))
 
 
 if __name__ == "__main__":
