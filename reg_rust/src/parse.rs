@@ -1,6 +1,9 @@
 use itertools::Itertools;
 
-use crate::matching::{Context, Cursor};
+use crate::{
+    matching::{Context, Cursor},
+    utils::RegexFlags,
+};
 use core::panic;
 use std::{hash::Hash, num::ParseIntError};
 
@@ -124,17 +127,25 @@ impl<'a> Parser<'a> {
         self.position += by;
     }
 
-    fn consume(&mut self, c: char) -> Option<ParserError> {
+    fn peek(&self) -> Result<char, ParserError> {
+        if self.within_bounds() {
+            Ok(self.regex[self.position])
+        } else {
+            Err(ParserError::UnexexpectedEOF)
+        }
+    }
+
+    fn consume(&mut self, c: char) -> Result<char, ParserError> {
         let position = self.position;
         let regex = self.regex;
 
         if position >= regex.len() {
-            return Some(ParserError::UnexexpectedEOF);
+            return Err(ParserError::UnexexpectedEOF);
         } else if regex[position] != c {
-            return Some(ParserError::UnexpectedToken(position, c, regex[position]));
+            return Err(ParserError::UnexpectedToken(position, c, regex[position]));
         } else {
             self.advance();
-            return None;
+            return Ok(c);
         }
     }
 
@@ -228,14 +239,12 @@ impl<'a> Parser<'a> {
     }
 
     pub fn can_parse_quantifier(&self) -> bool {
-        if self.within_bounds() {
-            let c = self.regex[self.position];
-            match c {
+        match self.peek() {
+            Ok(c) => match c {
                 '+' | '*' | '?' | '{' => true,
                 _ => false,
-            }
-        } else {
-            false
+            },
+            Err(_) => false,
         }
     }
 }
@@ -247,6 +256,7 @@ pub enum ParserError {
     UnableToParseChar(usize),
     CantParseCharGroup(usize),
     UnrecognizedAnchor(usize, char),
+    UnrecognizedModifier(usize, char),
     InvalidExpression(usize),
     InvalidStartToCharacterClass(usize),
     SuffixRemaining(usize),
@@ -256,43 +266,75 @@ pub enum ParserError {
     InvalidCharacterRange(char, char),
 }
 
-pub fn run_parse<'a>(regex: &'a Vec<char>) -> Result<Node, ParserError> {
-    let mut parser = Parser::new(regex);
+pub fn run_parse<'a>(regex: &'a Vec<char>, flags: &mut RegexFlags) -> Result<Node, ParserError> {
     if regex.is_empty() {
         return Ok(Node::EmptyString);
     } else {
-        if let None = parser.consume('^') {
+        let mut parser = Parser::new(regex);
+        parse_inline_modifiers(&mut parser, flags)?;
+        if let Ok(_) = parser.consume('^') {
             let anchor = Node::StartOfString;
             if parser.within_bounds() {
-                match parse_expression(&mut parser) {
-                    Ok(mut expr) => {
-                        if let Node::Expression(ref mut subexpressions, _) = expr {
-                            subexpressions.insert(0, Box::new(anchor));
-                            if parser.within_bounds() {
-                                return Err(ParserError::SuffixRemaining(parser.position));
-                            }
-                            return Ok(expr);
-                        } else {
-                            panic!("expected an expression")
-                        }
+                let mut expr = parse_expression(&mut parser)?;
+                if let Node::Expression(ref mut subexpressions, _) = expr {
+                    subexpressions.insert(0, Box::new(anchor));
+                    if parser.within_bounds() {
+                        return Err(ParserError::SuffixRemaining(parser.position));
                     }
-                    Err(err) => Err(err),
+                    return Ok(expr);
+                } else {
+                    panic!("expected an expression")
                 }
             } else {
                 return Ok(anchor);
             }
         } else {
             // assert the node returned is an expression
-            let res = parse_expression(&mut parser);
-            return match res {
-                Ok(expr) => {
-                    if parser.within_bounds() {
-                        return Err(ParserError::SuffixRemaining(parser.position));
-                    }
-                    Ok(expr)
+            let expr = parse_expression(&mut parser)?;
+            if parser.within_bounds() {
+                return Err(ParserError::SuffixRemaining(parser.position));
+            } else {
+                return Ok(expr);
+            }
+        }
+    }
+}
+
+fn parse_inline_modifiers(
+    parser: &mut Parser,
+    flags: &mut RegexFlags,
+) -> Result<bool, ParserError> {
+    const ALLOWED: &[char; 4] = &['i', 'm', 's', 'x'];
+    let mut modifiers: Vec<char> = Vec::new();
+    while parser.matches_several(&['(', '?']) {
+        parser.advance_by(2);
+        loop {
+            match parser.peek() {
+                Ok(c) if ALLOWED.contains(&c) => {
+                    parser.advance();
+                    modifiers.push(c)
                 }
-                Err(err) => Err(err),
-            };
+                _ => break,
+            }
+        }
+    }
+    match parser.consume(')') {
+        Ok(_) => {
+            modifiers.iter().for_each(|c| match c {
+                'i' => *flags = *flags | RegexFlags::IGNORECASE,
+                's' => *flags = *flags | RegexFlags::DOTALL,
+                'm' => *flags = *flags | RegexFlags::MULTILINE,
+                'x' => *flags = *flags | RegexFlags::FREESPACING,
+                _ => panic!("unreachable code"),
+            });
+            Ok(true)
+        }
+        Err(err) => {
+            if modifiers.is_empty() {
+                Ok(true)
+            } else {
+                Err(err)
+            }
         }
     }
 }
@@ -300,99 +342,85 @@ pub fn run_parse<'a>(regex: &'a Vec<char>) -> Result<Node, ParserError> {
 fn parse_expression(parser: &mut Parser) -> Result<Node, ParserError> {
     let mut items: Vec<Box<Node>> = Vec::new();
     while parser.can_parse_sub_expression_item() {
-        match parse_sub_expression_item(parser) {
-            Ok(node) => items.push(Box::new(node)),
-            Err(err) => {
-                return Err(err);
-            }
-        }
+        items.push(Box::new(parse_sub_expression_item(parser)?));
     }
     if items.is_empty() {
         return Err(ParserError::InvalidExpression(parser.position));
     }
     if parser.matches('|') {
         parser.advance();
-        if parser.can_parse_sub_expression_item() {
-            return parse_expression(parser);
+        return if parser.can_parse_sub_expression_item() {
+            Ok(Node::Expression(
+                items,
+                Some(Box::new(parse_expression(parser)?)),
+            ))
         } else {
-            return Ok(Node::EmptyString);
-        }
+            Ok(Node::EmptyString)
+        };
     } else {
         return Ok(Node::Expression(items, None));
     }
 }
 
 fn parse_character_class(parser: &mut Parser) -> Result<Node, ParserError> {
-    if let None = parser.consume('\\') {
-        return match parser.consume_unseen() {
-            Ok(char_literal) => match char_literal {
-                'w' => Ok(Node::CharacterGroup(
-                    vec![
-                        Box::new(Node::CharacterRange('0', '9')),
-                        Box::new(Node::CharacterRange('A', 'z')),
-                        Box::new(Node::CharacterRange('a', 'z')),
-                        Box::new(Node::Character('-')),
-                    ],
-                    false,
-                )),
-                'W' => Ok(Node::CharacterGroup(
-                    vec![
-                        Box::new(Node::CharacterRange('0', '9')),
-                        Box::new(Node::CharacterRange('A', 'z')),
-                        Box::new(Node::CharacterRange('a', 'z')),
-                        Box::new(Node::Character('-')),
-                    ],
-                    true,
-                )),
-                'd' => Ok(Node::CharacterGroup(
-                    vec![Box::new(Node::CharacterRange('0', '9'))],
-                    false,
-                )),
-                'D' => Ok(Node::CharacterGroup(
-                    vec![Box::new(Node::CharacterRange('0', '9'))],
-                    true,
-                )),
-                's' => Ok(Node::CharacterGroup(
-                    vec![' ', '\t', '\n']
-                        .iter()
-                        .map(|literal| Box::new(Node::Character(*literal)))
-                        .collect_vec(),
-                    false,
-                )),
-                'S' => Ok(Node::CharacterGroup(
-                    vec![' ', '\t', '\n']
-                        .iter()
-                        .map(|literal| Box::new(Node::Character(*literal)))
-                        .collect_vec(),
-                    true,
-                )),
-                _ => Err(ParserError::UnrecognizedAnchor(
-                    parser.position,
-                    char_literal,
-                )),
-            },
-            Err(err) => Err(err),
-        };
-    }
-    Err(ParserError::InvalidStartToCharacterClass(parser.position))
+    parser.consume('\\')?;
+    return match parser.consume_unseen()? {
+        'w' => Ok(Node::CharacterGroup(
+            vec![
+                Box::new(Node::CharacterRange('0', '9')),
+                Box::new(Node::CharacterRange('A', 'z')),
+                Box::new(Node::CharacterRange('a', 'z')),
+                Box::new(Node::Character('-')),
+            ],
+            false,
+        )),
+        'W' => Ok(Node::CharacterGroup(
+            vec![
+                Box::new(Node::CharacterRange('0', '9')),
+                Box::new(Node::CharacterRange('A', 'z')),
+                Box::new(Node::CharacterRange('a', 'z')),
+                Box::new(Node::Character('-')),
+            ],
+            true,
+        )),
+        'd' => Ok(Node::CharacterGroup(
+            vec![Box::new(Node::CharacterRange('0', '9'))],
+            false,
+        )),
+        'D' => Ok(Node::CharacterGroup(
+            vec![Box::new(Node::CharacterRange('0', '9'))],
+            true,
+        )),
+        's' => Ok(Node::CharacterGroup(
+            vec![' ', '\t', '\n']
+                .iter()
+                .map(|literal| Box::new(Node::Character(*literal)))
+                .collect_vec(),
+            false,
+        )),
+        'S' => Ok(Node::CharacterGroup(
+            vec![' ', '\t', '\n']
+                .iter()
+                .map(|literal| Box::new(Node::Character(*literal)))
+                .collect_vec(),
+            true,
+        )),
+        char_literal => Err(ParserError::UnrecognizedAnchor(
+            parser.position,
+            char_literal,
+        )),
+    };
 }
 
 fn parse_character_range(parser: &mut Parser) -> Result<Node, ParserError> {
-    match parser.consume_unseen() {
-        Ok(start) => match parser.consume('-') {
-            None => match parser.consume_unseen() {
-                Ok(end) => {
-                    if start > end {
-                        Err(ParserError::InvalidCharacterRange(start, end))
-                    } else {
-                        Ok(Node::CharacterRange(start, end))
-                    }
-                }
-                Err(err) => Err(err),
-            },
-            Some(err) => Err(err),
-        },
-        Err(err) => Err(err),
+    let start = parser.consume_unseen()?;
+    parser.consume('-')?;
+    let end = parser.consume_unseen()?;
+
+    if start > end {
+        Err(ParserError::InvalidCharacterRange(start, end))
+    } else {
+        Ok(Node::CharacterRange(start, end))
     }
 }
 
@@ -414,51 +442,38 @@ fn parse_character_group_item(parser: &mut Parser) -> Result<Node, ParserError> 
 }
 
 fn parse_character_group(parser: &mut Parser) -> Result<Node, ParserError> {
-    match parser.consume('[') {
-        None => {
-            let mut negated = false;
-            if parser.matches('^') {
-                negated = true;
-                parser.advance();
+    parser.consume('[')?;
+    let mut negated = false;
+    if parser.matches('^') {
+        negated = true;
+        parser.advance();
+    }
+    let mut items: Vec<Box<Node>> = Vec::new();
+    loop {
+        match parse_character_group_item(parser) {
+            Ok(node) => {
+                items.push(Box::new(node));
             }
-            let mut items: Vec<Box<Node>> = Vec::new();
-            loop {
-                match parse_character_group_item(parser) {
-                    Ok(node) => {
-                        items.push(Box::new(node));
-                    }
-                    Err(err) => {
-                        if let ParserError::UnableToParseChar(_) = err {
-                            break;
-                        } else {
-                            return Err(err);
-                        }
-                    }
+            Err(err) => {
+                if let ParserError::UnableToParseChar(_) = err {
+                    break;
+                } else {
+                    return Err(err);
                 }
-            }
-            match parser.consume(']') {
-                None => {
-                    if items.is_empty() {
-                        return Err(ParserError::CantParseCharGroup(parser.position));
-                    } else {
-                        return Ok(Node::CharacterGroup(items, negated));
-                    }
-                }
-                Some(err) => return Err(err),
             }
         }
-        Some(err) => Err(err),
+    }
+    parser.consume(']')?;
+    if items.is_empty() {
+        return Err(ParserError::CantParseCharGroup(parser.position));
+    } else {
+        return Ok(Node::CharacterGroup(items, negated));
     }
 }
 
 fn parse_escaped<'a>(parser: &mut Parser) -> Result<Node, ParserError> {
-    match parser.consume('\\') {
-        None => match parser.consume_unseen() {
-            Ok(char_literal) => Ok(Node::Character(char_literal)),
-            Err(err) => Err(err),
-        },
-        Some(err) => Err(err),
-    }
+    parser.consume('\\')?;
+    Ok(Node::Character(parser.consume_unseen()?))
 }
 
 fn parse_character(parser: &mut Parser) -> Result<Node, ParserError> {
@@ -466,12 +481,9 @@ fn parse_character(parser: &mut Parser) -> Result<Node, ParserError> {
         parse_escaped(parser)
     } else {
         if !parser.can_parse_character() {
-            return Err(ParserError::UnableToParseChar(parser.position));
+            Err(ParserError::UnableToParseChar(parser.position))
         } else {
-            return match parser.consume_unseen() {
-                Ok(char_literal) => Ok(Node::Character(char_literal)),
-                Err(err) => Err(err),
-            };
+            Ok(Node::Character(parser.consume_unseen()?))
         }
     }
 }
@@ -481,30 +493,25 @@ fn parse_character_in_character_group(parser: &mut Parser) -> Result<Node, Parse
         parse_escaped(parser)
     } else {
         if parser.matches(']') {
-            return Err(ParserError::UnableToParseChar(parser.position));
+            Err(ParserError::UnableToParseChar(parser.position))
         } else {
-            return match parser.consume_unseen() {
-                Ok(char_literal) => Ok(Node::Character(char_literal)),
-                Err(err) => Err(err),
-            };
+            Ok(Node::Character(parser.consume_unseen()?))
         }
     }
 }
 
 fn parse_match_item<'a>(parser: &mut Parser) -> Result<Node, ParserError> {
-    match parser.consume('.') {
-        None => Ok(Node::AnyCharacter),
-        Some(..) => {
-            if parser.can_parse_character_class() {
-                parse_character_class(parser)
-            } else if parser.can_parse_character_group() {
-                parse_character_group(parser)
-            } else if parser.can_parse_group() {
-                parse_character_group(parser)
-            } else {
-                parse_character(parser)
-            }
-        }
+    if parser.matches('.') {
+        parser.consume('.')?;
+        Ok(Node::AnyCharacter)
+    } else if parser.can_parse_character_class() {
+        parse_character_class(parser)
+    } else if parser.can_parse_character_group() {
+        parse_character_group(parser)
+    } else if parser.can_parse_group() {
+        parse_character_group(parser)
+    } else {
+        parse_character(parser)
     }
 }
 
@@ -526,172 +533,134 @@ fn validate_range_quantifier(
 }
 
 fn parse_range_quantifier(parser: &mut Parser) -> Result<Quantifier, ParserError> {
-    match parser.consume('{') {
-        None => {
-            let mut lower: u64 = 0;
-            if !parser.matches(',') {
-                let number_stream: String = parser.regex[parser.position..]
-                    .iter()
-                    .take_while(|c| c.is_ascii_digit())
-                    .collect();
-                parser.position += number_stream.len();
-                match format!("{}", number_stream).parse() {
-                    Ok(num) => lower = num,
-                    Err(parse_int_error) => {
-                        return Err(ParserError::CantParseRangeBound(parse_int_error))
-                    }
-                }
-            }
-            let mut upper = UpperBound::Undefined;
-            if parser.matches(',') {
-                upper = UpperBound::Unbounded;
-                parser.advance();
-                if parser.regex[parser.position].is_ascii_digit() {
-                    let number_stream: String = parser.regex[parser.position..]
-                        .iter()
-                        .take_while(|c| c.is_ascii_digit())
-                        .collect();
-                    parser.position += number_stream.len();
-                    match format!("{}", number_stream).parse() {
-                        Ok(num) => upper = UpperBound::Bounded(num),
-                        Err(parse_int_error) => {
-                            return Err(ParserError::CantParseRangeBound(parse_int_error))
-                        }
-                    }
-                }
-            }
-            if let Some(err) = parser.consume('}') {
-                return Err(err);
-            }
-            let mut lazy = false;
-            if parser.matches('?') {
-                parser.advance();
-                lazy = true;
-            }
-
-            return validate_range_quantifier(lower, upper, lazy);
+    parser.consume('{')?;
+    let mut lower: u64 = 0;
+    if !parser.matches(',') {
+        let number_stream: String = parser.regex[parser.position..]
+            .iter()
+            .take_while(|c| c.is_ascii_digit())
+            .collect();
+        parser.position += number_stream.len();
+        match format!("{}", number_stream).parse() {
+            Ok(num) => lower = num,
+            Err(parse_int_error) => return Err(ParserError::CantParseRangeBound(parse_int_error)),
         }
-        Some(err) => Err(err),
     }
+    let mut upper = UpperBound::Undefined;
+    if parser.matches(',') {
+        upper = UpperBound::Unbounded;
+        parser.advance();
+        if parser.regex[parser.position].is_ascii_digit() {
+            let number_stream: String = parser.regex[parser.position..]
+                .iter()
+                .take_while(|c| c.is_ascii_digit())
+                .collect();
+            parser.position += number_stream.len();
+            match format!("{}", number_stream).parse() {
+                Ok(num) => upper = UpperBound::Bounded(num),
+                Err(parse_int_error) => {
+                    return Err(ParserError::CantParseRangeBound(parse_int_error))
+                }
+            }
+        }
+    }
+    parser.consume('}')?;
+    let mut lazy = false;
+    if parser.matches('?') {
+        parser.advance();
+        lazy = true;
+    }
+
+    return validate_range_quantifier(lower, upper, lazy);
 }
 
 fn parse_quantifier(parser: &mut Parser) -> Result<Quantifier, ParserError> {
     if parser.matches('{') {
         parse_range_quantifier(parser)
     } else {
-        if parser.within_bounds() {
-            let c = parser.regex[parser.position];
-            return match c {
-                '*' | '+' | '?' => {
-                    parser.advance();
-                    let mut lazy = false;
-                    if parser.matches('?') {
-                        parser.advance();
-                        lazy = true;
-                    }
-                    return match c {
-                        '*' => Ok(Quantifier::ZeroOrMore(lazy)),
-                        '+' => Ok(Quantifier::OneOrMore(lazy)),
-                        '?' => Ok(Quantifier::ZeroOrOne(lazy)),
-                        _ => panic!("unreachable code"),
-                    };
+        let char_literal = parser.consume_unseen()?;
+        match char_literal {
+            '*' | '+' | '?' => {
+                let lazy = if let Ok(_) = parser.consume('?') {
+                    true
+                } else {
+                    false
+                };
+                match char_literal {
+                    '*' => Ok(Quantifier::ZeroOrMore(lazy)),
+                    '+' => Ok(Quantifier::OneOrMore(lazy)),
+                    '?' => Ok(Quantifier::ZeroOrOne(lazy)),
+                    _ => panic!("unrecognized quantifier {:?}", char_literal),
                 }
-                _ => Err(ParserError::UnrecognizedQuantifier(c)),
-            };
-        } else {
-            return Err(ParserError::UnexexpectedEOF);
+            }
+            _ => Err(ParserError::UnrecognizedQuantifier(char_literal)),
         }
     }
 }
 
 fn parse_group<'a>(parser: &mut Parser) -> Result<Node, ParserError> {
-    let mut group_index = Some(parser.group_count);
-    parser.group_count += 1;
-    match parser.consume('(') {
-        None => {
-            if parser.matches_several(&['?', ':']) {
-                parser.advance_by(2);
-                group_index = None;
-                parser.group_count -= 1;
-            }
-        }
-        Some(err) => {
-            return Err(err);
-        }
-    }
-    let expression = if parser.matches('?') {
-        Ok(Node::EmptyString)
+    parser.consume('(')?;
+
+    let group_index = if parser.matches_several(&['?', ':']) {
+        parser.advance_by(2);
+        None
     } else {
-        parse_expression(parser)
+        parser.group_count += 1;
+        Some(parser.group_count)
     };
-    match expression {
-        Ok(node) => match parser.consume(')') {
-            None => {
-                if parser.can_parse_quantifier() {
-                    match parse_quantifier(parser) {
-                        Ok(quantifier) => Ok(Node::Group(Box::new(node), group_index, quantifier)),
-                        Err(err) => Err(err),
-                    }
-                } else {
-                    Ok(Node::Group(Box::new(node), group_index, Quantifier::None))
-                }
-            }
-            Some(err) => Err(err),
-        },
-        Err(err) => Err(err),
-    }
+    let expression = if parser.matches('?') {
+        Node::EmptyString
+    } else {
+        parse_expression(parser)?
+    };
+    parser.consume(')')?;
+
+    let quantifier = if parser.can_parse_quantifier() {
+        parse_quantifier(parser)?
+    } else {
+        Quantifier::None
+    };
+    Ok(Node::Group(Box::new(expression), group_index, quantifier))
 }
 
 fn parse_anchor<'a>(parser: &mut Parser) -> Result<Node, ParserError> {
     match parser.consume('\\') {
-        None => match parser.consume_unseen() {
-            Ok(char_literal) => {
-                if !ANCHORS.contains(&char_literal) {
-                    Err(ParserError::UnrecognizedAnchor(
-                        parser.position,
-                        char_literal,
-                    ))
-                } else {
-                    match char_literal {
-                        'b' => Ok(Node::WordBoundary),
-                        'B' => Ok(Node::NonWordBoundary),
-                        _ => panic!(),
-                    }
-                }
-            }
-            Err(err) => Err(err),
-        },
-        Some(err) => {
-            if parser.within_bounds() {
-                let c = parser.regex[parser.position];
-                if c == '^' || c == '$' {
-                    parser.advance();
-                    if c == '^' {
-                        return Ok(Node::StartOfString);
-                    } else {
-                        return Ok(Node::EndOfString);
-                    }
-                }
-            }
-            return Err(err);
+        Ok(_) => {
+            let char_literal = parser.consume_unseen()?;
+            return match char_literal {
+                'a' => Ok(Node::StartOfStringOnly),
+                'b' => Ok(Node::WordBoundary),
+                'B' => Ok(Node::NonWordBoundary),
+                'z' => Ok(Node::EndOfStringOnlyNotNewline),
+                'Z' => Ok(Node::EndOfStringOnlyMaybeNewLine),
+                _ => Err(ParserError::UnrecognizedAnchor(
+                    parser.position,
+                    char_literal,
+                )),
+            };
         }
+        Err(err) => match parser.peek() {
+            Ok(c) if c == '^' || c == '$' => {
+                parser.advance();
+                if c == '^' {
+                    Ok(Node::StartOfString)
+                } else {
+                    Ok(Node::EndOfString)
+                }
+            }
+            _ => Err(err),
+        },
     }
 }
 
 fn parse_match<'a>(parser: &mut Parser) -> Result<Node, ParserError> {
-    let match_item = parse_match_item(parser);
-    match match_item {
-        Ok(node) => {
-            if parser.can_parse_quantifier() {
-                return match parse_quantifier(parser) {
-                    Ok(quantifier) => Ok(Node::Match(Box::new(node), quantifier)),
-                    Err(err) => Err(err),
-                };
-            }
-            return Ok(Node::Match(Box::new(node), Quantifier::None));
-        }
-        Err(err) => Err(err),
-    }
+    let match_item = parse_match_item(parser)?;
+    let quantifier = if parser.can_parse_quantifier() {
+        parse_quantifier(parser)?
+    } else {
+        Quantifier::None
+    };
+    return Ok(Node::Match(Box::new(match_item), quantifier));
 }
 fn parse_sub_expression_item<'a>(parser: &mut Parser) -> Result<Node, ParserError> {
     if parser.can_parse_group() {
