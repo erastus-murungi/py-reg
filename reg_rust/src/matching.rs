@@ -12,11 +12,15 @@ impl Cursor {
             groups: vec![usize::MAX; n_groups * 2],
         };
     }
+
+    pub fn advance(&mut self, by: usize) {
+        self.position += by
+    }
 }
 
 pub struct Context<'a> {
     pub text: &'a Vec<char>,
-    flags: RegexFlags,
+    pub flags: RegexFlags,
 }
 
 impl<'a> Context<'a> {

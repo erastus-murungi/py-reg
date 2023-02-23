@@ -211,6 +211,21 @@ mod parser {
     }
 }
 
+fn is_word_character(char_literal: &char) -> bool {
+    *char_literal == '_' || char_literal.is_ascii_alphabetic()
+}
+fn is_word_boundary(text: &Vec<char>, pos: usize) -> bool {
+    if text.is_empty() {
+        panic!("implementation error, text should never be empty")
+    } else {
+        let case1 = pos == 0 && is_word_character(&text[pos]);
+        let case2 = pos == text.len() && is_word_character(&text[pos - 1]);
+        let case3 =
+            pos < text.len() && (is_word_character(&text[pos - 1]) ^ is_word_character(&text[pos]));
+        return case1 || case2 || case3;
+    }
+}
+
 #[derive(Debug, Hash, Clone)]
 pub enum UpperBound {
     Undefined,
@@ -252,28 +267,80 @@ pub enum Node {
 }
 
 impl Node {
-    pub fn accepts(&self, cursor: Cursor, context: Context) -> bool {
+    pub fn accepts(&self, cursor: &Cursor, context: &Context) -> bool {
         match self {
-            Node::Character(char_literal) => *char_literal == context.text[cursor.position],
-            Node::Match(_, _) => todo!(),
-            Node::Expression(_, _) => todo!(),
-            Node::Group(_, _, _) => todo!(),
-            Node::AnyCharacter => todo!(),
-            Node::CharacterGroup(_, _) => todo!(),
+            Node::Character(char_literal) => {
+                if cursor.position < context.text.len() {
+                    if context.flags.intersects(RegexFlags::IGNORECASE) {
+                        char_literal.eq_ignore_ascii_case(&context.text[cursor.position])
+                    } else {
+                        char_literal.eq(&context.text[cursor.position])
+                    }
+                } else {
+                    false
+                }
+            }
+            Node::AnyCharacter => {
+                cursor.position < context.text.len()
+                    && (context.flags.intersects(RegexFlags::DOTALL)
+                        || context.text[cursor.position] != '\n')
+            }
+            Node::CharacterRange(start, end) => {
+                if cursor.position < context.text.len() {
+                    if context.flags.intersects(RegexFlags::IGNORECASE) {
+                        start
+                            .to_ascii_lowercase()
+                            .le(&context.text[cursor.position])
+                            && context.text[cursor.position].to_ascii_lowercase().le(end)
+                    } else {
+                        start.le(&context.text[cursor.position])
+                            && context.text[cursor.position].le(end)
+                    }
+                } else {
+                    false
+                }
+            }
+            Node::CharacterGroup(nodes, negated) => {
+                if cursor.position < context.text.len() {
+                    negated ^ nodes.iter().any(|node| node.accepts(cursor, context))
+                } else {
+                    false
+                }
+            }
             // anchors
-            Node::EmptyString => cursor.position == 0,
-            Node::GroupEntry(_) => true,
-            Node::GroupExit(_) => true,
-            Node::WordBoundary => true,
-            Node::NonWordBoundary => true,
-            Node::StartOfString => true,
-            Node::EndOfString => true,
+            Node::EmptyString | Node::GroupEntry(_) | Node::GroupExit(_) => true,
+            Node::WordBoundary => {
+                !context.text.is_empty() && is_word_boundary(context.text, cursor.position)
+            }
+            Node::NonWordBoundary => {
+                !context.text.is_empty() && !is_word_boundary(context.text, cursor.position)
+            }
+            Node::StartOfString => {
+                let pos = cursor.position;
+                pos == 0
+                    || (context.flags.intersects(RegexFlags::MULTILINE)
+                        && pos > 0
+                        && context.text[pos - 1] == '\n')
+            }
+            Node::EndOfString => {
+                (cursor.position >= context.text.len()
+                    || (cursor.position == context.text.len() - 1
+                        && context.text[cursor.position - 1] == '\n'))
+                    || (context.flags.intersects(RegexFlags::MULTILINE)
+                        && (cursor.position < context.text.len()
+                            && context.text[cursor.position] == '\n'))
+            }
             Node::StartOfStringOnly => cursor.position == 0,
             Node::EndOfStringOnlyNotNewline => cursor.position >= context.text.len(),
-            Node::EndOfStringOnlyMaybeNewLine => true,
-            Node::Epsilon => false,
-            Node::GroupLink => false,
-            Node::CharacterRange(_, _) => panic!("char range not implemented!"),
+            Node::EndOfStringOnlyMaybeNewLine => {
+                (cursor.position >= context.text.len())
+                    || (cursor.position == context.text.len() - 1
+                        && context.text[cursor.position] == '\n')
+            }
+            Node::Epsilon | Node::GroupLink => false,
+            Node::Match(_, _) | Node::Expression(_, _) | Node::Group(_, _, _) => {
+                panic!("accept not implemented for {:?}!", self)
+            }
         }
     }
 
@@ -731,5 +798,60 @@ mod tests {
         assert_eq!(p.consume_unseen(), Ok('b'));
         assert_eq!(p.consume_unseen(), Ok('c'));
         assert_eq!(p.consume_unseen(), Err(ParserError::UnexexpectedEOF));
+    }
+
+    #[test]
+    fn test_start_of_string_accept() {
+        let chars: Vec<char> = String::from("abc\n").chars().collect();
+        let mut cursor = Cursor::new(0, 0);
+        let context = Context::new(&chars);
+        let start_of_string = Node::StartOfString;
+        assert_eq!(start_of_string.accepts(&cursor, &context), true);
+        cursor.advance(1);
+        assert_eq!(start_of_string.accepts(&cursor, &context), false);
+        cursor.advance(2);
+        assert_eq!(start_of_string.accepts(&cursor, &context), false);
+
+        let context_with_multiline = Context::new_with_flags(&chars, RegexFlags::MULTILINE);
+        assert_eq!(
+            start_of_string.accepts(&cursor, &context_with_multiline),
+            false
+        );
+        cursor.advance(1);
+        assert_eq!(
+            start_of_string.accepts(&cursor, &context_with_multiline),
+            true
+        );
+    }
+
+    #[test]
+    fn test_character_accept() {
+        let chars: Vec<char> = String::from("abA").chars().collect();
+        let mut cursor = Cursor::new(0, 0);
+        let context = Context::new(&chars);
+        let a = Node::Character('a');
+        assert_eq!(a.accepts(&cursor, &context), true);
+        cursor.advance(1);
+        assert_eq!(a.accepts(&cursor, &context), false);
+        cursor.advance(1);
+
+        let context_with_ignorecase = Context::new_with_flags(&chars, RegexFlags::IGNORECASE);
+        assert_eq!(a.accepts(&cursor, &context_with_ignorecase), true);
+        cursor.advance(1);
+        assert_eq!(a.accepts(&cursor, &context_with_ignorecase), false);
+    }
+
+    #[test]
+    fn test_dot_character_accept() {
+        let chars: Vec<char> = String::from("a\n").chars().collect();
+        let mut cursor = Cursor::new(0, 0);
+        let context = Context::new(&chars);
+        let dot = Node::AnyCharacter;
+        assert_eq!(dot.accepts(&cursor, &context), true);
+        cursor.advance(1);
+        assert_eq!(dot.accepts(&cursor, &context), false);
+
+        let context_with_ignorecase = Context::new_with_flags(&chars, RegexFlags::DOTALL);
+        assert_eq!(dot.accepts(&cursor, &context_with_ignorecase), true);
     }
 }

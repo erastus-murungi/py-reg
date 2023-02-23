@@ -1,4 +1,3 @@
-use crate::matching::{Context, Cursor};
 use crate::parser::*;
 use crate::utils::RegexFlags;
 
