@@ -16,9 +16,9 @@ jobs:
 
     steps:
     - uses: actions/checkout@v3
-    - name: Move to project subdirectory
-      run: cd reg_rust 
     - name: Build
+      working-directory: ./reg_rust
       run: cargo build --verbose
     - name: Run tests
+      working-directory: ./reg_rust
       run: cargo test --verbose
