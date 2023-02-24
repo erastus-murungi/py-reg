@@ -19,7 +19,7 @@ class RegexMatch(NamedTuple):
             self.captured_groups[group_index * 2],
             self.captured_groups[group_index * 2 + 1],
         )
-        if frm is not maxsize and frm is not maxsize:
+        if frm is not maxsize and to is not maxsize:
             return self.text[frm:to]
         return None
 
