@@ -237,14 +237,14 @@ fn is_word_boundary(text: &Vec<char>, pos: usize) -> bool {
     }
 }
 
-#[derive(Debug, Hash, Clone)]
+#[derive(Debug, Hash, Clone, PartialEq, Eq)]
 pub enum UpperBound {
     Undefined,
     Unbounded,
     Bounded(u64),
 }
 
-#[derive(Debug, Hash, Clone)]
+#[derive(Debug, Hash, Clone, PartialEq, Eq)]
 pub enum Quantifier {
     OneOrMore(bool),
     ZeroOrMore(bool),
@@ -267,7 +267,7 @@ impl Display for Quantifier {
     }
 }
 
-#[derive(Debug, Hash, Clone)]
+#[derive(Debug, Hash, Clone, PartialEq, Eq)]
 pub enum Node {
     Character(char),
     Match(Box<Node>, Quantifier),
@@ -544,14 +544,9 @@ fn parse_inline_modifiers(
     let mut modifiers: Vec<char> = Vec::new();
     while parser.matches_several(&['(', '?']) {
         parser.advance_by(2);
-        loop {
-            match parser.peek() {
-                Ok(c) if ALLOWED.contains(&c) => {
-                    parser.advance_by(1);
-                    modifiers.push(c)
-                }
-                _ => break,
-            }
+        while matches!(parser.peek(), Ok(c) if ALLOWED.contains(&c)) {
+            parser.advance_by(1);
+            modifiers.push(parser.peek().unwrap());
         }
     }
     match parser.consume(')') {

@@ -1,7 +1,6 @@
 use std::{
     collections::{HashMap, HashSet},
     env::temp_dir,
-    fmt::format,
     fs::File,
     io::{self, Write},
     process::Command,
@@ -10,7 +9,7 @@ use std::{
 use itertools::Itertools;
 
 use crate::{
-    parser::{run_parse, visitor::Visitor, Data, Node, ParserError, Quantifier},
+    parser::{run_parse, visitor::Visitor, Data, Node, ParserError, Quantifier, UpperBound},
     utils::RegexFlags,
 };
 
@@ -63,6 +62,7 @@ impl RegexNFA {
 
     pub fn gen_state(&mut self) -> State {
         self.state_counter += 1;
+        self.states.insert(self.state_counter);
         self.state_counter
     }
 
@@ -83,6 +83,11 @@ impl RegexNFA {
     }
 
     pub fn add_transition(&mut self, start: State, end: State, matcher: Node) -> () {
+        match matcher {
+            Node::GroupLink | Node::Epsilon => false,
+            _ => self.alphabet.insert(matcher.clone()),
+        };
+
         match self.transitions.get_mut(&start) {
             Some(transitions) => transitions.push(Transition::new(matcher, end)),
             None => {
@@ -97,8 +102,18 @@ impl RegexNFA {
         self.add_transition(start, end, Node::Epsilon)
     }
 
-    fn symbol_transition(&mut self, node: Node) -> (State, State) {
+    fn symbol_transition(&mut self, node: Node) -> Fragment {
         let (start, end) = self.fragment();
+        self.add_transition(start, end, node);
+        return (start, end);
+    }
+
+    fn symbol_transition_existing_fragment(
+        &mut self,
+        node: Node,
+        fragment: Fragment,
+    ) -> (State, State) {
+        let (start, end) = fragment;
         self.add_transition(start, end, node);
         return (start, end);
     }
@@ -113,26 +128,181 @@ impl RegexNFA {
         fragment
     }
 
+    fn zero_or_one(&mut self, fragment: &Fragment, lazy: bool) {
+        self.add_transition(fragment.0, fragment.1, Node::EmptyString);
+        if lazy {
+            self.transitions.get_mut(&fragment.0).unwrap().reverse();
+        }
+    }
+
+    fn one_or_more(&mut self, fragment: &Fragment, lazy: bool) {
+        let s = self.gen_state();
+        self.epsilon(fragment.1, fragment.0);
+        self.epsilon(fragment.1, s);
+        if lazy {
+            self.transitions.get_mut(&fragment.1).unwrap().reverse();
+        }
+    }
+
+    fn zero_or_more(&mut self, fragment: &Fragment, lazy: bool) -> Fragment {
+        let empty = self.symbol_transition(Node::EmptyString);
+
+        self.epsilon(fragment.1, empty.1);
+        self.epsilon(fragment.1, fragment.0);
+        self.epsilon(empty.0, fragment.0);
+
+        if lazy {
+            self.transitions.get_mut(&empty.0).unwrap().reverse();
+            self.transitions.get_mut(&fragment.1).unwrap().reverse();
+        }
+
+        empty
+    }
+
+    fn add_capturing_markers(
+        &mut self,
+        fragment: Fragment,
+        group_index: Option<usize>,
+    ) -> Fragment {
+        match group_index {
+            Some(index) => {
+                let markers = self.fragment();
+                self.symbol_transition_existing_fragment(
+                    Node::GroupEntry(index),
+                    (markers.0, fragment.0),
+                );
+                self.symbol_transition_existing_fragment(
+                    Node::GroupExit(index),
+                    (fragment.1, markers.1),
+                );
+
+                markers
+            }
+            None => fragment,
+        }
+    }
+
+    fn apply_range_quantifier(
+        &mut self,
+        node: Node,
+        lower: u64,
+        upperbound: UpperBound,
+        lazy: bool,
+    ) -> Fragment {
+        if lower == 0 {
+            if let UpperBound::Unbounded = upperbound {
+                let frag = self.match_or_group(node);
+                return self.zero_or_more(&frag, lazy);
+            }
+            if let UpperBound::Undefined = upperbound {
+                return self.symbol_transition(Node::EmptyString);
+            }
+        }
+        let mut fragments: Vec<Fragment> = Vec::new();
+        match upperbound {
+            UpperBound::Unbounded => {
+                for _ in 0..(lower - 1) {
+                    let frag = self.match_or_group(node.clone());
+                    fragments.push(frag);
+                }
+                let frag = self.match_or_group(node);
+                self.one_or_more(&frag, lazy);
+                fragments.push(frag);
+            }
+            UpperBound::Undefined => {
+                for _ in 0..lower {
+                    let frag = self.match_or_group(node.clone());
+                    fragments.push(frag);
+                }
+            }
+            UpperBound::Bounded(upper) => {
+                for _ in 0..upper {
+                    let frag = self.match_or_group(node.clone());
+                    fragments.push(frag);
+                }
+                for fragment in fragments.drain(lower as usize..upper as usize) {
+                    self.add_transition(fragment.0, fragment.1, Node::EmptyString);
+                    if lazy {
+                        self.transitions.get_mut(&fragment.0).unwrap().reverse();
+                    }
+                }
+            }
+        }
+        for (a, b) in fragments.iter().tuple_windows() {
+            self.epsilon(a.1, b.0);
+        }
+        (fragments.first().unwrap().0, fragments.last().unwrap().1)
+    }
+
+    fn match_or_group(&mut self, node: Node) -> Fragment {
+        match node {
+            Node::Group(node, group_index, quantifier) => {
+                let fragment = node.accept(self);
+                match quantifier {
+                    Quantifier::None => self.add_capturing_markers(fragment, group_index),
+                    Quantifier::ZeroOrOne(lazy) => {
+                        self.zero_or_one(&fragment, lazy);
+                        self.add_capturing_markers(fragment, group_index)
+                    }
+                    Quantifier::OneOrMore(lazy) => {
+                        self.one_or_more(&fragment, lazy);
+                        self.add_capturing_markers(fragment, group_index)
+                    }
+                    Quantifier::ZeroOrMore(lazy) => {
+                        let frag = self.zero_or_more(&fragment, lazy);
+                        self.add_capturing_markers(frag, group_index)
+                    }
+                    Quantifier::Range(lower, upper, lazy) => {
+                        let frag = self.apply_range_quantifier(*node, lower, upper, lazy);
+                        self.add_capturing_markers(frag, group_index)
+                    }
+                }
+            }
+            Node::Match(node, quantifier) => {
+                let fragment = node.accept(self);
+                match quantifier {
+                    Quantifier::None => fragment,
+                    Quantifier::OneOrMore(lazy) => self.zero_or_more(&fragment, lazy),
+                    Quantifier::ZeroOrOne(lazy) => {
+                        self.zero_or_one(&fragment, lazy);
+                        fragment
+                    }
+                    Quantifier::ZeroOrMore(lazy) => {
+                        self.zero_or_more(&fragment, lazy);
+                        fragment
+                    }
+                    Quantifier::Range(lower, upper, lazy) => {
+                        self.apply_range_quantifier(*node, lower, upper, lazy)
+                    }
+                }
+            }
+            _ => panic!("expected Group or Match, not {:#?}", node),
+        }
+    }
+
     /// Convert the automata to a GraphViz Dot code for the deubgging purposes.
-    pub fn as_graphviz_code(&self) -> Result<(), io::Error> {
+    pub fn render(&self) -> Result<(), io::Error> {
         let mut out = String::new();
         let mut seen: HashSet<State> = HashSet::new();
         for (start, transitions) in self.transitions.iter() {
-            for transition in transitions {
-                let opts = if *start == self.start {
-                    ""
+            let opts = "[fillcolor=\"#EEEEEE\" fontcolor=\"#888888\"]";
+            if !seen.contains(start) {
+                if *start == self.start {
+                    out += &format!(
+                        "node_{}[label=\"{}\"]{}\n",
+                        start, start, "[fillcolor=green]"
+                    );
                 } else {
-                    "[fillcolor=\"#EEEEEE\" fontcolor=\"#888888\"]"
-                };
-                if !seen.contains(start) {
                     out += &format!("node_{}[label=\"{}\"]{}\n", start, start, opts);
-                    seen.insert(*start);
                 }
+                seen.insert(*start);
+            }
+            for transition in transitions {
                 if !seen.contains(&transition.end) {
                     if transition.end == self.accept {
                         out += &format!(
                             "node_{}[label=\"{}\"shape=doublecircle]{}\n",
-                            transition.end, transition.end, opts
+                            transition.end, transition.end, ""
                         );
                     } else {
                         out += &format!(
@@ -190,11 +360,6 @@ impl RegexNFA {
                 .spawn()
                 .expect("Failed to execute command");
             println!("{:#?}", output.wait());
-            output = Command::new("rm")
-                .arg(output_filepath)
-                .spawn()
-                .expect("Failed to execute command");
-            println!("{:#?}", output.stdout);
         }
 
         Ok(())
@@ -207,8 +372,8 @@ impl Visitor for RegexNFA {
     fn visit_expression(&mut self, expression: Node) -> Self::Result {
         if let Node::Expression(items, alternate_expression) = expression {
             let fragments: Vec<Self::Result> = items.iter().map(|node| node.accept(self)).collect();
-            for ((_, a_end), (b_start, _)) in fragments.iter().tuple_windows() {
-                self.epsilon(*a_end, *b_start);
+            for (a, b) in fragments.iter().tuple_windows() {
+                self.epsilon(a.1, b.0);
             }
             let fragment = (fragments.first().unwrap().0, fragments.last().unwrap().1);
             if let Some(alternative) = alternate_expression {
@@ -235,15 +400,7 @@ impl Visitor for RegexNFA {
     }
 
     fn visit_match(&mut self, match_: Node) -> Self::Result {
-        if let Node::Match(item, quantifier) = match_ {
-            if let Quantifier::None = quantifier {
-                item.accept(self)
-            } else {
-                todo!()
-            }
-        } else {
-            panic!()
-        }
+        self.match_or_group(match_)
     }
 
     fn visit_character_group(&mut self, character_group: Node) -> Self::Result {
@@ -251,7 +408,7 @@ impl Visitor for RegexNFA {
     }
 
     fn visit_group(&mut self, group: Node) -> Self::Result {
-        todo!()
+        self.match_or_group(group)
     }
 }
 
@@ -265,6 +422,5 @@ mod tests {
         let mut regex = RegexNFA::new(&pattern);
         println!("{:#?}", regex.compile());
         println!("{:#?}", regex);
-        regex.as_graphviz_code();
     }
 }
