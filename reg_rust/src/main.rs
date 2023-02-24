@@ -1,3 +1,4 @@
+use crate::fsm::RegexNFA;
 use crate::parser::*;
 use crate::utils::RegexFlags;
 
@@ -7,11 +8,9 @@ pub mod parser;
 pub mod utils;
 
 fn main() {
-    let pattern = String::from("[]]ab{10,2}c");
-    let mut flags = RegexFlags::NO_FLAG;
-
-    let result = run_parse(pattern.as_str(), &mut flags);
-    println!("{:#?}", result);
-
-    println!("{:?}", flags);
+    let pattern = String::from("a[0-9]\\w");
+    let mut regex = RegexNFA::new(&pattern);
+    println!("{:#?}", regex.compile());
+    println!("{:#?}", regex);
+    regex.as_graphviz_code();
 }

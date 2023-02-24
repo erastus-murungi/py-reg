@@ -1,3 +1,4 @@
+use colored::Colorize;
 use itertools::Itertools;
 
 use crate::{
@@ -5,9 +6,9 @@ use crate::{
     utils::RegexFlags,
 };
 use core::panic;
-use std::{hash::Hash, num::ParseIntError};
+use std::{error::Error, fmt::Display, hash::Hash, num::ParseIntError};
 
-use self::parser::Parser;
+use self::{parser::Parser, visitor::Visitor};
 
 mod parser {
     // we take a parsing state and return either a valid node or an error
@@ -27,27 +28,32 @@ mod parser {
 
     #[derive(Debug)]
     pub struct Parser<'a> {
+        regex: &'a str,
         group_count: usize,
-        regex: PeekNth<Chars<'a>>,
+        regex_iter: PeekNth<Chars<'a>>,
+        consumed: usize,
     }
 
     impl<'a> PartialEq for Parser<'a> {
         fn eq(&self, other: &Self) -> bool {
             self.group_count == other.group_count
-                && self.regex.clone().collect::<String>() == other.regex.clone().collect::<String>()
+                && self.regex_iter.clone().collect::<String>()
+                    == other.regex_iter.clone().collect::<String>()
         }
     }
 
     impl<'a> Parser<'a> {
         pub fn new(input: &'a str) -> Parser {
             Parser {
+                regex: input,
                 group_count: 0,
-                regex: peek_nth(input.chars()),
+                regex_iter: peek_nth(input.chars()),
+                consumed: 0,
             }
         }
 
         pub fn peek(&mut self) -> Result<char, ParserError> {
-            match self.regex.peek() {
+            match self.regex_iter.peek() {
                 Some(c) => Ok(*c),
                 None => Err(ParserError::UnexexpectedEOF),
             }
@@ -62,10 +68,10 @@ mod parser {
         }
 
         pub fn consume(&mut self, expected: char) -> Result<char, ParserError> {
-            match self.regex.peek() {
+            match self.regex_iter.peek() {
                 Some(actual) => {
                     if *actual == expected {
-                        self.regex.next();
+                        self.advance_by(1);
                         Ok(expected)
                     } else {
                         Err(ParserError::UnexpectedToken(self.get_remainder(), expected))
@@ -76,12 +82,13 @@ mod parser {
         }
 
         pub fn advance_by(&mut self, by: usize) {
-            self.regex.nth(by - 1);
+            self.regex_iter.nth(by - 1);
+            self.consumed += by;
         }
 
         pub fn matches_several(&mut self, chars: &[char]) -> bool {
             for (i, expected) in chars.iter().enumerate() {
-                if let Some(actual) = self.regex.peek_nth(i) {
+                if let Some(actual) = self.regex_iter.peek_nth(i) {
                     if actual != expected {
                         return false;
                     }
@@ -91,7 +98,7 @@ mod parser {
         }
 
         pub fn consume_unseen(&mut self) -> Result<char, ParserError> {
-            match self.regex.next() {
+            match self.regex_iter.next() {
                 Some(c) => Ok(c),
                 None => Err(ParserError::UnexexpectedEOF),
             }
@@ -110,7 +117,7 @@ mod parser {
         }
 
         pub fn within_bounds(&mut self) -> bool {
-            self.regex.peek().is_some()
+            self.regex_iter.peek().is_some()
         }
 
         pub fn can_parse_character(&mut self) -> bool {
@@ -122,11 +129,11 @@ mod parser {
         }
 
         pub fn can_parse_character_range(&mut self) -> bool {
-            if let Some(c0) = self.regex.peek() {
+            if let Some(c0) = self.regex_iter.peek() {
                 if !ESCAPED.contains(c0) {
-                    if let Some(hyphen) = self.regex.peek_nth(1) {
+                    if let Some(hyphen) = self.regex_iter.peek_nth(1) {
                         if *hyphen == '-' {
-                            if let Some(c1) = self.regex.peek_nth(2) {
+                            if let Some(c1) = self.regex_iter.peek_nth(2) {
                                 return !ESCAPED.contains(c1);
                             }
                         }
@@ -141,9 +148,9 @@ mod parser {
         }
 
         pub fn can_parse_character_class(&mut self) -> bool {
-            if let Some(c0) = self.regex.peek() {
+            if let Some(c0) = self.regex_iter.peek() {
                 if *c0 == '\\' {
-                    if let Some(c1) = self.regex.peek_nth(1) {
+                    if let Some(c1) = self.regex_iter.peek_nth(1) {
                         if CHARACTER_CLASSES.contains(c1) {
                             return true;
                         }
@@ -154,9 +161,9 @@ mod parser {
         }
 
         pub fn can_parse_escaped(&mut self) -> bool {
-            if let Some(c0) = self.regex.peek() {
+            if let Some(c0) = self.regex_iter.peek() {
                 if *c0 == '\\' {
-                    if let Some(c1) = self.regex.peek_nth(1) {
+                    if let Some(c1) = self.regex_iter.peek_nth(1) {
                         if ESCAPED.contains(c1) {
                             return true;
                         }
@@ -179,11 +186,11 @@ mod parser {
         }
 
         pub fn can_parse_anchor(&mut self) -> bool {
-            if let Some(c0) = self.regex.peek() {
+            if let Some(c0) = self.regex_iter.peek() {
                 if *c0 == '^' || *c0 == '$' {
                     return true;
                 } else if *c0 == '\\' {
-                    if let Some(c1) = self.regex.peek_nth(1) {
+                    if let Some(c1) = self.regex_iter.peek_nth(1) {
                         return ANCHORS.contains(c1);
                     }
                 }
@@ -192,7 +199,11 @@ mod parser {
         }
 
         pub fn get_remainder(&mut self) -> Box<String> {
-            Box::new(self.regex.clone().collect::<String>())
+            Box::new(self.regex_iter.clone().collect::<String>())
+        }
+
+        pub fn get_consumed(&mut self) -> Box<String> {
+            Box::new(self.regex.chars().take(self.consumed).collect())
         }
 
         pub fn can_parse_sub_expression_item(&mut self) -> bool {
@@ -242,13 +253,27 @@ pub enum Quantifier {
     None,
 }
 
+impl Display for Quantifier {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::OneOrMore(lazy) => write!(f, "+{}", if *lazy { "?" } else { "" }),
+            Self::ZeroOrMore(lazy) => write!(f, "*{}", if *lazy { "?" } else { "" }),
+            Self::ZeroOrOne(lazy) => write!(f, "?{}", if *lazy { "?" } else { "" }),
+            Self::Range(n, m, lazy) => {
+                write!(f, "{{{},{:?}}}{}", n, m, if *lazy { "?" } else { "" })
+            }
+            Self::None => write!(f, ""),
+        }
+    }
+}
+
 #[derive(Debug, Hash, Clone)]
 pub enum Node {
     Character(char),
     Match(Box<Node>, Quantifier),
     Expression(Vec<Box<Node>>, Option<Box<Node>>),
     Group(Box<Node>, Option<usize>, Quantifier),
-    AnyCharacter,
+    Dot,
     CharacterGroup(Vec<Box<Node>>, bool),
     CharacterRange(char, char),
     // anchors
@@ -266,6 +291,10 @@ pub enum Node {
     EndOfStringOnlyMaybeNewLine,
 }
 
+pub(crate) trait Data {
+    fn accept<V: Visitor>(&self, visitor: &mut V) -> V::Result;
+}
+
 impl Node {
     pub fn accepts(&self, cursor: &Cursor, context: &Context) -> bool {
         match self {
@@ -280,7 +309,7 @@ impl Node {
                     false
                 }
             }
-            Node::AnyCharacter => {
+            Node::Dot => {
                 cursor.position < context.text.len()
                     && (context.flags.intersects(RegexFlags::DOTALL)
                         || context.text[cursor.position] != '\n')
@@ -346,7 +375,7 @@ impl Node {
 
     pub fn increment(&self) -> usize {
         match self {
-            Node::Character(_) | Node::AnyCharacter | Node::CharacterGroup(_, _) => 1,
+            Node::Character(_) | Node::Dot | Node::CharacterGroup(_, _) => 1,
             // anchors
             Node::EmptyString
             | Node::GroupEntry(_)
@@ -365,12 +394,81 @@ impl Node {
     }
 }
 
+impl Data for Node {
+    fn accept<V: Visitor>(&self, visitor: &mut V) -> V::Result {
+        match self {
+            Self::Character(_) => visitor.visit_character(self.clone()),
+            Self::Expression(_, _) => visitor.visit_expression(self.clone()),
+            Self::Match(_, _) => visitor.visit_match(self.clone()),
+            Self::Group(_, _, _) => visitor.visit_group(self.clone()),
+            Self::Dot => visitor.visit_dot(self.clone()),
+            Self::CharacterGroup(_, _) => visitor.visit_character_group(self.clone()),
+            Self::EmptyString
+            | Self::Epsilon
+            | Self::EndOfString
+            | Self::EndOfStringOnlyMaybeNewLine
+            | Self::EndOfStringOnlyNotNewline
+            | Self::GroupEntry(_)
+            | Self::GroupExit(_)
+            | Self::GroupLink
+            | Self::StartOfStringOnly
+            | Self::StartOfString
+            | Self::WordBoundary
+            | Self::NonWordBoundary => visitor.visit_anchor(self.clone()),
+            Self::CharacterRange(_, _) => panic!("not implemented for char range!"),
+        }
+    }
+}
+
+impl Display for Node {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.clone() {
+            Self::Character(char_literal) => write!(f, "{}", char_literal),
+            Self::Expression(items, alternative) => {
+                let concated = items.iter().map(|node| format!("{}", node)).join("");
+                if alternative.is_some() {
+                    write!(f, "{}|{}", concated, alternative.unwrap())
+                } else {
+                    write!(f, "{}", concated)
+                }
+            }
+            Self::Match(item, quantifier) => write!(f, "{}{}", item, quantifier),
+            Self::Group(item, group_index, quantifier) => match group_index {
+                Some(_) => write!(f, "(?:{}){}", item, quantifier),
+                None => write!(f, "({}){}", item, quantifier),
+            },
+            Self::Epsilon => write!(f, "{}", 'ε'),
+            Self::CharacterGroup(items, negated) => {
+                let concated = items.iter().map(|node| format!("{}", node)).join("");
+                if negated {
+                    write!(f, "[^{}]", concated)
+                } else {
+                    write!(f, "[{}]", concated)
+                }
+            }
+            Self::EmptyString
+            | Self::Dot
+            | Self::EndOfString
+            | Self::EndOfStringOnlyMaybeNewLine
+            | Self::EndOfStringOnlyNotNewline
+            | Self::GroupEntry(_)
+            | Self::GroupExit(_)
+            | Self::GroupLink
+            | Self::StartOfStringOnly
+            | Self::StartOfString
+            | Self::WordBoundary
+            | Self::NonWordBoundary => write!(f, "{:?}", *self),
+            Self::CharacterRange(from, to) => write!(f, "{from}-{to}",),
+        }
+    }
+}
+
 #[derive(Debug, PartialEq)]
 pub enum ParserError {
     UnexpectedToken(Box<String>, char),
     UnexexpectedEOF,
     UnableToParseChar(Box<String>),
-    CantParseCharGroup(Box<String>),
+    CantParseCharGroup(Box<String>, Box<String>),
     UnrecognizedAnchor(Box<String>, char),
     UnrecognizedModifier(Box<String>, char),
     InvalidExpression(Box<String>),
@@ -382,9 +480,30 @@ pub enum ParserError {
     InvalidCharacterRange(char, char),
 }
 
+impl Display for ParserError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match *self {
+            Self::CantParseCharGroup(ref consumed, ref left) => {
+                write!(
+                    f,
+                    "{} {}:\n | {}{}\n | {}",
+                    format!("[{:0>3}]", 2).red().bold(),
+                    "error while parsing character group",
+                    consumed,
+                    left,
+                    "^".repeat(consumed.len()).green()
+                )
+            }
+            _ => write!(f, "{:#?}", *self),
+        }
+    }
+}
+
+impl Error for ParserError {}
+
 pub fn run_parse<'a>(input: &'a str, flags: &mut RegexFlags) -> Result<Node, ParserError> {
     if input.is_empty() {
-        return Ok(Node::EmptyString);
+        Ok(Node::EmptyString)
     } else {
         let mut parser = Parser::new(input);
         parse_inline_modifiers(&mut parser, flags)?;
@@ -395,22 +514,23 @@ pub fn run_parse<'a>(input: &'a str, flags: &mut RegexFlags) -> Result<Node, Par
                 if let Node::Expression(ref mut subexpressions, _) = expr {
                     subexpressions.insert(0, Box::new(anchor));
                     if parser.within_bounds() {
-                        return Err(ParserError::SuffixRemaining(parser.get_remainder()));
+                        Err(ParserError::SuffixRemaining(parser.get_remainder()))
+                    } else {
+                        Ok(expr)
                     }
-                    return Ok(expr);
                 } else {
                     panic!("expected an expression")
                 }
             } else {
-                return Ok(anchor);
+                Ok(anchor)
             }
         } else {
             // assert the node returned is an expression
             let expr = parse_expression(&mut parser)?;
             if parser.within_bounds() {
-                return Err(ParserError::SuffixRemaining(parser.get_remainder()));
+                Err(ParserError::SuffixRemaining(parser.get_remainder()))
             } else {
-                return Ok(expr);
+                Ok(expr)
             }
         }
     }
@@ -576,7 +696,10 @@ fn parse_character_group(parser: &mut Parser) -> Result<Node, ParserError> {
     }
     parser.consume(']')?;
     if items.is_empty() {
-        return Err(ParserError::CantParseCharGroup(parser.get_remainder()));
+        return Err(ParserError::CantParseCharGroup(
+            parser.get_consumed(),
+            parser.get_remainder(),
+        ));
     } else {
         return Ok(Node::CharacterGroup(items, negated));
     }
@@ -614,7 +737,7 @@ fn parse_character_in_character_group(parser: &mut Parser) -> Result<Node, Parse
 fn parse_match_item<'a>(parser: &mut Parser) -> Result<Node, ParserError> {
     if parser.matches('.') {
         parser.consume('.')?;
-        Ok(Node::AnyCharacter)
+        Ok(Node::Dot)
     } else if parser.can_parse_character_class() {
         parse_character_class(parser)
     } else if parser.can_parse_character_group() {
@@ -766,7 +889,7 @@ fn parse_anchor<'a>(parser: &mut Parser) -> Result<Node, ParserError> {
     }
 }
 
-fn parse_match<'a>(parser: &mut Parser) -> Result<Node, ParserError> {
+fn parse_match(parser: &mut Parser) -> Result<Node, ParserError> {
     let match_item = parse_match_item(parser)?;
     let quantifier = if parser.can_parse_quantifier() {
         parse_quantifier(parser)?
@@ -783,6 +906,21 @@ fn parse_sub_expression_item<'a>(parser: &mut Parser) -> Result<Node, ParserErro
         parse_anchor(parser)
     } else {
         parse_match(parser)
+    }
+}
+
+pub mod visitor {
+    use super::Node;
+
+    pub trait Visitor {
+        type Result;
+        fn visit_expression(&mut self, expression: Node) -> Self::Result;
+        fn visit_character(&mut self, char: Node) -> Self::Result;
+        fn visit_anchor(&mut self, anchor: Node) -> Self::Result;
+        fn visit_dot(&mut self, dot: Node) -> Self::Result;
+        fn visit_match(&mut self, match_: Node) -> Self::Result;
+        fn visit_character_group(&mut self, character_group: Node) -> Self::Result;
+        fn visit_group(&mut self, group: Node) -> Self::Result;
     }
 }
 
@@ -846,7 +984,7 @@ mod tests {
         let chars: Vec<char> = String::from("a\n").chars().collect();
         let mut cursor = Cursor::new(0, 0);
         let context = Context::new(&chars);
-        let dot = Node::AnyCharacter;
+        let dot = Node::Dot;
         assert_eq!(dot.accepts(&cursor, &context), true);
         cursor.advance(1);
         assert_eq!(dot.accepts(&cursor, &context), false);
