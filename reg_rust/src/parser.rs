@@ -339,10 +339,10 @@ impl Node {
             // anchors
             Node::EmptyString | Node::GroupEntry(_) | Node::GroupExit(_) => true,
             Node::WordBoundary => {
-                !context.text.is_empty() && is_word_boundary(context.text, cursor.position)
+                !context.text.is_empty() && is_word_boundary(&context.text, cursor.position)
             }
             Node::NonWordBoundary => {
-                !context.text.is_empty() && !is_word_boundary(context.text, cursor.position)
+                !context.text.is_empty() && !is_word_boundary(&context.text, cursor.position)
             }
             Node::StartOfString => {
                 let pos = cursor.position;
@@ -937,20 +937,29 @@ mod tests {
     fn test_start_of_string_accept() {
         let chars: Vec<char> = String::from("abc\n").chars().collect();
         let mut cursor = Cursor::new(0, 0);
-        let context = Context::new(&chars);
+        let context = Context::new(chars.clone());
         let start_of_string = Node::StartOfString;
         assert_eq!(start_of_string.accepts(&cursor, &context), true);
-        cursor.advance(1);
+        cursor = Cursor {
+            position: cursor.position + 1,
+            groups: cursor.groups,
+        };
         assert_eq!(start_of_string.accepts(&cursor, &context), false);
-        cursor.advance(2);
+        cursor = Cursor {
+            position: cursor.position + 2,
+            groups: cursor.groups,
+        };
         assert_eq!(start_of_string.accepts(&cursor, &context), false);
 
-        let context_with_multiline = Context::new_with_flags(&chars, RegexFlags::MULTILINE);
+        let context_with_multiline = Context::new_with_flags(chars, RegexFlags::MULTILINE);
         assert_eq!(
             start_of_string.accepts(&cursor, &context_with_multiline),
             false
         );
-        cursor.advance(1);
+        cursor = Cursor {
+            position: cursor.position + 1,
+            groups: cursor.groups,
+        };
         assert_eq!(
             start_of_string.accepts(&cursor, &context_with_multiline),
             true
@@ -961,16 +970,25 @@ mod tests {
     fn test_character_accept() {
         let chars: Vec<char> = String::from("abA").chars().collect();
         let mut cursor = Cursor::new(0, 0);
-        let context = Context::new(&chars);
+        let context = Context::new(chars.clone());
         let a = Node::Character('a');
         assert_eq!(a.accepts(&cursor, &context), true);
-        cursor.advance(1);
+        cursor = Cursor {
+            position: cursor.position + 1,
+            groups: cursor.groups,
+        };
         assert_eq!(a.accepts(&cursor, &context), false);
-        cursor.advance(1);
+        cursor = Cursor {
+            position: cursor.position + 1,
+            groups: cursor.groups,
+        };
 
-        let context_with_ignorecase = Context::new_with_flags(&chars, RegexFlags::IGNORECASE);
+        let context_with_ignorecase = Context::new_with_flags(chars, RegexFlags::IGNORECASE);
         assert_eq!(a.accepts(&cursor, &context_with_ignorecase), true);
-        cursor.advance(1);
+        cursor = Cursor {
+            position: cursor.position + 1,
+            groups: cursor.groups,
+        };
         assert_eq!(a.accepts(&cursor, &context_with_ignorecase), false);
     }
 
@@ -978,13 +996,16 @@ mod tests {
     fn test_dot_character_accept() {
         let chars: Vec<char> = String::from("a\n").chars().collect();
         let mut cursor = Cursor::new(0, 0);
-        let context = Context::new(&chars);
+        let context = Context::new(chars.clone());
         let dot = Node::Dot;
         assert_eq!(dot.accepts(&cursor, &context), true);
-        cursor.advance(1);
+        cursor = Cursor {
+            position: cursor.position + 1,
+            groups: cursor.groups,
+        };
         assert_eq!(dot.accepts(&cursor, &context), false);
 
-        let context_with_ignorecase = Context::new_with_flags(&chars, RegexFlags::DOTALL);
+        let context_with_ignorecase = Context::new_with_flags(chars, RegexFlags::DOTALL);
         assert_eq!(dot.accepts(&cursor, &context_with_ignorecase), true);
     }
 }

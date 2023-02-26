@@ -9,16 +9,17 @@ use std::{
 use itertools::Itertools;
 
 use crate::{
+    matching::{Context, Cursor},
     parser::{run_parse, visitor::Visitor, Data, Node, ParserError, Quantifier, UpperBound},
     utils::RegexFlags,
 };
 
 type State = usize;
 
-#[derive(Hash, Debug)]
-struct Transition {
-    node: Node,
-    end: State,
+#[derive(Hash, Debug, PartialEq, Eq, Clone)]
+pub struct Transition {
+    pub node: Node,
+    pub end: State,
 }
 
 impl Transition {
@@ -31,11 +32,12 @@ pub struct RegexNFA {
     state_counter: usize,
     pattern: String,
     flags: RegexFlags,
-    start: State,
+    pub start: State,
     alphabet: HashSet<Node>,
     transitions: HashMap<State, Vec<Transition>>,
-    accept: State,
+    pub accept: State,
     states: HashSet<State>,
+    group_count: usize,
 }
 
 #[derive(Debug)]
@@ -57,7 +59,16 @@ impl RegexNFA {
             transitions: HashMap::new(),
             accept: Default::default(),
             states: HashSet::new(),
+            group_count: Default::default(),
         }
+    }
+
+    pub fn get_flags(&self) -> RegexFlags {
+        self.flags
+    }
+
+    pub fn group_count(&self) -> usize {
+        self.group_count
     }
 
     pub fn gen_state(&mut self) -> State {
@@ -151,7 +162,7 @@ impl RegexNFA {
         self.epsilon(fragment.1, fragment.0);
         self.epsilon(empty.0, fragment.0);
 
-        if lazy {
+        if !lazy {
             self.transitions.get_mut(&empty.0).unwrap().reverse();
             self.transitions.get_mut(&fragment.1).unwrap().reverse();
         }
@@ -262,21 +273,72 @@ impl RegexNFA {
                 let fragment = node.accept(self);
                 match quantifier {
                     Quantifier::None => fragment,
-                    Quantifier::OneOrMore(lazy) => self.zero_or_more(&fragment, lazy),
+                    Quantifier::OneOrMore(lazy) => {
+                        self.one_or_more(&fragment, lazy);
+                        fragment
+                    }
                     Quantifier::ZeroOrOne(lazy) => {
                         self.zero_or_one(&fragment, lazy);
                         fragment
                     }
-                    Quantifier::ZeroOrMore(lazy) => {
-                        self.zero_or_more(&fragment, lazy);
-                        fragment
-                    }
+                    Quantifier::ZeroOrMore(lazy) => self.zero_or_more(&fragment, lazy),
                     Quantifier::Range(lower, upper, lazy) => {
                         self.apply_range_quantifier(*node, lower, upper, lazy)
                     }
                 }
             }
             _ => panic!("expected Group or Match, not {:#?}", node),
+        }
+    }
+
+    pub fn step<'c>(
+        &'c self,
+        start: &Transition,
+        cursor: &Cursor,
+        context: &Context,
+        visited: &mut HashSet<(usize, &'c Transition)>,
+    ) -> Vec<(Transition, Cursor)> {
+        match self.transitions.get(&start.end) {
+            Some(initial_transitions) => {
+                let mut stack: Vec<(&Transition, Cursor)> = initial_transitions
+                    .iter()
+                    .map(|nxt| (nxt, cursor.update(start.node.clone())))
+                    .rev()
+                    .collect();
+                let mut transitions: Vec<(Transition, Cursor)> = Vec::new();
+                while let Some((transition, cursor)) = stack.pop() {
+                    if !visited.contains(&(cursor.position, transition)) {
+                        visited.insert((cursor.position, transition));
+
+                        if transition.node.increment() == 0 {
+                            if transition.node.accepts(&cursor, context) {
+                                transitions.push((transition.clone(), cursor))
+                            } else {
+                                match transition.node {
+                                    Node::Epsilon if transition.end == self.accept => {
+                                        transitions.push((transition.clone(), cursor))
+                                    }
+                                    _ => match self.transitions.get(&transition.end) {
+                                        Some(some_transitions) => stack.extend(
+                                            some_transitions
+                                                .iter()
+                                                .map(|nxt| {
+                                                    (nxt, cursor.update(transition.node.clone()))
+                                                })
+                                                .rev(),
+                                        ),
+                                        _ => {}
+                                    },
+                                }
+                            }
+                        } else {
+                            transitions.push((transition.clone(), cursor))
+                        }
+                    }
+                }
+                transitions
+            }
+            None => Vec::new(),
         }
     }
 
@@ -366,7 +428,7 @@ impl RegexNFA {
     }
 }
 
-impl Visitor for RegexNFA {
+impl<'a> Visitor for RegexNFA {
     type Result = (State, State);
 
     fn visit_expression(&mut self, expression: Node) -> Self::Result {
