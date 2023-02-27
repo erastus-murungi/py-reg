@@ -341,7 +341,7 @@ impl RegexNFA {
         }
     }
 
-    /// Convert the automata to a GraphViz Dot code for the deubgging purposes.
+    /// Convert the automata to a GraphViz Dot code for the debugging purposes.
     pub fn render(&self) -> Result<(), io::Error> {
         let mut out = String::new();
         let mut seen: HashSet<State> = HashSet::new();
@@ -437,11 +437,11 @@ impl<'a> Visitor for RegexNFA {
                 self.epsilon(a.1, b.0);
             }
             let fragment = (fragments.first().unwrap().0, fragments.last().unwrap().1);
-            if let Some(alternative) = alternate_expression {
+            return if let Some(alternative) = alternate_expression {
                 let alt_fragment = alternative.accept(self);
-                return self.alternation(&fragment, &alt_fragment);
+                self.alternation(&fragment, &alt_fragment)
             } else {
-                return fragment;
+                fragment
             }
         } else {
             panic!("expected expression")

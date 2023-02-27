@@ -14,7 +14,7 @@ pub struct Cursor {
 impl Cursor {
     pub fn new(position: usize, n_groups: usize) -> Cursor {
         return Cursor {
-            position: position,
+            position,
             groups: vec![None; n_groups * 2],
         };
     }
@@ -71,15 +71,15 @@ pub struct Context {
 impl<'a> Context {
     pub fn new(text: Vec<char>) -> Context {
         return Context {
-            text: text,
+            text,
             flags: RegexFlags::NO_FLAG,
         };
     }
 
     pub fn new_with_flags(text: Vec<char>, flags: RegexFlags) -> Context {
         return Context {
-            text: text,
-            flags: flags,
+            text,
+            flags,
         };
     }
 }
@@ -180,12 +180,12 @@ impl<'a> Iterator for RegexNFAMatches<'a> {
 impl<'a> FusedIterator for RegexNFAMatches<'a> {}
 
 impl<'a> Matcher<'a> for RegexNFA {
-    fn get_flags(&self) -> RegexFlags {
-        self.get_flags()
+    fn group_count(&self) -> usize {
+        return self.group_count();
     }
 
-    fn find(&self, text: &'a str) -> Option<String> {
-        self.find_iter(text).next().map(|m| m.group(0)).unwrap()
+    fn get_flags(&self) -> RegexFlags {
+        self.get_flags()
     }
 
     fn match_suffix(&self, cursor: Cursor, context: &'a Context) -> Option<Cursor> {
@@ -233,13 +233,13 @@ impl<'a> Matcher<'a> for RegexNFA {
         }
     }
 
-    fn group_count(&self) -> usize {
-        return self.group_count();
+    fn find(&self, text: &'a str) -> Option<String> {
+        self.find_iter(text).next().map(|m| m.group(0)).unwrap()
     }
 
     fn find_iter(&'a self, text: &'a str) -> Box<dyn Iterator<Item = Match> + '_> {
         Box::new(RegexNFAMatches {
-            text: text,
+            text,
             nfa: self,
             start: 0,
             increment: 1,

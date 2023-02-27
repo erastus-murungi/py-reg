@@ -55,7 +55,7 @@ mod parser {
         pub fn peek(&mut self) -> Result<char, ParserError> {
             match self.regex_iter.peek() {
                 Some(c) => Ok(*c),
-                None => Err(ParserError::UnexexpectedEOF),
+                None => Err(ParserError::UnexpectedEOF),
             }
         }
 
@@ -77,7 +77,7 @@ mod parser {
                         Err(ParserError::UnexpectedToken(self.get_remainder(), expected))
                     }
                 }
-                None => Err(ParserError::UnexexpectedEOF),
+                None => Err(ParserError::UnexpectedEOF),
             }
         }
 
@@ -100,7 +100,7 @@ mod parser {
         pub fn consume_unseen(&mut self) -> Result<char, ParserError> {
             match self.regex_iter.next() {
                 Some(c) => Ok(c),
-                None => Err(ParserError::UnexexpectedEOF),
+                None => Err(ParserError::UnexpectedEOF),
             }
         }
 
@@ -425,11 +425,11 @@ impl Display for Node {
         match self.clone() {
             Self::Character(char_literal) => write!(f, "{}", char_literal),
             Self::Expression(items, alternative) => {
-                let concated = items.iter().map(|node| format!("{}", node)).join("");
+                let joined = items.iter().map(|node| format!("{}", node)).join("");
                 if alternative.is_some() {
-                    write!(f, "{}|{}", concated, alternative.unwrap())
+                    write!(f, "{}|{}", joined, alternative.unwrap())
                 } else {
-                    write!(f, "{}", concated)
+                    write!(f, "{}", joined)
                 }
             }
             Self::Match(item, quantifier) => write!(f, "{}{}", item, quantifier),
@@ -439,11 +439,11 @@ impl Display for Node {
             },
             Self::Epsilon => write!(f, "{}", 'ε'),
             Self::CharacterGroup(items, negated) => {
-                let concated = items.iter().map(|node| format!("{}", node)).join("");
+                let joined = items.iter().map(|node| format!("{}", node)).join("");
                 if negated {
-                    write!(f, "[^{}]", concated)
+                    write!(f, "[^{}]", joined)
                 } else {
-                    write!(f, "[{}]", concated)
+                    write!(f, "[{}]", joined)
                 }
             }
             Self::EmptyString
@@ -466,7 +466,7 @@ impl Display for Node {
 #[derive(Debug, PartialEq)]
 pub enum ParserError {
     UnexpectedToken(Box<String>, char),
-    UnexexpectedEOF,
+    UnexpectedEOF,
     UnableToParseChar(Box<String>),
     CantParseCharGroup(Box<String>, Box<String>),
     UnrecognizedAnchor(Box<String>, char),
@@ -501,7 +501,7 @@ impl Display for ParserError {
 
 impl Error for ParserError {}
 
-pub fn run_parse<'a>(input: &'a str, flags: &mut RegexFlags) -> Result<(Node, usize), ParserError> {
+pub fn run_parse(input: &str, flags: &mut RegexFlags) -> Result<(Node, usize), ParserError> {
     if input.is_empty() {
         Ok((Node::EmptyString, 0))
     } else {
@@ -578,18 +578,18 @@ fn parse_expression(parser: &mut Parser) -> Result<Node, ParserError> {
     if items.is_empty() {
         return Err(ParserError::InvalidExpression(parser.get_remainder()));
     }
-    if parser.matches('|') {
+    return if parser.matches('|') {
         parser.advance_by(1);
-        return if parser.can_parse_sub_expression_item() {
+        if parser.can_parse_sub_expression_item() {
             Ok(Node::Expression(
                 items,
                 Some(Box::new(parse_expression(parser)?)),
             ))
         } else {
             Ok(Node::EmptyString)
-        };
+        }
     } else {
-        return Ok(Node::Expression(items, None));
+        Ok(Node::Expression(items, None))
     }
 }
 
@@ -690,13 +690,13 @@ fn parse_character_group(parser: &mut Parser) -> Result<Node, ParserError> {
         }
     }
     parser.consume(']')?;
-    if items.is_empty() {
-        return Err(ParserError::CantParseCharGroup(
+    return if items.is_empty() {
+        Err(ParserError::CantParseCharGroup(
             parser.get_consumed(),
             parser.get_remainder(),
-        ));
+        ))
     } else {
-        return Ok(Node::CharacterGroup(items, negated));
+        Ok(Node::CharacterGroup(items, negated))
     }
 }
 
@@ -761,7 +761,7 @@ fn validate_range_quantifier(
     }
 }
 
-fn parse_int<'b>(parser: &mut Parser) -> Result<u64, ParserError> {
+fn parse_int(parser: &mut Parser) -> Result<u64, ParserError> {
     let mut digits: Vec<char> = Vec::new();
     loop {
         if let Ok(digit) = parser.peek() {
@@ -930,7 +930,7 @@ mod tests {
         assert_eq!(p.consume_unseen(), Ok('a'));
         assert_eq!(p.consume_unseen(), Ok('b'));
         assert_eq!(p.consume_unseen(), Ok('c'));
-        assert_eq!(p.consume_unseen(), Err(ParserError::UnexexpectedEOF));
+        assert_eq!(p.consume_unseen(), Err(ParserError::UnexpectedEOF));
     }
 
     #[test]
