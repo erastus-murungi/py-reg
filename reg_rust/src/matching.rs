@@ -21,9 +21,17 @@ impl Cursor {
 
     pub fn update(&self, node: Node) -> Cursor {
         match node {
-            Node::GroupEntry(index) | Node::GroupExit(index) => {
+            Node::GroupEntry(index) => {
                 let mut copy = self.groups.clone();
-                copy[index] = Some(self.position);
+                copy[index * 2] = Some(self.position);
+                Cursor {
+                    position: self.position,
+                    groups: copy,
+                }
+            }
+            Node::GroupExit(index) => {
+                let mut copy = self.groups.clone();
+                copy[index * 2 + 1] = Some(self.position);
                 Cursor {
                     position: self.position,
                     groups: copy,
@@ -34,6 +42,23 @@ impl Cursor {
                 groups: self.groups.clone(),
             },
         }
+    }
+
+    fn to_string(&self, text: &str) -> Vec<Option<String>> {
+        (0..self.groups.len() / 2)
+            .map(|group_index| {
+                let (some_frm, some_to) = (
+                    self.groups[group_index * 2],
+                    self.groups[group_index * 2 + 1],
+                );
+                if let Some(frm) = some_frm {
+                    if let Some(to) = some_to {
+                        return Some(text[frm..to].to_string());
+                    }
+                }
+                return None;
+            })
+            .collect()
     }
 }
 
@@ -60,19 +85,19 @@ impl<'a> Context {
 }
 
 #[derive(Debug)]
-pub struct Match<'a> {
+pub struct Match {
     start: usize,
     end: usize,
-    text: &'a str,
-    captured_groups: Vec<Option<usize>>,
+    text: String,
+    captured_groups: Vec<Option<String>>,
 }
 
-impl<'a> Match<'a> {
+impl Match {
     pub fn new(
         start: usize,
         end: usize,
-        text: &'a str,
-        captured_groups: Vec<Option<usize>>,
+        text: String,
+        captured_groups: Vec<Option<String>>,
     ) -> Self {
         Match {
             start,
@@ -82,27 +107,12 @@ impl<'a> Match<'a> {
         }
     }
 
-    fn to_string(&self, group_index: usize) -> Option<String> {
-        let (some_frm, some_to) = (
-            self.captured_groups[group_index * 2],
-            self.captured_groups[group_index * 2 + 1],
-        );
-        if let Some(frm) = some_frm {
-            if let Some(to) = some_to {
-                return Some(self.text[frm..to].to_string());
-            }
-        }
-        return None;
-    }
-
     pub fn span(&self) -> (usize, usize) {
         (self.start, self.end)
     }
 
     pub fn groups(&self) -> Vec<Option<String>> {
-        return (0..self.captured_groups.len() / 2)
-            .map(|i| self.to_string(i))
-            .collect();
+        self.captured_groups.clone()
     }
 
     fn group(&self, index: usize) -> Option<String> {
@@ -112,7 +122,7 @@ impl<'a> Match<'a> {
         if index == 0 {
             Some(self.text[self.start..self.end].to_string())
         } else {
-            self.to_string(index)
+            self.captured_groups[index].clone()
         }
     }
 }
@@ -126,7 +136,7 @@ where
     fn match_suffix(&self, cursor: Cursor, context: &'a Context) -> Option<Cursor>;
     fn is_match(&self, text: &'a str) -> bool;
     fn find(&self, text: &'a str) -> Option<String>;
-    fn find_iter(&'a self, text: &'a str) -> Box<dyn Iterator<Item = Match<'a>> + 'a>;
+    fn find_iter(&'a self, text: &'a str) -> Box<dyn Iterator<Item = Match> + 'a>;
 }
 
 #[derive(Debug)]
@@ -138,24 +148,30 @@ struct RegexNFAMatches<'a> {
     increment: usize,
 }
 
-impl<'b> Iterator for RegexNFAMatches<'b> {
-    type Item = Match<'b>;
+impl<'a> Iterator for RegexNFAMatches<'a> {
+    type Item = Match;
 
-    fn next(&mut self) -> Option<Match<'b>> {
-        if self.start <= self.text.len() {
-            if let Some(Cursor { position, groups }) = self.nfa.match_suffix(
+    fn next(&mut self) -> Option<Match> {
+        while self.start <= self.text.len() {
+            if let Some(cursor) = self.nfa.match_suffix(
                 Cursor::new(self.start, self.nfa.group_count()),
                 &self.context,
             ) {
-                self.increment = if position == self.start {
+                self.increment = if cursor.position == self.start {
                     1
                 } else {
-                    position - self.start
+                    cursor.position - self.start
                 };
-                let match_result = Some(Match::new(self.start, position, self.text, groups));
+                let match_result = Some(Match::new(
+                    self.start,
+                    cursor.position,
+                    self.text[self.start..cursor.position].to_string(),
+                    cursor.to_string(self.text),
+                ));
                 self.start += self.increment;
                 return match_result;
             }
+            self.start += 1;
         }
         return None;
     }
@@ -221,7 +237,7 @@ impl<'a> Matcher<'a> for RegexNFA {
         return self.group_count();
     }
 
-    fn find_iter(&'a self, text: &'a str) -> Box<dyn Iterator<Item = Match<'a>> + '_> {
+    fn find_iter(&'a self, text: &'a str) -> Box<dyn Iterator<Item = Match> + '_> {
         Box::new(RegexNFAMatches {
             text: text,
             nfa: self,
@@ -232,13 +248,13 @@ impl<'a> Matcher<'a> for RegexNFA {
     }
 }
 
-#[warn(unused_imports)]
+#[allow(unused_imports)]
 mod tests {
     use crate::{fsm::RegexNFA, matching::Matcher};
 
     #[test]
     fn test_simple_kleene_star() {
-        let pattern = String::from("[a-z]*");
+        let pattern = "[a-z]*";
         let regex = RegexNFA::new(&pattern);
         // regex.render();
         let items = &[
@@ -248,6 +264,17 @@ mod tests {
         ];
         for (index, s) in regex.find_iter("abcE").map(|m| m.group(0)).enumerate() {
             assert_eq!(s, items[index]);
+        }
+    }
+
+    #[test]
+    fn test_sim() {
+        let pattern = r"[abcd]+(x)+";
+        let mut regex = RegexNFA::new(pattern);
+        regex.compile().unwrap();
+
+        for item in regex.find_iter("xxxabcdxxx") {
+            println!("{:#?}", item.groups());
         }
     }
 }

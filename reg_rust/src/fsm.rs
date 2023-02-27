@@ -83,10 +83,11 @@ impl RegexNFA {
 
     pub fn compile(&mut self) -> Result<(), ReError> {
         match run_parse(&self.pattern, &mut self.flags) {
-            Ok(root) => {
+            Ok((root, group_count)) => {
                 let (start, accept) = root.accept(self);
                 self.start = start;
                 self.accept = accept;
+                self.group_count = group_count;
                 Ok(())
             }
             Err(parsing_error) => Err(ReError::ParsingFailed(parsing_error)),
@@ -146,13 +147,14 @@ impl RegexNFA {
         }
     }
 
-    fn one_or_more(&mut self, fragment: &Fragment, lazy: bool) {
+    fn one_or_more(&mut self, fragment: &Fragment, lazy: bool) -> Fragment {
         let s = self.gen_state();
         self.epsilon(fragment.1, fragment.0);
         self.epsilon(fragment.1, s);
         if lazy {
             self.transitions.get_mut(&fragment.1).unwrap().reverse();
         }
+        (fragment.0, s)
     }
 
     fn zero_or_more(&mut self, fragment: &Fragment, lazy: bool) -> Fragment {
@@ -217,8 +219,7 @@ impl RegexNFA {
                     fragments.push(frag);
                 }
                 let frag = self.match_or_group(node);
-                self.one_or_more(&frag, lazy);
-                fragments.push(frag);
+                fragments.push(self.one_or_more(&frag, lazy));
             }
             UpperBound::Undefined => {
                 for _ in 0..lower {
@@ -252,20 +253,21 @@ impl RegexNFA {
                 match quantifier {
                     Quantifier::None => self.add_capturing_markers(fragment, group_index),
                     Quantifier::ZeroOrOne(lazy) => {
-                        self.zero_or_one(&fragment, lazy);
-                        self.add_capturing_markers(fragment, group_index)
+                        let frag = self.add_capturing_markers(fragment, group_index);
+                        self.zero_or_one(&frag, lazy);
+                        frag
                     }
                     Quantifier::OneOrMore(lazy) => {
-                        self.one_or_more(&fragment, lazy);
-                        self.add_capturing_markers(fragment, group_index)
+                        let frag = self.add_capturing_markers(fragment, group_index);
+                        self.one_or_more(&frag, lazy)
                     }
                     Quantifier::ZeroOrMore(lazy) => {
-                        let frag = self.zero_or_more(&fragment, lazy);
-                        self.add_capturing_markers(frag, group_index)
+                        let frag = self.add_capturing_markers(fragment, group_index);
+                        self.zero_or_more(&fragment, lazy);
+                        frag
                     }
                     Quantifier::Range(lower, upper, lazy) => {
-                        let frag = self.apply_range_quantifier(*node, lower, upper, lazy);
-                        self.add_capturing_markers(frag, group_index)
+                        self.apply_range_quantifier(*node, lower, upper, lazy)
                     }
                 }
             }
@@ -273,10 +275,7 @@ impl RegexNFA {
                 let fragment = node.accept(self);
                 match quantifier {
                     Quantifier::None => fragment,
-                    Quantifier::OneOrMore(lazy) => {
-                        self.one_or_more(&fragment, lazy);
-                        fragment
-                    }
+                    Quantifier::OneOrMore(lazy) => self.one_or_more(&fragment, lazy),
                     Quantifier::ZeroOrOne(lazy) => {
                         self.zero_or_one(&fragment, lazy);
                         fragment

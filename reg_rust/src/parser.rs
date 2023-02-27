@@ -501,9 +501,9 @@ impl Display for ParserError {
 
 impl Error for ParserError {}
 
-pub fn run_parse<'a>(input: &'a str, flags: &mut RegexFlags) -> Result<Node, ParserError> {
+pub fn run_parse<'a>(input: &'a str, flags: &mut RegexFlags) -> Result<(Node, usize), ParserError> {
     if input.is_empty() {
-        Ok(Node::EmptyString)
+        Ok((Node::EmptyString, 0))
     } else {
         let mut parser = Parser::new(input);
         parse_inline_modifiers(&mut parser, flags)?;
@@ -516,13 +516,13 @@ pub fn run_parse<'a>(input: &'a str, flags: &mut RegexFlags) -> Result<Node, Par
                     if parser.within_bounds() {
                         Err(ParserError::SuffixRemaining(parser.get_remainder()))
                     } else {
-                        Ok(expr)
+                        Ok((expr, parser.group_count()))
                     }
                 } else {
                     panic!("expected an expression")
                 }
             } else {
-                Ok(anchor)
+                Ok((anchor, 0))
             }
         } else {
             // assert the node returned is an expression
@@ -530,7 +530,7 @@ pub fn run_parse<'a>(input: &'a str, flags: &mut RegexFlags) -> Result<Node, Par
             if parser.within_bounds() {
                 Err(ParserError::SuffixRemaining(parser.get_remainder()))
             } else {
-                Ok(expr)
+                Ok((expr, parser.group_count()))
             }
         }
     }
