@@ -204,7 +204,7 @@ impl RegexNFA {
     ) -> Fragment {
         if lower == 0 {
             if let UpperBound::Unbounded = upperbound {
-                let frag = self.match_or_group(node);
+                let frag = node.accept(self);
                 return self.zero_or_more(&frag, lazy);
             }
             if let UpperBound::Undefined = upperbound {
@@ -215,24 +215,24 @@ impl RegexNFA {
         match upperbound {
             UpperBound::Unbounded => {
                 for _ in 0..(lower - 1) {
-                    let frag = self.match_or_group(node.clone());
+                    let frag = node.accept(self);
                     fragments.push(frag);
                 }
-                let frag = self.match_or_group(node);
+                let frag = node.accept(self);
                 fragments.push(self.one_or_more(&frag, lazy));
             }
             UpperBound::Undefined => {
                 for _ in 0..lower {
-                    let frag = self.match_or_group(node.clone());
+                    let frag = node.accept(self);
                     fragments.push(frag);
                 }
             }
             UpperBound::Bounded(upper) => {
                 for _ in 0..upper {
-                    let frag = self.match_or_group(node.clone());
+                    let frag = node.accept(self);
                     fragments.push(frag);
                 }
-                for fragment in fragments.drain(lower as usize..upper as usize) {
+                for fragment in &fragments[lower as usize..upper as usize] {
                     self.add_transition(fragment.0, fragment.1, Node::EmptyString);
                     if lazy {
                         self.transitions.get_mut(&fragment.0).unwrap().reverse();
@@ -271,21 +271,25 @@ impl RegexNFA {
                     }
                 }
             }
-            Node::Match(node, quantifier) => {
-                let fragment = node.accept(self);
-                match quantifier {
-                    Quantifier::None => fragment,
-                    Quantifier::OneOrMore(lazy) => self.one_or_more(&fragment, lazy),
-                    Quantifier::ZeroOrOne(lazy) => {
-                        self.zero_or_one(&fragment, lazy);
-                        fragment
-                    }
-                    Quantifier::ZeroOrMore(lazy) => self.zero_or_more(&fragment, lazy),
-                    Quantifier::Range(lower, upper, lazy) => {
-                        self.apply_range_quantifier(*node, lower, upper, lazy)
-                    }
+            Node::Match(node, quantifier) => match quantifier {
+                Quantifier::None => node.accept(self),
+                Quantifier::OneOrMore(lazy) => {
+                    let fragment = node.accept(self);
+                    self.one_or_more(&fragment, lazy)
                 }
-            }
+                Quantifier::ZeroOrOne(lazy) => {
+                    let fragment = node.accept(self);
+                    self.zero_or_one(&fragment, lazy);
+                    fragment
+                }
+                Quantifier::ZeroOrMore(lazy) => {
+                    let fragment = node.accept(self);
+                    self.zero_or_more(&fragment, lazy)
+                }
+                Quantifier::Range(lower, upper, lazy) => {
+                    self.apply_range_quantifier(*node, lower, upper, lazy)
+                }
+            },
             _ => panic!("expected Group or Match, not {:#?}", node),
         }
     }
@@ -442,7 +446,7 @@ impl<'a> Visitor for RegexNFA {
                 self.alternation(&fragment, &alt_fragment)
             } else {
                 fragment
-            }
+            };
         } else {
             panic!("expected expression")
         }

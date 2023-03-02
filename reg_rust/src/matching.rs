@@ -77,26 +77,23 @@ impl<'a> Context {
     }
 
     pub fn new_with_flags(text: Vec<char>, flags: RegexFlags) -> Context {
-        return Context {
-            text,
-            flags,
-        };
+        return Context { text, flags };
     }
 }
 
 #[derive(Debug)]
-pub struct Match {
+pub struct Match<'s> {
     start: usize,
     end: usize,
-    text: String,
+    text: &'s str,
     captured_groups: Vec<Option<String>>,
 }
 
-impl Match {
+impl<'s> Match<'s> {
     pub fn new(
         start: usize,
         end: usize,
-        text: String,
+        text: &'s str,
         captured_groups: Vec<Option<String>>,
     ) -> Self {
         Match {
@@ -125,6 +122,14 @@ impl Match {
             self.captured_groups[index].clone()
         }
     }
+
+    fn as_str(&self) -> &'s str {
+        if self.start >= self.text.len() {
+            ""
+        } else {
+            &self.text[self.start..self.end]
+        }
+    }
 }
 
 pub(crate) trait Matcher<'a>
@@ -140,18 +145,18 @@ where
 }
 
 #[derive(Debug)]
-struct RegexNFAMatches<'a> {
-    text: &'a str,
+struct RegexNFAMatches<'s, 'a> {
+    text: &'s str,
     nfa: &'a RegexNFA,
     start: usize,
     context: Context,
     increment: usize,
 }
 
-impl<'a> Iterator for RegexNFAMatches<'a> {
-    type Item = Match;
+impl<'s, 'a> Iterator for RegexNFAMatches<'s, 'a> {
+    type Item = Match<'s>;
 
-    fn next(&mut self) -> Option<Match> {
+    fn next(&mut self) -> Option<Match<'s>> {
         while self.start <= self.text.len() {
             if let Some(cursor) = self.nfa.match_suffix(
                 Cursor::new(self.start, self.nfa.group_count()),
@@ -165,7 +170,7 @@ impl<'a> Iterator for RegexNFAMatches<'a> {
                 let match_result = Some(Match::new(
                     self.start,
                     cursor.position,
-                    self.text[self.start..cursor.position].to_string(),
+                    &self.text,
                     cursor.to_string(self.text),
                 ));
                 self.start += self.increment;
@@ -177,7 +182,7 @@ impl<'a> Iterator for RegexNFAMatches<'a> {
     }
 }
 
-impl<'a> FusedIterator for RegexNFAMatches<'a> {}
+impl<'s, 'a> FusedIterator for RegexNFAMatches<'s, 'a> {}
 
 impl<'a> Matcher<'a> for RegexNFA {
     fn group_count(&self) -> usize {
@@ -249,8 +254,10 @@ impl<'a> Matcher<'a> for RegexNFA {
 }
 
 #[allow(unused_imports)]
+#[cfg(test)]
 mod tests {
     use crate::{fsm::RegexNFA, matching::Matcher};
+    use regex;
 
     #[test]
     fn test_simple_kleene_star() {
@@ -275,6 +282,45 @@ mod tests {
 
         for item in regex.find_iter("xxxabcdxxx") {
             println!("{:#?}", item.groups());
+        }
+    }
+
+    #[cfg(test)]
+    fn test_case_no_groups(pattern: &str, text: &str) {
+        let expected: Vec<&str> = regex::Regex::new(pattern)
+            .unwrap()
+            .find_iter(text)
+            .map(|m| m.as_str())
+            .collect();
+        let mut reg = RegexNFA::new(pattern);
+        reg.compile().unwrap();
+        // reg.render();
+        let actual: Vec<&str> = reg.find_iter(text).map(|m| m.as_str()).collect();
+        assert_eq!(expected, actual)
+    }
+
+    #[test]
+    fn test_repetition() {
+        let items = [
+            ("ab{0,}bc", "abbbbc"),
+            ("ab{1,}bc", "abbbbc"),
+            ("ab{1,3}bc", "abbbbc"),
+            ("ab{3,4}bc", "abbbbc"),
+            ("ab{4,5}bc", "abbbbc"),
+            ("ab{0,1}bc", "abc"),
+            ("ab{0,1}c", "abc"),
+            ("^", "abc"),
+            ("$", "abc"),
+            ("ab{1,}bc", "abq"),
+            ("a{1,}b{1,}c", "aabbabc"),
+            // ("(a+|b){0,}", "ab"),
+            ("(a+|b){1,}", "ab"),
+            // ("(a+|b){0,1}", "ab"),
+            // ("([abc])*d", "abbbcd"),
+            // ("([abc])*bcd", "abcd"),
+        ];
+        for (pattern, text) in items {
+            test_case_no_groups(pattern, text)
         }
     }
 }
