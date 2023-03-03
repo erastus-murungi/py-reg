@@ -471,6 +471,7 @@ class AnchorType(Enum):
     StartOfStringOnly = "\\A"
     EndOfStringOnlyNotNewline = "\\z"
     EndOfStringOnlyMaybeNewLine = "\\Z"
+    IsMatch = "IsMatch"
 
 
 char2anchor_type: Final[dict[str, AnchorType]] = {
@@ -543,7 +544,7 @@ class Anchor(MatchingNode):
                 return text and is_word_boundary(text, position)
             case AnchorType.NonWordBoundary:
                 return text and not is_word_boundary(text, position)
-            case AnchorType.EmptyString | AnchorType.GroupEntry | AnchorType.GroupExit:
+            case AnchorType.EmptyString | AnchorType.GroupEntry | AnchorType.GroupExit | AnchorType.IsMatch:
                 return True
             # By design, group links and epsilon's never match anything
             case AnchorType.GroupLink | AnchorType.Epsilon:
@@ -554,9 +555,13 @@ class Anchor(MatchingNode):
     def _update_groups_and_index(self, cursor: Cursor) -> Cursor:
         # must create a shallow copy
         position, groups = cursor
-        groups_copy = groups[:]
-        groups_copy[self.offset] = position
-        return Cursor(self.increment_index(position), groups_copy)
+        return Cursor(
+            self.increment_index(position),
+            tuple(
+                position if offset == self.offset else original_position
+                for offset, original_position in enumerate(groups)
+            ),
+        )
 
     def to_string(self):
         return self.anchor_type.value
@@ -576,6 +581,7 @@ class Anchor(MatchingNode):
 EPSILON: Final[Anchor] = Anchor(AnchorType.Epsilon)
 GROUP_LINK: Final[Anchor] = Anchor(AnchorType.GroupLink)
 EMPTY_STRING: Final[Anchor] = Anchor(AnchorType.EmptyString)
+MATCH: Final[Anchor] = Anchor(AnchorType.IsMatch)
 
 
 @dataclass

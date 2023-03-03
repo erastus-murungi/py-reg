@@ -2,10 +2,11 @@ from collections import deque
 from operator import itemgetter
 from typing import Optional
 
-from reg.fsm import DFA, NFA, State, Transition
+from reg.fsm import DFA, NFA, State, Transition, gen_state
 from reg.matcher import Context, Cursor, RegexPattern
 from reg.optimizer import Optimizer
-from reg.parser import EPSILON, Anchor, RegexFlag, RegexParser
+from reg.parser import EPSILON, Anchor, RegexFlag, RegexParser, MATCH
+from reg.utils import Fragment
 
 
 class RegexNFA(NFA, RegexPattern):
@@ -27,45 +28,15 @@ class RegexNFA(NFA, RegexPattern):
         RegexPattern.__init__(self, RegexParser(pattern, flags))
         if RegexFlag.OPTIMIZE & self.parser.flags:
             Optimizer.run(self.parser.root)
-        self.set_terminals(self.parser.root.accept(self))
+        src, sink = self.parser.root.accept(self)
+        accept_node = gen_state()
+        self.add_transition(sink, accept_node, MATCH)
+        self.set_terminals(Fragment(src, accept_node))
         self.update_symbols_and_states()
         self.reduce_epsilons()
 
     def recover(self) -> str:
         return self.parser.root.to_string()
-
-    def _match_suffix_dfa(
-        self, state: State, cursor: Cursor, context: Context
-    ) -> Optional[int]:
-        """
-        This a fast matcher when you don't have groups or greedy quantifiers
-        """
-        assert self.parser.group_count == 0
-
-        if state is not None:
-            matching_cursors = []
-
-            if state in self.accepting_states:
-                matching_cursors.append(cursor)
-
-            transitions = [
-                transition
-                for transition in self[state]
-                if transition.matcher(cursor, context)
-            ]
-
-            for matcher, end_state in transitions:
-                result = self._match_suffix_dfa(
-                    end_state, matcher.update_index(cursor), context
-                )
-
-                if result is not None:
-                    matching_cursors.append(result)
-
-            if matching_cursors:
-                return max(matching_cursors, key=itemgetter(0))
-
-        return None
 
     def step(
         self, start_state: State, cursor: Cursor, context: Context
@@ -79,19 +50,17 @@ class RegexNFA(NFA, RegexPattern):
 
         while stack:
             completed, state = stack.pop()
+
             if completed:
                 # we can easily compute the close by append state to a closure
                 # collection i.e `closure.append(state)`
                 # once we are done with this state
-                for transition in self[state]:
-                    # augment to match epsilon transitions which lead to accepting states
-                    # we could rewrite things by passing more context into the match method so that
-                    # this becomes just a one-liner: transition.matcher(context)
-                    if transition.matcher(cursor, context) or (
-                        transition.matcher is EPSILON
-                        and transition.end in self.accepting_states
-                    ):
-                        transitions.append(transition)
+                transitions.extend(
+                    filter(
+                        lambda transition: transition.matcher(cursor, context),
+                        self[state],
+                    )
+                )
 
             if state in explored:
                 continue
@@ -127,7 +96,10 @@ class RegexNFA(NFA, RegexPattern):
             explored.add((cursor.position, transition))
 
             if isinstance(transition.matcher, Anchor):
-                if transition.matcher is EPSILON or transition.matcher(cursor, context):
+                if (
+                    transition.matcher is EPSILON  # consume all epsilons
+                    or transition.matcher(cursor, context)
+                ):
                     if transition.end in self.accepting_states:
                         transitions.append((transition, cursor))
                     else:
@@ -159,7 +131,7 @@ class RegexNFA(NFA, RegexPattern):
             while queue:
                 transition, cursor = queue.popleft()
 
-                if transition.matcher is EPSILON or transition.matcher(cursor, context):
+                if transition.matcher(cursor, context):
                     if transition.end in self.accepting_states:
                         match = transition.matcher.update(cursor)
                         break
@@ -230,15 +202,13 @@ class RegexNFA(NFA, RegexPattern):
         >>> compiled_regex = RegexNFA(pattern)
         >>> ctx = Context(text, RegexFlag.NOFLAG)
         >>> start = 0
-        >>> c = compiled_regex.match_suffix(Cursor(start, [maxsize, maxsize]), ctx)
+        >>> c = compiled_regex.match_suffix(Cursor(start, (maxsize, maxsize)), ctx)
         >>> c
-        Cursor(position=4, groups=[2, 4])
+        Cursor(position=4, groups=(2, 4))
         >>> end, groups = c
         >>> assert text[start: end] == 'abab'
         """
-        if isinstance(super(), DFA):
-            return self._match_suffix_dfa(self.start_state, cursor, context)
-        elif RegexFlag.NO_BACKTRACK & self.parser.flags:
+        if RegexFlag.NO_BACKTRACK & self.parser.flags:
             return self._match_suffix_no_backtrack(cursor, context)
         else:
             return self._match_suffix_backtrack(cursor, context)
@@ -247,7 +217,66 @@ class RegexNFA(NFA, RegexPattern):
         return super().__repr__()
 
 
-if __name__ == "__main__":
-    import doctest
+class RegexDFA(DFA, RegexPattern):
+    def __init__(self, pattern: str, flags: RegexFlag = RegexFlag.NOFLAG):
+        RegexPattern.__init__(self, RegexParser(pattern, flags))
+        Optimizer.run(self.parser.root)
+        nfa = NFA()
+        nfa.set_terminals(self.parser.root.accept(nfa))
+        nfa.update_symbols_and_states()
+        DFA.__init__(self, nfa)
 
-    doctest.testmod()
+    def _match_suffix_dfa(
+        self, state: State, cursor: Cursor, context: Context, path: tuple[State, ...]
+    ) -> Optional[int]:
+        """
+        This a fast matcher when you don't have groups or greedy quantifiers
+        """
+        if state is not None:
+            matching_cursors = []
+
+            if state in self.accepting_states:
+                matching_cursors.append(cursor)
+
+            transitions = [
+                transition
+                for transition in self[state]
+                if transition.matcher(cursor, context)
+            ]
+
+            for matcher, end_state in transitions:
+                if isinstance(matcher, Anchor):
+                    if end_state in path:
+                        continue
+                    updated_path = path + (end_state,)
+                else:
+                    updated_path = ()
+                result = self._match_suffix_dfa(
+                    end_state, matcher.update_index(cursor), context, updated_path
+                )
+
+                if result is not None:
+                    matching_cursors.append(result)
+
+            if matching_cursors:
+                return max(matching_cursors, key=itemgetter(0))
+
+        return None
+
+    def match_suffix(self, cursor: Cursor, context: Context) -> Optional[Cursor]:
+        return self._match_suffix_dfa(
+            self.start_state, cursor, context, (self.start_state,)
+        )
+
+
+if __name__ == "__main__":
+    # import doctest
+    #
+    # doctest.testmod()
+
+    regex, text = ("a*a*a*a*a*b", "aaaaaaaaab")
+    # compiled = RegexNFA(regex, RegexFlag.OPTIMIZE | RegexFlag.NO_BACKTRACK)
+    compiled = RegexNFA(regex, RegexFlag.OPTIMIZE | RegexFlag.NO_BACKTRACK)
+    compiled.graph()
+    print(compiled.n_transitions())
+    print(compiled.findall(text))

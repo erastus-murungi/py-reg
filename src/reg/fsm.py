@@ -64,6 +64,9 @@ class Transition:
     def __hash__(self):
         return hash((self.matcher, self.end))
 
+    def __lt__(self, other):
+        return self.end < other.end
+
 
 def gen_dfa_state(
     sources: Iterable[State],
@@ -105,7 +108,7 @@ class NFA(defaultdict[State, list[Transition]], RegexNodesVisitor[Fragment[State
         self.start_state: State = -1
 
     def update_symbols_and_states(self):
-        self.states = set(self)
+        self.states = set()
         for start in self:
             for matchable, end in self[start]:
                 self.states.add(end)
@@ -418,40 +421,32 @@ class NFA(defaultdict[State, list[Transition]], RegexNodesVisitor[Fragment[State
         visit_any_character
     ) = visit_anchor = visit_word = lambda self, matcher: self.base(matcher)
 
-    def _compute_frontier_transitions(self, transition: Transition) -> list[Transition]:
-        explored: set[State] = set()
-        stack: list[State] = [transition.end]
-        closure = []
-
-        assert transition.matcher is EPSILON
-
-        if transition.end in self.accepting_states:
-            closure.append(transition)
+    def _gen_frontier_transitions(self, start_state) -> list[Transition]:
+        explored: set[State | Transition] = set()
+        stack: list[State | Transition] = [start_state]
+        frontier_transitions: list[Transition] = []
 
         while stack:
-            state = stack.pop()
+            item: State | Transition = stack.pop()
 
-            if state in explored:
+            if item in explored:
                 continue
 
-            if isinstance(state, Transition):
-                closure.append(state)
+            if isinstance(item, Transition):
+                frontier_transitions.append(item)
                 continue
 
-            explored.add(state)
+            explored.add(item)
 
             next_in_stack = []
-            for transition in self[state]:
-                if (
-                    transition.end in self.accepting_states
-                    or transition.matcher is not EPSILON
-                ):
-                    if transition not in closure:
+            for transition in self[item]:
+                if transition.matcher is not EPSILON:
+                    if transition not in frontier_transitions:
                         next_in_stack.append(transition)
                 else:
                     next_in_stack.append(transition.end)
             stack.extend(next_in_stack[::-1])
-        return closure
+        return frontier_transitions
 
     def reduce_epsilons(self):
         """
@@ -477,10 +472,6 @@ class NFA(defaultdict[State, list[Transition]], RegexNodesVisitor[Fragment[State
         4
         """
 
-        def add_if_absent(_transitions: list[Transition], _transition: Transition):
-            if _transition not in _transitions:
-                _transitions.append(_transition)
-
         while True:
             queue = deque([self.start_state])
             visited = set()
@@ -500,26 +491,16 @@ class NFA(defaultdict[State, list[Transition]], RegexNodesVisitor[Fragment[State
                         # transitions of the form a -> ε -> b -> `matchable-s` -> `children` can be reduced to
                         # a -> `matchable-s` -> `children`
                         # special care is taken to ensure transitions order is maintained
-                        for frontier_transition in self._compute_frontier_transitions(
-                            transition
+                        for frontier_transition in self._gen_frontier_transitions(
+                            transition.end
                         ):
-                            add_if_absent(transitions, frontier_transition)
+                            if frontier_transition not in transitions:
+                                transitions.append(frontier_transition)
                             queue.appendleft(frontier_transition.end)
-                    elif (
-                        len(self[transition.end]) == 1
-                        and (epsilon_transition := only(self[transition.end])).matcher
-                        is EPSILON
-                    ):
-                        # transitions of the form a -> `matchable` -> b -> ε -> c can be reduced to
-                        # a -> `matchable` -> c
-                        add_if_absent(
-                            transitions,
-                            Transition(transition.matcher, epsilon_transition.end),
-                        )
-                        queue.appendleft(epsilon_transition.end)
                     else:
                         # can't take advantage of epsilon transition
-                        add_if_absent(transitions, transition)
+                        if transition not in transitions:
+                            transitions.append(transition)
                         queue.appendleft(transition.end)
 
                 if transitions != self[state]:
@@ -601,7 +582,7 @@ class DFA(NFA):
 
         self.states.update(finished)
         self.update_symbols()
-        self.start = first(finished)
+        self.start_state = first(finished)
 
     def gen_equivalence_states(self) -> Iterator[set[State]]:
         """

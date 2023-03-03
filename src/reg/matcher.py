@@ -62,7 +62,7 @@ class Context(NamedTuple):
 
 class Cursor(NamedTuple):
     position: int
-    groups: list[int]
+    groups: tuple[int, ...]
 
 
 class RegexPattern(ABC):
@@ -98,7 +98,7 @@ class RegexPattern(ABC):
         if show_progress:
             t = tqdm(total=len(text))
         while start <= len(text):
-            cursor = Cursor(start, [maxsize] * (self.parser.group_count * 2))
+            cursor = Cursor(start, (maxsize,) * (self.parser.group_count * 2))
             if (cursor := self.match_suffix(cursor, context)) is not None:
                 position, groups = cursor
                 yield RegexMatch(start, position, text, groups)

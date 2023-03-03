@@ -590,51 +590,32 @@ fn parse_expression(parser: &mut Parser) -> Result<Node, ParserError> {
         }
     } else {
         Ok(Node::Expression(items, None))
-    }
+    };
 }
 
 fn parse_character_class(parser: &mut Parser) -> Result<Node, ParserError> {
     parser.consume('\\')?;
+    let c = parser.consume_unseen()?;
     return match parser.consume_unseen()? {
-        'w' => Ok(Node::CharacterGroup(
+        'w' | 'W' => Ok(Node::CharacterGroup(
             vec![
                 Box::new(Node::CharacterRange('0', '9')),
                 Box::new(Node::CharacterRange('A', 'z')),
                 Box::new(Node::CharacterRange('a', 'z')),
                 Box::new(Node::Character('-')),
             ],
-            false,
+            c == 'W',
         )),
-        'W' => Ok(Node::CharacterGroup(
-            vec![
-                Box::new(Node::CharacterRange('0', '9')),
-                Box::new(Node::CharacterRange('A', 'z')),
-                Box::new(Node::CharacterRange('a', 'z')),
-                Box::new(Node::Character('-')),
-            ],
-            true,
-        )),
-        'd' => Ok(Node::CharacterGroup(
+        'd' | 'D' => Ok(Node::CharacterGroup(
             vec![Box::new(Node::CharacterRange('0', '9'))],
-            false,
+            c == 'D',
         )),
-        'D' => Ok(Node::CharacterGroup(
-            vec![Box::new(Node::CharacterRange('0', '9'))],
-            true,
-        )),
-        's' => Ok(Node::CharacterGroup(
+        's' | 'S' => Ok(Node::CharacterGroup(
             vec![' ', '\t', '\n']
                 .iter()
                 .map(|literal| Box::new(Node::Character(*literal)))
                 .collect_vec(),
-            false,
-        )),
-        'S' => Ok(Node::CharacterGroup(
-            vec![' ', '\t', '\n']
-                .iter()
-                .map(|literal| Box::new(Node::Character(*literal)))
-                .collect_vec(),
-            true,
+            c == 'S',
         )),
         char_literal => Err(ParserError::UnrecognizedAnchor(
             parser.get_remainder(),
@@ -697,7 +678,7 @@ fn parse_character_group(parser: &mut Parser) -> Result<Node, ParserError> {
         ))
     } else {
         Ok(Node::CharacterGroup(items, negated))
-    }
+    };
 }
 
 fn parse_escaped<'a>(parser: &mut Parser) -> Result<Node, ParserError> {

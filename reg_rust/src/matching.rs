@@ -123,6 +123,7 @@ impl<'s> Match<'s> {
         }
     }
 
+    #[allow(dead_code)] // reason = "used in tests")
     fn as_str(&self) -> &'s str {
         if self.start >= self.text.len() {
             ""
