@@ -440,11 +440,10 @@ class NFA(defaultdict[State, list[Transition]], RegexNodesVisitor[Fragment[State
 
             next_in_stack = []
             for transition in self[item]:
-                if transition.matcher is not EPSILON:
-                    if transition not in frontier_transitions:
-                        next_in_stack.append(transition)
-                else:
+                if transition.matcher is EPSILON:
                     next_in_stack.append(transition.end)
+                elif transition not in frontier_transitions:
+                    next_in_stack.append(transition)
             stack.extend(next_in_stack[::-1])
         return frontier_transitions
 
