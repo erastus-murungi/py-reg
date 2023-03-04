@@ -4,7 +4,7 @@ from typing import IO
 
 import click
 
-from reg.nfa_matcher import RegexNFA
+from reg.fsm import NFA
 from reg.pike_vm import RegexPikeVM
 from reg.utils import RegexFlag
 
@@ -96,7 +96,7 @@ def entry(
     if engine == "VM":
         compiled_pattern = RegexPikeVM(pattern, flags)
     else:
-        compiled_pattern = RegexNFA(pattern, flags)
+        compiled_pattern = NFA(pattern, flags)
     with out:
         results = {
             index: {"span": m.span, "match": m.group(0), "groups": m.groups()}
