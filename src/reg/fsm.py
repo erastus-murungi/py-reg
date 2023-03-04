@@ -8,7 +8,7 @@ from sys import maxsize
 from typing import Any, Iterable, Iterator, Optional, Union
 
 import graphviz
-from more_itertools import first, first_true, minmax, only, pairwise
+from more_itertools import first, first_true, minmax, pairwise
 
 from reg.parser import (
     EMPTY_STRING,
@@ -550,8 +550,8 @@ class DFA(NFA):
             lambda transition: transition.matcher == symbol,
         )
         if result is None:
-            return () if wrapped else ""
-        return (result.end,) if wrapped else result.end
+            return ""
+        return result.end
 
     def copy(self):
         cp = DFA()

@@ -5,8 +5,8 @@ import pytest
 from reg.fsm import NFA, gen_state
 from reg.nfa_matcher import RegexNFA
 from reg.optimizer import Optimizer
-from reg.parser import RegexParser, MATCH
-from reg.utils import RegexFlag, Fragment
+from reg.parser import MATCH, RegexParser
+from reg.utils import Fragment, RegexFlag
 
 
 def get_n_transitions_epsilon_not_reduced(

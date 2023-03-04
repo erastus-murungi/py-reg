@@ -5,7 +5,7 @@ from typing import Optional
 from reg.fsm import DFA, NFA, State, Transition, gen_state
 from reg.matcher import Context, Cursor, RegexPattern
 from reg.optimizer import Optimizer
-from reg.parser import EPSILON, Anchor, RegexFlag, RegexParser, MATCH
+from reg.parser import EPSILON, MATCH, Anchor, RegexFlag, RegexParser
 from reg.utils import Fragment
 
 
@@ -274,9 +274,8 @@ if __name__ == "__main__":
     #
     # doctest.testmod()
 
-    regex, text = ("a*a*a*a*a*b", "aaaaaaaaab")
+    regex, text = ("ab|abab", "abbabab")
     # compiled = RegexNFA(regex, RegexFlag.OPTIMIZE | RegexFlag.NO_BACKTRACK)
-    compiled = RegexNFA(regex, RegexFlag.OPTIMIZE | RegexFlag.NO_BACKTRACK)
+    compiled = RegexDFA(regex)
     compiled.graph()
-    print(compiled.n_transitions())
     print(compiled.findall(text))
