@@ -3,7 +3,7 @@ from random import randint, random, seed
 
 import pytest
 
-from reg.nfa_matcher import RegexNFA
+from reg.fsm import NFA
 from reg.parser import RegexpParsingError
 from reg.utils import RegexFlag
 
@@ -14,9 +14,9 @@ def _test_case_no_groups(pattern: str, text: str) -> None:
     expected = [m.group(0) for m in re.finditer(pattern, text)]
     actual = [
         m.group(0)
-        for m in RegexNFA(
-            pattern, RegexFlag.NO_BACKTRACK | RegexFlag.OPTIMIZE
-        ).finditer(text)
+        for m in NFA(pattern, RegexFlag.NO_BACKTRACK | RegexFlag.OPTIMIZE).finditer(
+            text
+        )
     ]
     assert expected == actual, (pattern, text)
 
@@ -27,9 +27,9 @@ def _test_case(pattern: str, text: str) -> None:
     expected_groups = [m.groups() for m in re.finditer(pattern, text)]
     actual_groups = [
         m.groups()
-        for m in RegexNFA(
-            pattern, RegexFlag.NO_BACKTRACK | RegexFlag.OPTIMIZE
-        ).finditer(text)
+        for m in NFA(pattern, RegexFlag.NO_BACKTRACK | RegexFlag.OPTIMIZE).finditer(
+            text
+        )
     ]
     for expected_group, actual_group in zip(expected_groups, actual_groups):
         assert expected_group == actual_group, (pattern, text)
@@ -318,9 +318,9 @@ def test_raises_exception(pattern, text):
     with pytest.raises((RegexpParsingError, ValueError)):
         _ = [
             m.substr
-            for m in RegexNFA(
-                pattern, RegexFlag.NO_BACKTRACK | RegexFlag.OPTIMIZE
-            ).finditer(text)
+            for m in NFA(pattern, RegexFlag.NO_BACKTRACK | RegexFlag.OPTIMIZE).finditer(
+                text
+            )
             if m.substr != ""
         ]
 
@@ -1374,9 +1374,7 @@ def test_start_of_string_absolute_anchor(pattern, text):
     ],
 )
 def test_end_of_string_absolute_anchors(pattern, text, expected):
-    actual = RegexNFA(pattern, RegexFlag.NO_BACKTRACK | RegexFlag.OPTIMIZE).findall(
-        text
-    )
+    actual = NFA(pattern, RegexFlag.NO_BACKTRACK | RegexFlag.OPTIMIZE).findall(text)
     assert actual == expected
 
 

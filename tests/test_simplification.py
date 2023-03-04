@@ -1,6 +1,6 @@
 import pytest
 
-from reg.nfa_matcher import RegexNFA
+from reg.fsm import NFA
 
 
 @pytest.mark.parametrize(
@@ -15,5 +15,5 @@ from reg.nfa_matcher import RegexNFA
     ],
 )
 def test_perl_character_classes(pattern, expected):
-    recovered = RegexNFA(pattern).recover()
+    recovered = NFA(pattern).recover()
     assert recovered == expected, f"{pattern=}, {expected=}, {recovered=}"

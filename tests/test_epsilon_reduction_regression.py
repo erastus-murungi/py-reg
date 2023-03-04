@@ -1,26 +1,9 @@
-import pprint
-
 import pytest
 
 from reg.fsm import NFA, gen_state
-from reg.nfa_matcher import RegexNFA
 from reg.optimizer import Optimizer
 from reg.parser import MATCH, RegexParser
 from reg.utils import Fragment, RegexFlag
-
-
-def get_n_transitions_epsilon_not_reduced(
-    pattern: str, flags: RegexFlag = RegexFlag.OPTIMIZE
-):
-    nfa = NFA()
-    parser = RegexParser(pattern, flags)
-    Optimizer.run(parser.root)
-    src, sink = parser.root.accept(nfa)
-    accept_node = gen_state()
-    nfa.add_transition(sink, accept_node, MATCH)
-    nfa.set_terminals(Fragment(src, accept_node))
-    nfa.update_symbols_and_states()
-    return nfa.n_transitions()
 
 
 @pytest.mark.parametrize(
@@ -255,7 +238,7 @@ def get_n_transitions_epsilon_not_reduced(
     ],
 )
 def _test_original_num_epsilons(pattern, upper_bound):
-    assert get_n_transitions_epsilon_not_reduced(pattern) <= upper_bound
+    assert NFA(pattern, reduce_epsilons=False) <= upper_bound
 
 
 @pytest.mark.parametrize(
@@ -490,4 +473,4 @@ def _test_original_num_epsilons(pattern, upper_bound):
     ],
 )
 def test_epsilons_reduced(pattern, upper_bound):
-    assert RegexNFA(pattern).n_transitions() <= upper_bound
+    assert NFA(pattern, reduce_epsilons=True).n_transitions() <= upper_bound

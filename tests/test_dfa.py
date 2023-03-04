@@ -3,7 +3,7 @@ from random import randint, random, seed
 
 import pytest
 
-from reg.nfa_matcher import RegexDFA
+from reg.fsm import DFA
 from reg.parser import RegexpParsingError
 
 # acquired from re2: https://github.com/google/re2/blob/main/re2/testing/search_test.cc
@@ -12,7 +12,7 @@ pytest.skip(allow_module_level=True)
 
 def _test_case_no_groups(pattern: str, text: str) -> None:
     expected = [m.group(0) for m in re.finditer(pattern, text)]
-    actual = [m.group(0) for m in RegexDFA(pattern).finditer(text)]
+    actual = [m.group(0) for m in DFA(pattern).finditer(text)]
     assert expected == actual, (pattern, text)
 
 
@@ -297,7 +297,7 @@ def test_raises_exception(pattern, text):
     with pytest.raises(re.error):
         _ = [m.group(0) for m in re.finditer(pattern, text) if m.group(0) != ""]
     with pytest.raises((RegexpParsingError, ValueError)):
-        _ = [m.substr for m in RegexDFA(pattern).finditer(text) if m.substr != ""]
+        _ = [m.substr for m in DFA(pattern).finditer(text) if m.substr != ""]
 
 
 @pytest.mark.parametrize(
@@ -1350,7 +1350,7 @@ def test_start_of_string_absolute_anchor(pattern, text):
     ],
 )
 def test_end_of_string_absolute_anchors(pattern, text, expected):
-    actual = RegexDFA(pattern).findall(text)
+    actual = DFA(pattern).findall(text)
     assert actual == expected
 
 
