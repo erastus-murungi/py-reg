@@ -147,7 +147,7 @@ class Matcher(Hashable):
         Examples
         --------
         >>> character_matcher = Character('a')
-        >>> cs = (1, [])
+        >>> cs = Cursor(1, ())
         >>> ctx = Context('baba', RegexFlag.NOFLAG)
         >>> character_matcher(cs, ctx)
         True
@@ -171,15 +171,15 @@ class Matcher(Hashable):
 
         Examples
         --------
-        >>> cs = (0, [])
+        >>> cs = Cursor(0, ())
         >>> character_matcher = Character('a')
         >>> character_matcher.update(cs)
-        Cursor(position=1, groups=[])
+        Cursor(position=1, groups=())
         >>> from sys import maxsize
-        >>> cs = (1, [-1, -1])
+        >>> cs = Cursor(1, (-1, -1))
         >>> group_entry = Anchor.group_entry(0)
         >>> group_entry.update(cs)
-        Cursor(position=1, groups=[1, -1])
+        Cursor(position=1, groups=(1, -1))
 
         Notes
         -----

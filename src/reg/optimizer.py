@@ -1,4 +1,5 @@
 from itertools import groupby
+from typing import cast
 
 from reg.parser import (
     Character,
@@ -19,20 +20,21 @@ class Optimizer(RegexNodesVisitor[None]):
     @staticmethod
     def merge_chars_to_words_in_expression(expression: Expression):
         items = []
-        for belongs, members in groupby(
+        for can_be_merged, members in groupby(
             expression.seq,
-            key=lambda node: isinstance(node, Match)
-            and node.quantifier is None
-            and isinstance(node.item, (Character, Word)),
+            key=lambda node: isinstance(node, Match)  # a math node
+            and node.quantifier is None  # ... with no quantifier
+            and isinstance(
+                node.item, (Character, Word)
+            ),  # ... containing a character or a word
         ):
-            if belongs:
-                substr = ""
-
-                for match in members:
-                    if isinstance(match.item, Character):
-                        substr += match.item.char
-                    else:
-                        substr += match.item.chars
+            if can_be_merged:
+                substr = "".join(
+                    match.item.char
+                    if isinstance(match.item, Character)
+                    else cast(Word, match.item).chars
+                    for match in members
+                )
 
                 items.append(Match(Word(substr), quantifier=None))
             else:

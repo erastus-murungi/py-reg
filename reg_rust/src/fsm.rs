@@ -48,6 +48,12 @@ pub enum ReError {
 
 type Fragment = (State, State);
 
+macro_rules! epsilon {
+    ($self:expr; $($frm:expr => $to:expr),+ $(,)?) => {
+        $($self.add_transition($frm, $to, Node::Epsilon);)*
+    };
+}
+
 impl RegexNFA {
     pub fn new(pattern: &str) -> RegexNFA {
         RegexNFA {
@@ -110,10 +116,6 @@ impl RegexNFA {
         }
     }
 
-    pub fn epsilon(&mut self, start: State, end: State) -> () {
-        self.add_transition(start, end, Node::Epsilon)
-    }
-
     fn symbol_transition(&mut self, node: Node) -> Fragment {
         let (start, end) = self.fragment();
         self.add_transition(start, end, node);
@@ -132,11 +134,7 @@ impl RegexNFA {
 
     fn alternation(&mut self, lower: &Fragment, upper: &Fragment) -> Fragment {
         let fragment = self.fragment();
-        self.epsilon(fragment.0, lower.0);
-        self.epsilon(fragment.0, upper.0);
-        self.epsilon(lower.1, fragment.1);
-        self.epsilon(upper.1, fragment.1);
-
+        epsilon!(self; fragment.0 => lower.0, fragment.0 => upper.0, lower.1 => fragment.1, upper.1 => fragment.1);
         fragment
     }
 
@@ -149,8 +147,8 @@ impl RegexNFA {
 
     fn one_or_more(&mut self, fragment: &Fragment, lazy: bool) -> Fragment {
         let s = self.gen_state();
-        self.epsilon(fragment.1, fragment.0);
-        self.epsilon(fragment.1, s);
+        epsilon!(self; fragment.1 => fragment.0, fragment.1 => s);
+
         if lazy {
             self.transitions.get_mut(&fragment.1).unwrap().reverse();
         }
@@ -160,9 +158,7 @@ impl RegexNFA {
     fn zero_or_more(&mut self, fragment: &Fragment, lazy: bool) -> Fragment {
         let empty = self.symbol_transition(Node::EmptyString);
 
-        self.epsilon(fragment.1, empty.1);
-        self.epsilon(fragment.1, fragment.0);
-        self.epsilon(empty.0, fragment.0);
+        epsilon!(self; fragment.1 => empty.1, fragment.1 => fragment.0, empty.0 => fragment.0);
 
         if !lazy {
             self.transitions.get_mut(&empty.0).unwrap().reverse();
@@ -241,7 +237,7 @@ impl RegexNFA {
             }
         }
         for (a, b) in fragments.iter().tuple_windows() {
-            self.epsilon(a.1, b.0);
+            epsilon!(self; a.1 => b.0);
         }
         (fragments.first().unwrap().0, fragments.last().unwrap().1)
     }
@@ -438,7 +434,7 @@ impl<'a> Visitor for RegexNFA {
         if let Node::Expression(items, alternate_expression) = expression {
             let fragments: Vec<Self::Result> = items.iter().map(|node| node.accept(self)).collect();
             for (a, b) in fragments.iter().tuple_windows() {
-                self.epsilon(a.1, b.0);
+                epsilon!(self; a.1 => b.0);
             }
             let fragment = (fragments.first().unwrap().0, fragments.last().unwrap().1);
             return if let Some(alternative) = alternate_expression {

@@ -9,7 +9,7 @@ from sys import maxsize
 from typing import Any, Iterable, Iterator, Optional, Union
 
 import graphviz
-from more_itertools import first, first_true, minmax, pairwise
+from more_itertools import first, minmax, pairwise
 
 from reg.matcher import Context, Cursor, RegexPattern
 from reg.optimizer import Optimizer
@@ -124,24 +124,29 @@ class NFA(
 
     def __init__(
         self,
-        pattern: Optional[str],
+        pattern: Optional[str] = None,
         flags: RegexFlag = RegexFlag.OPTIMIZE,
         reduce_epsilons=True,
     ):
         super(NFA, self).__init__(list)
-        RegexPattern.__init__(self, RegexParser(pattern, flags))
         self.symbols: set[Matcher] = set()
         self.states: set[State] = set()
-        if RegexFlag.OPTIMIZE & self.parser.flags:
-            Optimizer.run(self.parser.root)
-        src, sink = self.parser.root.accept(self)
-        accept_node = gen_state()
-        self.add_transition(sink, accept_node, MATCH)
-        self.start_state = src
-        self.accepting_states = {accept_node}
-        self.update_symbols_and_states()
-        if reduce_epsilons:
-            self.reduce_epsilons()
+        if pattern is None:
+            self.accepting_states = set()
+            self.start_state = -1
+            RegexPattern.__init__(self, RegexParser("", flags))
+        else:
+            RegexPattern.__init__(self, RegexParser(pattern, flags))
+            if RegexFlag.OPTIMIZE & self.parser.flags:
+                Optimizer.run(self.parser.root)
+            src, sink = self.parser.root.accept(self)
+            accept_node = gen_state()
+            self.add_transition(sink, accept_node, MATCH)
+            self.start_state = src
+            self.accepting_states = {accept_node}
+            self.update_symbols_and_states()
+            if reduce_epsilons:
+                self.reduce_epsilons()
 
     def recover(self) -> str:
         return self.parser.root.to_string()
@@ -327,22 +332,12 @@ class NFA(
             for matchable, end in self[start]:
                 self.states.add(end)
                 self.symbols.add(matchable)
-        self.symbols.discard(EPSILON)
+        self.symbols -= {EPSILON, GROUP_LINK}
 
     def update_symbols(self):
         for transition in chain.from_iterable(self.values()):
             self.symbols.add(transition.matcher)
-        self.symbols.discard(EPSILON)
-
-    def set_start(self, state: State):
-        self.start_state = state
-
-    def set_terminals(self, fragment: Fragment[State]):
-        self.set_start(fragment.start)
-        self.set_accept(fragment.end)
-
-    def set_accept(self, accept: State):
-        self.accepting_states = {accept}
+        self.symbols -= {EPSILON, GROUP_LINK}
 
     def transition(
         self, state: State, symbol: Matcher, _: bool = False
@@ -635,22 +630,20 @@ class NFA(
         visit_any_character
     ) = visit_anchor = visit_word = lambda self, matcher: self.base(matcher)
 
-    def _gen_frontier_transitions(self, start_state) -> list[Transition]:
-        explored: set[State | Transition] = set()
+    def _gen_frontier_transitions(self, start_state: State) -> list[Transition]:
+        seen: set[State | Transition] = set()
         stack: list[State | Transition] = [start_state]
         frontier_transitions: list[Transition] = []
 
         while stack:
-            item: State | Transition = stack.pop()
-
-            if item in explored:
+            if (item := stack.pop()) in seen:
                 continue
 
             if isinstance(item, Transition):
                 frontier_transitions.append(item)
                 continue
 
-            explored.add(item)
+            seen.add(item)
 
             next_in_stack = []
             for transition in self[item]:
@@ -659,30 +652,12 @@ class NFA(
                 elif transition not in frontier_transitions:
                     next_in_stack.append(transition)
             stack.extend(next_in_stack[::-1])
+
         return frontier_transitions
 
     def reduce_epsilons(self):
         """
         Attempts to reduce the number of epsilon's in the NFA while maintaining correctness
-
-        Examples
-        --------
-        >>> from reg.parser import Character
-        >>> nfa = NFA()
-        >>> a, b, c = map(Character, 'abc')
-        >>> nfa.add_transition(1, 2, EPSILON)
-        >>> nfa.add_transition(2, 3, a)
-        >>> nfa.add_transition(3, 4, b)
-        >>> nfa.add_transition(4, 5, EPSILON)
-        >>> nfa.add_transition(4, 5, c)
-        >>> nfa.set_start(1)
-        >>> nfa.set_accept(5)
-        >>> nfa.update_symbols_and_states()
-        >>> nfa.n_transitions()
-        5
-        >>> nfa.reduce_epsilons()
-        >>> nfa.n_transitions()
-        4
         """
 
         while True:
@@ -691,9 +666,7 @@ class NFA(
 
             changed = False
             while queue:
-                state = queue.pop()
-
-                if state in visited:
+                if (state := queue.pop()) in visited:
                     continue
 
                 visited.add(state)
@@ -733,13 +706,13 @@ class NFA(
         reachable = set()
 
         while stack:
-            start = stack.pop()
-            if start in seen:
+            if (state := stack.pop()) in seen:
                 continue
-            seen.add(start)
 
-            stack.extend(transition.end for transition in self[start])
-            reachable |= {(start, transition) for transition in self[start]}
+            seen.add(state)
+
+            stack.extend(transition.end for transition in self[state])
+            reachable |= {(state, transition) for transition in self[state]}
 
         for state in self.states:
             for transition in self[state][:]:
@@ -747,12 +720,15 @@ class NFA(
                     self[state].remove(transition)
 
 
-class DFA(NFA, RegexPattern):
+class DFA(NFA):
     __slots__ = ("symbols", "states", "accepting_states", "start_state")
 
-    def __init__(self, pattern: str, flags: RegexFlag = RegexFlag.OPTIMIZE):
-        super(DFA, self).__init__("")
-        self._subset_construction(NFA(pattern, flags))
+    def __init__(
+        self, pattern: Optional[str] = None, flags: RegexFlag = RegexFlag.OPTIMIZE
+    ):
+        super(DFA, self).__init__(None)
+        if pattern is not None:
+            self._subset_construction(NFA(pattern, flags))
 
     def _match_suffix_dfa(
         self, state: State, cursor: Cursor, context: Context, path: tuple[State, ...]
@@ -799,17 +775,13 @@ class DFA(NFA, RegexPattern):
     def transition(
         self, state: State, symbol: Matcher, wrapped: bool = False
     ) -> State | tuple[State, ...]:
-        result = first_true(
-            self[state],
-            None,
-            lambda transition: transition.matcher == symbol,
-        )
-        if result is None:
-            return ""
-        return result.end
+        for transition in self[state]:
+            if transition.matcher == symbol:
+                return transition.end
+        return ""
 
     def copy(self):
-        cp = DFA("")
+        cp = DFA()
         for state, transitions in self.items():
             cp[state] = transitions.copy()
         cp.symbols = self.symbols.copy()
@@ -837,6 +809,7 @@ class DFA(NFA, RegexPattern):
         self.states.update(finished)
         self.update_symbols()
         self.start_state = first(finished)
+        self.minimize()
 
     def gen_equivalence_states(self) -> Iterator[set[State]]:
         """
@@ -897,16 +870,15 @@ class DFA(NFA, RegexPattern):
                 self[lost.get(start)] = self.pop(start)
 
         for start in self:
-            new_transitions = []
-            for transition in tuple(self[start]):
+            transitions = []
+            for transition in self[start]:
                 if transition.end in lost:
-
-                    new_transitions.append(
+                    transitions.append(
                         Transition(transition.matcher, lost.get(transition.end))
                     )
                 else:
-                    new_transitions.append(transition)
-            self[start] = new_transitions
+                    transitions.append(transition)
+            self[start] = transitions
 
     def clear(self) -> None:
         super().clear()
@@ -917,6 +889,14 @@ class DFA(NFA, RegexPattern):
 
 
 if __name__ == "__main__":
-    import doctest
+    # import doctest
+    #
+    # doctest.testmod()
 
-    doctest.testmod()
+    import re
+
+    regex, text = "$", "abc"
+    d = DFA(regex)
+    d.graph()
+    print(list(d.finditer(text)))
+    print(list(re.finditer(regex, text)))

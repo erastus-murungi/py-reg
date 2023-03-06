@@ -131,8 +131,7 @@ class RegexPattern(ABC):
             r = replacer
         matches = take(count, self.finditer(string))
         chunks = []
-        start = 0
-        subs = 0
+        start, subs = 0, 0
         for match in matches:
             chunks.append(string[start : match.start])
             chunks.append(r(match))

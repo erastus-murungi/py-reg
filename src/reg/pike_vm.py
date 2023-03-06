@@ -111,9 +111,9 @@ class RegexPikeVM(RegexPattern, RegexNodesVisitor[Fragment[Instruction]]):
     >>> compiled_regex = RegexPikeVM(pattern)
     >>> ctx = Context(text, RegexFlag.NOFLAG)
     >>> start = 0
-    >>> c = compiled_regex.match_suffix(Cursor(start, [maxsize, maxsize]), ctx)
+    >>> c = compiled_regex.match_suffix(Cursor(start, (maxsize, maxsize)), ctx)
     >>> c
-    Cursor(position=4, groups=[2, 4])
+    Cursor(position=4, groups=(2, 4))
     >>> end, groups = c
     >>> assert text[start: end] == 'abab'
     """
