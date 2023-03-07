@@ -66,8 +66,9 @@ class Cursor(NamedTuple):
 
 
 class RegexPattern(ABC):
-    def __init__(self, parser):
-        self.parser = parser
+    def __init__(self, group_count: int = 0, flags: RegexFlag = RegexFlag.NOFLAG):
+        self._group_count = group_count
+        self._flags = flags
 
     @abstractmethod
     def match_suffix(self, cursor: Cursor, context: Context) -> Optional[Cursor]:
@@ -91,14 +92,11 @@ class RegexPattern(ABC):
         pass
 
     def finditer(self, text: str):
-        assert self.parser.flags is not None
-        context: Final[Context] = Context(text, self.parser.flags)
+        context: Final[Context] = Context(text, self._flags)
         start = 0
-        show_progress = self.parser.flags & RegexFlag.DEBUG
-        if show_progress:
-            t = tqdm(total=len(text))
+        show_progress = tqdm(total=len(text)) if self._flags & RegexFlag.DEBUG else None
         while start <= len(text):
-            cursor = Cursor(start, (maxsize,) * (self.parser.group_count * 2))
+            cursor = Cursor(start, (maxsize,) * (self._group_count * 2))
             if (cursor := self.match_suffix(cursor, context)) is not None:
                 position, groups = cursor
                 yield RegexMatch(start, position, text, groups)
@@ -106,10 +104,10 @@ class RegexPattern(ABC):
             else:
                 inc = 1
             if show_progress:
-                t.update(inc)
+                show_progress.update(inc)
             start += inc
         if show_progress:
-            t.close()
+            show_progress.close()
 
     def match(self, text: str):
         """Try to apply the pattern at the start of the string, returning

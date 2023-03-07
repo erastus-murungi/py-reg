@@ -1,15 +1,16 @@
+import functools
 import json
 from collections import defaultdict, deque
 from dataclasses import dataclass
-from functools import reduce
-from itertools import chain, combinations, count, product
+from functools import cache, reduce
+from itertools import chain, count, product
 from operator import itemgetter
 from string import ascii_uppercase
 from sys import maxsize
-from typing import Any, Iterable, Iterator, Optional, Union
+from typing import Any, Iterable, Optional, Union
 
 import graphviz
-from more_itertools import first, minmax, pairwise
+from more_itertools import first_true, pairwise
 
 from reg.matcher import Context, Cursor, RegexPattern
 from reg.optimizer import Optimizer
@@ -27,12 +28,12 @@ from reg.parser import (
     RegexNodesVisitor,
     RegexParser,
 )
-from reg.utils import Fragment, RegexFlag, UnionFind
+from reg.utils import Fragment, RegexFlag
 
 State = Union[int, str]
 
 
-def reset_state_gens():
+def init_counters():
     s = (
         "".join(t)
         for t in chain.from_iterable(
@@ -43,11 +44,10 @@ def reset_state_gens():
     return (
         count(0),
         s,
-        {},
     )
 
 
-counter, strcounter, sourcescache = reset_state_gens()
+counter, strcounter = init_counters()
 
 
 def gen_state() -> int:
@@ -71,26 +71,6 @@ class Transition:
 
     def __lt__(self, other):
         return self.end < other.end
-
-
-def gen_dfa_state(
-    sources: Iterable[State],
-    *,
-    src_fsm: Optional["NFA"] = None,
-    dst_fsm: Optional["NFA"] = None,
-) -> str:
-    sources = tuple(sorted(sources))
-    if sources in sourcescache:
-        return sourcescache[sources]
-
-    strid = next(strcounter)
-    if src_fsm is not None and dst_fsm is not None:
-        if any(s == src_fsm.start_state for s in sources):
-            dst_fsm.start_state = strid
-        if any(s in src_fsm.accepting_states for s in sources):
-            dst_fsm.accepting_states.add(strid)
-    sourcescache[sources] = strid
-    return strid
 
 
 class NFA(
@@ -127,19 +107,22 @@ class NFA(
         pattern: Optional[str] = None,
         flags: RegexFlag = RegexFlag.OPTIMIZE,
         reduce_epsilons=True,
+        group_count=0,
     ):
         super(NFA, self).__init__(list)
-        self.symbols: set[Matcher] = set()
+        self.alphabet: set[Matcher] = set()
         self.states: set[State] = set()
         if pattern is None:
             self.accepting_states = set()
             self.start_state = -1
-            RegexPattern.__init__(self, RegexParser("", flags))
+            self._flags = flags
+            self._group_count = group_count
         else:
-            RegexPattern.__init__(self, RegexParser(pattern, flags))
-            if RegexFlag.OPTIMIZE & self.parser.flags:
-                Optimizer.run(self.parser.root)
-            src, sink = self.parser.root.accept(self)
+            parser = RegexParser(pattern, flags)
+            RegexPattern.__init__(self, parser.group_count, parser.flags)
+            if RegexFlag.OPTIMIZE & parser.flags:
+                Optimizer.run(parser.root)
+            src, sink = parser.root.accept(self)
             accept_node = gen_state()
             self.add_transition(sink, accept_node, MATCH)
             self.start_state = src
@@ -147,9 +130,6 @@ class NFA(
             self.update_symbols_and_states()
             if reduce_epsilons:
                 self.reduce_epsilons()
-
-    def recover(self) -> str:
-        return self.parser.root.to_string()
 
     def step(
         self, start_state: State, cursor: Cursor, context: Context
@@ -321,7 +301,7 @@ class NFA(
         >>> end, groups = c
         >>> assert text[start: end] == 'abab'
         """
-        if RegexFlag.NO_BACKTRACK & self.parser.flags:
+        if RegexFlag.NO_BACKTRACK & self._flags:
             return self._match_suffix_no_backtrack(cursor, context)
         else:
             return self._match_suffix_backtrack(cursor, context)
@@ -331,13 +311,13 @@ class NFA(
         for start in self:
             for matchable, end in self[start]:
                 self.states.add(end)
-                self.symbols.add(matchable)
-        self.symbols -= {EPSILON, GROUP_LINK}
+                self.alphabet.add(matchable)
+        self.alphabet -= {EPSILON, GROUP_LINK}
 
     def update_symbols(self):
         for transition in chain.from_iterable(self.values()):
-            self.symbols.add(transition.matcher)
-        self.symbols -= {EPSILON, GROUP_LINK}
+            self.alphabet.add(transition.matcher)
+        self.alphabet -= {EPSILON, GROUP_LINK}
 
     def transition(
         self, state: State, symbol: Matcher, _: bool = False
@@ -358,7 +338,7 @@ class NFA(
     def __repr__(self):
         return (
             f"FSM(states={tuple(sorted(self.states))}, "
-            f"symbols={self.symbols}, "
+            f"symbols={self.alphabet}, "
             f"start_state={self.start_state=}, "
             f"transitions={super().__repr__()}, "
             f"accept_states={self.accepting_states}) "
@@ -382,12 +362,32 @@ class NFA(
             {
                 "states": self.states,
                 "transitions": self,
-                "symbols": self.symbols,
+                "symbols": self.alphabet,
                 "start_state": self.start_state,
                 "accepting_states": self.accepting_states,
             },
             cls=CustomEncoder,
         )
+
+    def subset_construction(
+        self,
+    ):
+        seen, stack, finished = set(), [(self.start_state,)], []
+
+        transitions = defaultdict(list)
+
+        while stack:
+            closure = self.epsilon_closure(stack.pop())
+            # next we want to see which states are reachable from each of the states in the epsilon closure
+            for matcher in self.alphabet:
+                if move_closure := self.epsilon_closure(self.move(closure, matcher)):
+                    transitions[closure].append((matcher, move_closure))
+                    if move_closure not in seen:
+                        seen.add(move_closure)
+                        stack.append(move_closure)
+            finished.append(closure)
+
+        return transitions
 
     def epsilon_closure(self, states: Iterable[State]) -> tuple[State, ...]:
         """
@@ -410,7 +410,7 @@ class NFA(
             stack.extend(self.transition(state, EPSILON, True)[::-1])
             closure.add(state)
 
-        return tuple(closure)
+        return tuple(sorted(closure))
 
     def move(self, states: Iterable[State], symbol: Matcher) -> frozenset[State]:
         return frozenset(
@@ -724,11 +724,126 @@ class DFA(NFA):
     __slots__ = ("symbols", "states", "accepting_states", "start_state")
 
     def __init__(
-        self, pattern: Optional[str] = None, flags: RegexFlag = RegexFlag.OPTIMIZE
+        self,
+        symbols,
+        states,
+        accepting_states,
+        start_state,
+        transitions,
+        *,
+        flags: RegexFlag = RegexFlag.NOFLAG,
+        group_count=0,
     ):
-        super(DFA, self).__init__(None)
-        if pattern is not None:
-            self._subset_construction(NFA(pattern, flags))
+        super().__init__(flags=flags, group_count=group_count)
+        self.update(transitions)
+        self.states = set(states)
+        self.accepting_states = set(accepting_states)
+        self.start_state = start_state
+        self.symbols = symbols
+
+    @staticmethod
+    def from_pattern(pattern: str, flags: RegexFlag = RegexFlag.OPTIMIZE):
+        nfa = NFA(pattern, flags)
+
+        dfa_table, minimal_dfa_table = {}, defaultdict(list)
+        dfa_accepting, minimal_dfa_accepting = [], []
+
+        def state_generator(
+            accepting_prev,
+            accepting_curr,
+            state_counter,
+            sources,
+        ):
+            new_state = next(state_counter)
+            if any(source in accepting_prev for source in sources):
+                accepting_curr.append(new_state)
+            return new_state
+
+        def get_start_state(transition_table):
+            reversed_transition_table = defaultdict(list)
+            for start, transitions in transition_table.items():
+                for _, end in transitions:
+                    reversed_transition_table[end].append(start)
+
+            return first_true(
+                transition_table,
+                pred=lambda state: not len(reversed_transition_table[state]),
+            )
+
+        gen_nfa_state, gen_dfa_state = cache(
+            functools.partial(
+                state_generator, nfa.accepting_states, dfa_accepting, counter
+            )
+        ), cache(
+            functools.partial(
+                state_generator, dfa_accepting, minimal_dfa_accepting, strcounter
+            )
+        )
+
+        dfa_table = {
+            gen_nfa_state(start_state): [
+                (matcher, gen_nfa_state(end_state))
+                for matcher, end_state in transitions
+            ]
+            for start_state, transitions in nfa.subset_construction().items()
+        }
+
+        partition_member2dfa_state = {
+            partition_member: gen_dfa_state(partition)
+            for partition in DFA.hopcroft(dfa_table, dfa_accepting, nfa.alphabet)
+            for partition_member in partition
+        }
+
+        for start_state, transitions in dfa_table.items():
+            dfa_state = partition_member2dfa_state[start_state]
+            for matcher, end_state in transitions:
+                if (
+                    transition := Transition(
+                        matcher, partition_member2dfa_state[end_state]
+                    )
+                ) not in minimal_dfa_table[dfa_state]:
+                    minimal_dfa_table[dfa_state].append(transition)
+
+        # dfa.graph()
+        return DFA(
+            nfa.alphabet,
+            minimal_dfa_table.keys(),
+            minimal_dfa_accepting,
+            get_start_state(minimal_dfa_table),
+            minimal_dfa_table,
+            flags=nfa._flags,
+            group_count=nfa._group_count,
+        )
+
+    @staticmethod
+    def hopcroft(transitions, accepting, alphabet):
+        partition: list[set[State]] = [
+            set(transitions.keys()) - set(accepting),
+            set(accepting),
+        ]
+        waiting: list[set[State]] = partition.copy()
+
+        while waiting:
+            s = waiting.pop()
+            for c in alphabet:
+                image = {
+                    state
+                    for state in transitions
+                    if any(sym == c and end in s for sym, end in transitions[state])
+                }
+                for q in partition:
+                    if (q1 := (image & q)) and (q2 := (q - q1)):
+                        partition.extend((q1, q2))
+                        partition.remove(q)
+
+                        if q in waiting:
+                            waiting.extend((q1, q2))
+                            waiting.remove(q)
+                        else:
+                            waiting.append(min(q1, q2, key=len))
+                        if s == q:
+                            break
+        return [tuple(sorted(p)) for p in partition]
 
     def _match_suffix_dfa(
         self, state: State, cursor: Cursor, context: Context, path: tuple[State, ...]
@@ -772,117 +887,9 @@ class DFA(NFA):
             self.start_state, cursor, context, (self.start_state,)
         )
 
-    def transition(
-        self, state: State, symbol: Matcher, wrapped: bool = False
-    ) -> State | tuple[State, ...]:
-        for transition in self[state]:
-            if transition.matcher == symbol:
-                return transition.end
-        return ""
-
-    def copy(self):
-        cp = DFA()
-        for state, transitions in self.items():
-            cp[state] = transitions.copy()
-        cp.symbols = self.symbols.copy()
-        cp.start_state = self.start_state
-        cp.accepting_states = self.accepting_states.copy()
-        cp.states = self.states.copy()
-        return cp
-
-    def _subset_construction(self, nfa: NFA):
-        seen, work_list, finished = set(), [(nfa.start_state,)], []
-
-        while work_list:
-            closure = nfa.epsilon_closure(work_list.pop())
-            dfa_state = gen_dfa_state(closure, src_fsm=nfa, dst_fsm=self)
-            # next we want to see which states are reachable from each of the states in the epsilon closure
-            for symbol in nfa.symbols:
-                if move_closure := nfa.epsilon_closure(nfa.move(closure, symbol)):
-                    end_state = gen_dfa_state(move_closure, src_fsm=nfa, dst_fsm=self)
-                    self.add_transition(dfa_state, end_state, symbol)
-                    if move_closure not in seen:
-                        seen.add(move_closure)
-                        work_list.append(move_closure)
-            finished.append(dfa_state)
-
-        self.states.update(finished)
-        self.update_symbols()
-        self.start_state = first(finished)
-        self.minimize()
-
-    def gen_equivalence_states(self) -> Iterator[set[State]]:
-        """
-        Myhill-Nerode Theorem
-        https://www.cs.scranton.edu/~mccloske/courses/cmps364/dfa_minimize.html
-        """
-
-        # a state is indistinguishable from itself
-        indistinguishable = {(p, p) for p in self.states}
-
-        for p, q in combinations(self.states, 2):
-            # a pair of states are maybe indistinguishable
-            # if they are both accepting or both non-accepting
-            # we use min max to provide an ordering based on the labels
-            p, q = minmax(p, q)
-            if (p in self.accepting_states) == (q in self.accepting_states):
-                indistinguishable.add((p, q))
-
-        union_find = UnionFind(self.states)
-
-        changed = True
-        while changed:
-            changed = False
-            removed = set()
-            for p, q in indistinguishable:
-                if p == q:
-                    continue
-                # if two states are maybe indistinguishable, then do some more work to prove they are actually
-                # indistinguishable
-                for a in self.symbols:
-                    km = minmax(self.transition(p, a), self.transition(q, a))
-                    if km != ("", "") and km not in indistinguishable:
-                        removed.add((p, q))
-                        changed = True
-            indistinguishable = indistinguishable - removed
-
-        for p, q in indistinguishable:
-            union_find.union(p, q)
-
-        return union_find.to_sets()
-
-    def minimize(self):
-        accept_states = self.accepting_states.copy()
-        states = set()
-        lost = {}
-
-        for sources in self.gen_equivalence_states():
-            compound = gen_dfa_state(sources, src_fsm=self, dst_fsm=self)
-            states.add(compound)
-            for original in sources:
-                lost[original] = compound
-
-        self.states = states
-        self.accepting_states = self.accepting_states - accept_states
-
-        for start in tuple(self):
-            if start in lost:
-                self[lost.get(start)] = self.pop(start)
-
-        for start in self:
-            transitions = []
-            for transition in self[start]:
-                if transition.end in lost:
-                    transitions.append(
-                        Transition(transition.matcher, lost.get(transition.end))
-                    )
-                else:
-                    transitions.append(transition)
-            self[start] = transitions
-
     def clear(self) -> None:
         super().clear()
-        self.symbols.clear()
+        self.alphabet.clear()
         self.start_state = -1
         self.accepting_states.clear()
         self.states.clear()
@@ -895,8 +902,8 @@ if __name__ == "__main__":
 
     import re
 
-    regex, text = "$", "abc"
-    d = DFA(regex)
-    d.graph()
+    # regex, text = "(.*)c(.*)", "abcde"
+    regex, text = ("([0a-z][a-z0-9]*,)+", "a5,b7,c9,")
+    d = DFA.from_pattern(regex)
     print(list(d.finditer(text)))
     print(list(re.finditer(regex, text)))
