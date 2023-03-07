@@ -14,6 +14,7 @@ Other references include:
   2. [Regex Benchmarks](https://github.com/mariomka/regex-benchmark)
 
 ![Tests](https://github.com/erastus-murungi/py-reg/actions/workflows/python-app.yml/badge.svg)
+![Rust Tests](https://github.com/erastus-murungi/py-reg/actions/workflows/rust.yml/badge.svg)
 
 ### Supports:
   1. ``|`` Alternation
