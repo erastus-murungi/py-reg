@@ -70,9 +70,6 @@ class Transition:
     def __hash__(self):
         return hash((self.matcher, self.end))
 
-    def __lt__(self, other):
-        return self.end < other.end
-
 
 StateOrTransition = State | Transition
 FSMSpaceNode = tuple[int, Transition]
@@ -474,9 +471,6 @@ class NFA(
 
         return fragment
 
-    def concatenate(self, fragment1: Fragment[State], fragment2: Fragment[State]):
-        self.epsilon(fragment1.end, fragment2.start)
-
     def base(
         self, matcher: Matcher, fragment: Optional[Fragment[State]] = None
     ) -> Fragment:
@@ -614,12 +608,8 @@ class NFA(
                         return self.one_or_more(fragment, quantifier.lazy)
                     case "*":
                         return self.zero_or_more(fragment, quantifier.lazy)
-                    case "?":
-                        return self.zero_or_one(fragment, quantifier.lazy)
                     case _:
-                        raise RuntimeError(
-                            f"unrecognized quantifier {quantifier.param}"
-                        )
+                        return self.zero_or_one(fragment, quantifier.lazy)
             else:
                 start, end = quantifier.param
                 return self._apply_range_quantifier(node, start, end, quantifier.lazy)
@@ -901,13 +891,6 @@ class DFA(NFA):
         return self._match_suffix_dfa(
             self.start_state, cursor, context, (self.start_state,)
         )
-
-    def clear(self) -> None:
-        super().clear()
-        self.alphabet.clear()
-        self.start_state = -1
-        self.accepting_states.clear()
-        self.states.clear()
 
 
 if __name__ == "__main__":

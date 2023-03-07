@@ -5,3 +5,4 @@ graphs
 src/reg.egg-info/
 reg_rust/target
 reg_rust/.vscode
+.coverage

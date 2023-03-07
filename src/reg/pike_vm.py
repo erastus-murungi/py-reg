@@ -409,12 +409,8 @@ class RegexPikeVM(RegexPattern, RegexNodesVisitor[Fragment[Instruction]]):
                         return self.one_or_more(fragment, quantifier.lazy)
                     case "*":
                         return self.zero_or_more(fragment, quantifier.lazy)
-                    case "?":
-                        return self.zero_or_one(fragment, quantifier.lazy)
                     case _:
-                        raise RuntimeError(
-                            f"unrecognized quantifier {quantifier.param}"
-                        )
+                        return self.zero_or_one(fragment, quantifier.lazy)
             else:
                 start, end = quantifier.param
                 return self._apply_range_quantifier(node, start, end, quantifier.lazy)
