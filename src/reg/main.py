@@ -5,7 +5,6 @@ from typing import IO
 import click
 
 from reg.fsm import NFA
-from reg.matcher import RegexPattern
 from reg.pike_vm import RegexPikeVM
 from reg.utils import RegexFlag
 

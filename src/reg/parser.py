@@ -280,6 +280,10 @@ class InvalidQuantifier(Exception):
     ...
 
 
+class UnableToParseChar(Exception):
+    ...
+
+
 @dataclass(slots=True, frozen=True)
 class Quantifier:
     """
@@ -330,19 +334,19 @@ class Quantifier:
         >>> Quantifier((-1, None), lazy=False)
         Traceback (most recent call last):
             ...
-        reg.parser.InvalidQuantifier: fixed quantifier: {n} must be >= 0: -1 < 0
+        InvalidQuantifier: fixed quantifier: {n} must be >= 0: -1 < 0
         >>> Quantifier((-1, maxsize), lazy=False)
         Traceback (most recent call last):
             ...
-        reg.parser.InvalidQuantifier: {n,} quantifier: n>=0 constraint violated: -1 < 0
+        InvalidQuantifier: {n,} quantifier: n>=0 constraint violated: -1 < 0
         >>> Quantifier((-1, 1), lazy=False)
         Traceback (most recent call last):
             ...
-        reg.parser.InvalidQuantifier: {n,m} quantifier: n>=0 constraint violated: -1 < 0
+        InvalidQuantifier: {n,m} quantifier: n>=0 constraint violated: -1 < 0
         >>> Quantifier((1, 0), lazy=False)
         Traceback (most recent call last):
             ...
-        reg.parser.InvalidQuantifier: {n,m} quantifier: m>=n constraint violated: 0 < 1
+        InvalidQuantifier: {n,m} quantifier: m>=n constraint violated: 0 < 1
 
         """
 
@@ -387,7 +391,7 @@ class Quantifier:
         >>> Quantifier('&', lazy=False)
         Traceback (most recent call last):
             ...
-        reg.parser.InvalidQuantifier: invalid quantifier '&': options are ('?', '+', '*')
+        InvalidQuantifier: invalid quantifier '&': options are ('?', '+', '*')
         """
         if self.param not in QUANTIFIER_OPTIONS:
             raise InvalidQuantifier(
@@ -1002,14 +1006,22 @@ class RegexParser:
         else:
             raise ValueError(f"unrecognized character class{self.current()}")
 
-    def parse_character_range(self, char: str) -> CharacterRange:
+    def parse_character_range(self) -> CharacterRange:
+        start = self.parse_char()
         self.consume("-")
-        to = self.parse_char()
-        assert to.char != "]"
-        return CharacterRange(char, to.char)
+        end = self.parse_char()
+        return CharacterRange(start.char, end.char)
 
     def can_parse_character_class(self):
         return self.matches("\\") and self.matches_any(CHARACTER_CLASSES, 1)
+
+    def can_parse_character_range(self):
+        return (
+            self.within_bounds(2)
+            and self.can_parse_char()
+            and self.current(1) == "-"
+            and self.current(2) != "]"
+        )
 
     def parse_character_group_item(self) -> Character | CharacterRange | CharacterGroup:
         if self.can_parse_character_class():
@@ -1019,16 +1031,10 @@ class RegexParser:
             # then it is treated as an ordinary character.
             # For example [-AZ] matches '-' or 'A' or 'Z' .
             # And tag[-]line matches "tag-line" and "tag line" as in a previous example.
-
-            if self.matches_any(UNESCAPED_IN_CHAR_GROUP):
-                if self.matches("\\"):
-                    self.consume("\\")
-                return Character(self.consume_and_return())
-            char = self.parse_char()
-            if self.matches("-"):
-                return self.parse_character_range(char.char)
+            if self.can_parse_character_range():
+                return self.parse_character_range()
             else:
-                return char
+                return self.parse_character_in_character_group()
 
     def save_state(self) -> tuple[int, RegexFlag]:
         return self._pos, self.flags
@@ -1040,26 +1046,17 @@ class RegexParser:
         if self.matches("^"):
             self.consume("^")
             negated = True
-        state = self.save_state()
         items = []
-        try:
-            while (
-                self.can_parse_char()
-                or self.matches("\\")
-                or self.matches_any(UNESCAPED_IN_CHAR_GROUP)
-            ):
+        while True:
+            try:
                 items.append(self.parse_character_group_item())
-                state = self.save_state()
-            self.consume("]")
-        except ValueError:
-            self._pos, self._flags = state
-            while self.can_parse_char() or self.matches_any(UNESCAPED_IN_CHAR_GROUP):
-                items.append(Character(self.consume_and_return()))
-            self.consume("]")
+            except UnableToParseChar:
+                break
+        self.consume("]")
 
         if not items:
             raise ValueError(
-                f"failed parsing from {state[0]}\n"
+                f"failed parsing from {self._pos}\n"
                 f"regexp = {self._regex}\n"
                 f"left   = {' ' * self._pos + self._regex[self._pos:]}"
             )
@@ -1070,12 +1067,25 @@ class RegexParser:
         if self.can_parse_escaped():
             return self.parse_escaped()
         if not self.can_parse_char():
-            raise ValueError(
+            raise UnableToParseChar(
                 f"expected a char: found {self.current() if self.within_bounds() else 'EOF'}\n"
                 f"regexp = {self._regex}\n"
                 f"left   = {' ' * self._pos + self.remainder()}"
             )
         return Character(self.consume_and_return())
+
+    def parse_character_in_character_group(self):
+        if self.can_parse_escaped():
+            return self.parse_escaped()
+        else:
+            if not self.within_bounds() or self.matches("]"):
+                raise UnableToParseChar(
+                    f"expected a char: found {self.current() if self.within_bounds() else 'EOF'}\n"
+                    f"regexp = {self._regex}\n"
+                    f"left   = {' ' * self._pos + self.remainder()}"
+                )
+            else:
+                return Character(self.consume_and_return())
 
     def can_parse_escaped(self):
         return self.matches("\\") and self.matches_any(ESCAPED, 1)

@@ -3,7 +3,7 @@ from random import randint, random, seed
 
 import pytest
 
-from reg.parser import RegexpParsingError
+from reg.parser import RegexpParsingError, UnableToParseChar
 from reg.pike_vm import RegexPikeVM
 
 
@@ -306,7 +306,7 @@ def test_python_benchmark(pattern, text):
 def test_raises_exception(pattern, text):
     with pytest.raises(re.error):
         _ = [m.group(0) for m in re.finditer(pattern, text) if m.group(0) != ""]
-    with pytest.raises((RegexpParsingError, ValueError)):
+    with pytest.raises((RegexpParsingError, UnableToParseChar, ValueError)):
         _ = [
             m.substr for m in get_compiled_vm(pattern).finditer(text) if m.substr != ""
         ]

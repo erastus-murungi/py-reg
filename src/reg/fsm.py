@@ -1,6 +1,5 @@
 import functools
 import json
-import operator
 from collections import defaultdict, deque
 from dataclasses import dataclass
 from functools import cache, reduce
@@ -8,10 +7,10 @@ from itertools import chain, count, product
 from operator import itemgetter
 from string import ascii_uppercase
 from sys import maxsize
-from typing import Any, Iterable, Iterator, Optional, Union
+from typing import Any, Iterable, Optional, Union, Callable, Iterator
 
 import graphviz  # type: ignore
-from more_itertools import first_true, pairwise
+from more_itertools import first_true, pairwise, first
 
 from reg.matcher import Context, Cursor, RegexPattern
 from reg.optimizer import Optimizer
@@ -908,14 +907,6 @@ class DFA(NFA):
 
 
 if __name__ == "__main__":
-    # import doctest
-    #
-    # doctest.testmod()
+    import doctest
 
-    import re
-
-    # regex, text = "(.*)c(.*)", "abcde"
-    regex, text = ("([0a-z][a-z0-9]*,)+", "a5,b7,c9,")
-    d = DFA.from_pattern(regex)
-    print(list(d.finditer(text)))
-    print(list(re.finditer(regex, text)))
+    doctest.testmod()
