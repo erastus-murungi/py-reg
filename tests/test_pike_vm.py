@@ -7,9 +7,13 @@ from reg.parser import RegexpParsingError
 from reg.pike_vm import RegexPikeVM
 
 
+def get_compiled_vm(pattern):
+    return RegexPikeVM(pattern)
+
+
 def _test_case_no_groups(pattern: str, text: str) -> None:
     expected = [m.group(0) for m in re.finditer(pattern, text)]
-    actual = [m.group(0) for m in RegexPikeVM(pattern).finditer(text)]
+    actual = [m.group(0) for m in get_compiled_vm(pattern).finditer(text)]
     assert expected == actual, (pattern, text)
 
 
@@ -17,7 +21,7 @@ def _test_case(pattern: str, text: str) -> None:
     _test_case_no_groups(pattern, text)
 
     expected_groups = [m.groups() for m in re.finditer(pattern, text)]
-    actual_groups = [m.groups() for m in RegexPikeVM(pattern).finditer(text)]
+    actual_groups = [m.groups() for m in get_compiled_vm(pattern).finditer(text)]
     for expected_group, actual_group in zip(expected_groups, actual_groups):
         assert expected_group == actual_group, (pattern, text)
 
@@ -303,7 +307,9 @@ def test_raises_exception(pattern, text):
     with pytest.raises(re.error):
         _ = [m.group(0) for m in re.finditer(pattern, text) if m.group(0) != ""]
     with pytest.raises((RegexpParsingError, ValueError)):
-        _ = [m.substr for m in RegexPikeVM(pattern).finditer(text) if m.substr != ""]
+        _ = [
+            m.substr for m in get_compiled_vm(pattern).finditer(text) if m.substr != ""
+        ]
 
 
 @pytest.mark.parametrize(

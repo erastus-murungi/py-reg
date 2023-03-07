@@ -430,7 +430,7 @@ class NFA(
     def move(self, states: Iterable[State], symbol: Matcher) -> frozenset[State]:
         return frozenset(
             reduce(
-                operator.or_,
+                set.union,  # type: ignore
                 (self.transition(state, symbol) for state in states),
                 set(),
             )

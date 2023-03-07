@@ -1,4 +1,5 @@
 import re
+from functools import cache
 from random import randint, random, seed
 
 import pytest
@@ -10,14 +11,14 @@ from reg.utils import RegexFlag
 # acquired from re2: https://github.com/google/re2/blob/main/re2/testing/search_test.cc
 
 
+@cache
+def get_compiled_nfa(pattern):
+    return NFA(pattern, RegexFlag.NO_BACKTRACK | RegexFlag.OPTIMIZE)
+
+
 def _test_case_no_groups(pattern: str, text: str) -> None:
     expected = [m.group(0) for m in re.finditer(pattern, text)]
-    actual = [
-        m.group(0)
-        for m in NFA(pattern, RegexFlag.NO_BACKTRACK | RegexFlag.OPTIMIZE).finditer(
-            text
-        )
-    ]
+    actual = [m.group(0) for m in get_compiled_nfa(pattern).finditer(text)]
     assert expected == actual, (pattern, text)
 
 
@@ -25,12 +26,7 @@ def _test_case(pattern: str, text: str) -> None:
     _test_case_no_groups(pattern, text)
 
     expected_groups = [m.groups() for m in re.finditer(pattern, text)]
-    actual_groups = [
-        m.groups()
-        for m in NFA(pattern, RegexFlag.NO_BACKTRACK | RegexFlag.OPTIMIZE).finditer(
-            text
-        )
-    ]
+    actual_groups = [m.groups() for m in get_compiled_nfa(pattern).finditer(text)]
     for expected_group, actual_group in zip(expected_groups, actual_groups):
         assert expected_group == actual_group, (pattern, text)
 
@@ -317,11 +313,7 @@ def test_raises_exception(pattern, text):
         _ = [m.group(0) for m in re.finditer(pattern, text) if m.group(0) != ""]
     with pytest.raises((RegexpParsingError, ValueError)):
         _ = [
-            m.substr
-            for m in NFA(pattern, RegexFlag.NO_BACKTRACK | RegexFlag.OPTIMIZE).finditer(
-                text
-            )
-            if m.substr != ""
+            m.substr for m in get_compiled_nfa(pattern).finditer(text) if m.substr != ""
         ]
 
 
