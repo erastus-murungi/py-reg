@@ -126,7 +126,7 @@ class RegexPikeVM(RegexPattern, RegexNodesVisitor[Fragment[Instruction]]):
     def __init__(self, pattern: str, flags: RegexFlag = RegexFlag.OPTIMIZE):
         parser = RegexParser(pattern, flags)
         super().__init__(parser.group_count, parser.flags)
-        if parser.flags.should_optimize():
+        if parser.should_optimize():
             parser.root.accept(Optimizer())
         self.start, last = parser.root.accept(self)
         last.next = End()
@@ -215,6 +215,7 @@ class RegexPikeVM(RegexPattern, RegexNodesVisitor[Fragment[Instruction]]):
 
             while queue:
                 instruction, cursor = queue.popleft()
+
                 match instruction:
                     case Consume(matcher, next_instruction):
                         if matcher(cursor, context):

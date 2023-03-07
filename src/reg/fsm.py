@@ -93,7 +93,6 @@ class NFA(
         • δ is the transition function.
     Now the transition function specifies a set of states rather than a state: it maps Q × Σ to { subsets of Q }.
 
-    A backtracking NFA based regex pattern matcher
 
     Examples
     --------
@@ -129,7 +128,7 @@ class NFA(
     def _init_with_pattern(self, pattern, flags, should_reduce_epsilons):
         parser = RegexParser(pattern, flags)
         RegexPattern.__init__(self, parser.group_count, parser.flags)
-        if parser.flags.should_optimize():
+        if parser.should_optimize():
             parser.root.accept(Optimizer())
 
         (self.start_state, self.accepting_states), (self.states, self.alphabet) = (
@@ -724,6 +723,11 @@ class NFA(
 
 
 class DFA(NFA):
+    """
+    Finds the longest match
+    Deterministic, fast, state machine must be built
+    """
+
     __slots__ = ("symbols", "states", "accepting_states", "start_state")
 
     def __init__(

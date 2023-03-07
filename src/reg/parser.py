@@ -45,7 +45,7 @@ def is_word_character(char: str) -> bool:
     True
     >>> is_word_character('abc')
     False
-    >>> is_word_character('')
+    >>> is_word_character("")
     False
     """
     return len(char) == 1 and char.isalpha() or char == "_"
@@ -334,19 +334,19 @@ class Quantifier:
         >>> Quantifier((-1, None), lazy=False)
         Traceback (most recent call last):
             ...
-        InvalidQuantifier: fixed quantifier: {n} must be >= 0: -1 < 0
+        reg.parser.InvalidQuantifier: fixed quantifier: {n} must be >= 0: -1 < 0
         >>> Quantifier((-1, maxsize), lazy=False)
         Traceback (most recent call last):
             ...
-        InvalidQuantifier: {n,} quantifier: n>=0 constraint violated: -1 < 0
+        reg.parser.InvalidQuantifier: {n,} quantifier: n>=0 constraint violated: -1 < 0
         >>> Quantifier((-1, 1), lazy=False)
         Traceback (most recent call last):
             ...
-        InvalidQuantifier: {n,m} quantifier: n>=0 constraint violated: -1 < 0
+        reg.parser.InvalidQuantifier: {n,m} quantifier: n>=0 constraint violated: -1 < 0
         >>> Quantifier((1, 0), lazy=False)
         Traceback (most recent call last):
             ...
-        InvalidQuantifier: {n,m} quantifier: m>=n constraint violated: 0 < 1
+        reg.parser.InvalidQuantifier: {n,m} quantifier: m>=n constraint violated: 0 < 1
 
         """
 
@@ -391,7 +391,7 @@ class Quantifier:
         >>> Quantifier('&', lazy=False)
         Traceback (most recent call last):
             ...
-        InvalidQuantifier: invalid quantifier '&': options are ('?', '+', '*')
+        reg.parser.InvalidQuantifier: invalid quantifier '&': options are ('?', '+', '*')
         """
         if self.param not in QUANTIFIER_OPTIONS:
             raise InvalidQuantifier(
@@ -781,6 +781,9 @@ class RegexParser:
             raise ValueError(
                 f"could not finish parsing regex, left = {self._regex[self._pos:]}"
             )
+
+    def should_optimize(self) -> bool:
+        return bool(self._flags & RegexFlag.OPTIMIZE)
 
     @property
     def group_count(self):
