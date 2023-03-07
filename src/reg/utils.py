@@ -1,11 +1,11 @@
 from collections import defaultdict
 from enum import IntFlag, auto
-from typing import NamedTuple, TypeVar
+from typing import Generic, NamedTuple, TypeVar
 
-T = TypeVar("T", covariant=True)
+T = TypeVar("T")
 
 
-class Fragment(NamedTuple):
+class Fragment(NamedTuple, Generic[T]):
     start: T
     end: T
 
@@ -23,6 +23,9 @@ class RegexFlag(IntFlag):
     FREESPACING = auto()
     OPTIMIZE = auto()
     DEBUG = auto()
+
+    def should_optimize(self) -> bool:
+        return bool(self & RegexFlag.OPTIMIZE)
 
 
 class UnionFind:

@@ -238,7 +238,7 @@ from reg.utils import Fragment, RegexFlag
     ],
 )
 def _test_original_num_epsilons(pattern, upper_bound):
-    assert NFA(pattern, reduce_epsilons=False) <= upper_bound
+    assert NFA(pattern, should_reduce_epsilons=False) <= upper_bound
 
 
 @pytest.mark.parametrize(
@@ -473,4 +473,4 @@ def _test_original_num_epsilons(pattern, upper_bound):
     ],
 )
 def test_epsilons_reduced(pattern, upper_bound):
-    assert NFA(pattern, reduce_epsilons=True).n_transitions() <= upper_bound
+    assert NFA(pattern, should_reduce_epsilons=True).n_transitions() <= upper_bound

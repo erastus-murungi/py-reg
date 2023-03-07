@@ -8,7 +8,7 @@ from reg.fsm import DFA
 from reg.parser import RegexpParsingError
 
 # acquired from re2: https://github.com/google/re2/blob/main/re2/testing/search_test.cc
-pytest.skip(allow_module_level=True)
+# pytest.skip(allow_module_level=True)
 
 
 @cache

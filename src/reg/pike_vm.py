@@ -21,18 +21,22 @@ from reg.utils import Fragment
 
 
 class Instruction(Hashable):
+    __slots__ = "next"
+
+    next: Optional["Instruction"]
+
     def __hash__(self):
         return id(self)
 
 
-@dataclass(slots=True, eq=False)
+@dataclass(slots=True, eq=False, frozen=True)
 class End(Instruction):
     """
     Indicates that we have found a match
     Important to have the `next` attribute because each instruction has a next attribute
     """
 
-    next: Final = None
+    next = None
 
 
 @dataclass(slots=True, eq=False)
@@ -99,7 +103,8 @@ class Capture(Instruction):
     next: Optional["Instruction"] = field(repr=False, default=None)
 
 
-Thread = tuple[Instruction, Cursor]
+Thread = tuple[Optional[Instruction], Cursor]
+VMSearchSpaceNode = tuple[int, Optional[Instruction]]
 
 
 class RegexPikeVM(RegexPattern, RegexNodesVisitor[Fragment[Instruction]]):
@@ -121,8 +126,8 @@ class RegexPikeVM(RegexPattern, RegexNodesVisitor[Fragment[Instruction]]):
     def __init__(self, pattern: str, flags: RegexFlag = RegexFlag.OPTIMIZE):
         parser = RegexParser(pattern, flags)
         super().__init__(parser.group_count, parser.flags)
-        if RegexFlag.OPTIMIZE & parser.flags:
-            Optimizer.run(parser.root)
+        if parser.flags.should_optimize():
+            parser.root.accept(Optimizer())
         self.start, last = parser.root.accept(self)
         last.next = End()
 
@@ -136,7 +141,7 @@ class RegexPikeVM(RegexPattern, RegexNodesVisitor[Fragment[Instruction]]):
 
     @staticmethod
     def queue_thread(
-        queue: deque[Thread], thread: Thread, visited: set[tuple[int, Instruction]]
+        queue: deque[Thread], thread: Thread, visited: set[VMSearchSpaceNode]
     ) -> None:
         """
         Queue a thread
@@ -195,13 +200,18 @@ class RegexPikeVM(RegexPattern, RegexNodesVisitor[Fragment[Instruction]]):
                     queue.append((instruction, cursor))
 
     def match_suffix(self, cursor: Cursor, context: Context) -> Optional[Cursor]:
-        queue, visited = deque(), set()
-        self.queue_thread(queue, (self.start, cursor), visited)
+        queue: deque[Thread] = deque()
+
+        visited: set[VMSearchSpaceNode] = set()
+        self.queue_thread(queue, (self.start, cursor), set())
 
         match = None
 
         while True:
-            frontier, next_visited = deque(), set()
+            frontier, next_visited = (
+                deque(),
+                set(),
+            )  # type: (deque[Thread], set[VMSearchSpaceNode])
 
             while queue:
                 instruction, cursor = queue.popleft()
@@ -316,31 +326,14 @@ class RegexPikeVM(RegexPattern, RegexNodesVisitor[Fragment[Instruction]]):
             empty,
         )
 
-    def _apply_quantifier(self, node: Group | Match) -> Fragment[Instruction]:
-        quantifier = node.quantifier
-        if isinstance(quantifier.param, str):
-            fragment = self._gen_instructions_for_quantifiable(node)
-            match quantifier.param:
-                case "+":
-                    return self.one_or_more(fragment, quantifier.lazy)
-                case "*":
-                    return self.zero_or_more(fragment, quantifier.lazy)
-                case "?":
-                    return self.zero_or_one(fragment, quantifier.lazy)
-                case _:
-                    raise RuntimeError(f"unrecognized quantifier {quantifier.param}")
-        else:
-            return self._apply_range_quantifier(node)
-
-    def _apply_range_quantifier(self, node: Group | Match) -> Fragment[Instruction]:
-        quantifier = node.quantifier
-        n, m = quantifier.param
-
+    def _apply_range_quantifier(
+        self, node: Group | Match, n: int, m: Optional[int], lazy: bool
+    ) -> Fragment[Instruction]:
         if n == 0:
             if m == maxsize:
                 # 'a{0,} = a{0,maxsize}' expands to a*
                 return self.zero_or_more(
-                    self._gen_instructions_for_quantifiable(node), quantifier.lazy
+                    self._gen_instructions_for_quantifiable(node), lazy
                 )
             elif m is None:
                 # a{0} = ''
@@ -354,7 +347,7 @@ class RegexPikeVM(RegexPattern, RegexNodesVisitor[Fragment[Instruction]]):
                     self._gen_instructions_for_quantifiable(node) for _ in range(n - 1)
                 ] + [
                     self.one_or_more(
-                        self._gen_instructions_for_quantifiable(node), quantifier.lazy
+                        self._gen_instructions_for_quantifiable(node), lazy
                     )
                 ]
             else:
@@ -368,9 +361,7 @@ class RegexPikeVM(RegexPattern, RegexNodesVisitor[Fragment[Instruction]]):
                 for _ in range(n, m):
                     first, last = self._gen_instructions_for_quantifiable(node)
                     jump = Jump(empty, first)
-                    split = Fork(
-                        *((jump, first) if quantifier.lazy else (first, jump)), first
-                    )
+                    split = Fork(*((jump, first) if lazy else (first, jump)), first)
                     instructions.append(Fragment(split, last))
                 instructions.append(Fragment.duplicate(empty))
 
@@ -395,7 +386,7 @@ class RegexPikeVM(RegexPattern, RegexNodesVisitor[Fragment[Instruction]]):
     def _add_capturing_markers(
         codes: Fragment[Instruction], group: Group
     ) -> Fragment[Instruction]:
-        if group.is_capturing():
+        if group.index is not None:
             # All we are doing here is just wrapping our fragment between two capturing instructions
             start_capturing, end_capturing = Capture(
                 Anchor.group_entry(group.index)
@@ -408,18 +399,34 @@ class RegexPikeVM(RegexPattern, RegexNodesVisitor[Fragment[Instruction]]):
         return codes
 
     def visit_quantifiable(self, node: Group | Match) -> Fragment[Instruction]:
-        if node.quantifier:
-            return self._apply_quantifier(node)
+        quantifier = node.quantifier
+        if quantifier is not None:
+            if isinstance(quantifier.param, str):
+                fragment = self._gen_instructions_for_quantifiable(node)
+                match quantifier.param:
+                    case "+":
+                        return self.one_or_more(fragment, quantifier.lazy)
+                    case "*":
+                        return self.zero_or_more(fragment, quantifier.lazy)
+                    case "?":
+                        return self.zero_or_one(fragment, quantifier.lazy)
+                    case _:
+                        raise RuntimeError(
+                            f"unrecognized quantifier {quantifier.param}"
+                        )
+            else:
+                start, end = quantifier.param
+                return self._apply_range_quantifier(node, start, end, quantifier.lazy)
         return self._gen_instructions_for_quantifiable(node)
 
-    visit_group = visit_match = visit_quantifiable
+    visit_group = visit_match = visit_quantifiable  # type: ignore
 
-    visit_character = (
+    visit_character = (  # type: ignore
         visit_character_group
     ) = (
         visit_any_character
     ) = visit_anchor = visit_word = lambda _, matcher: Fragment.duplicate(
-        EmptyString() if matcher is EMPTY_STRING else Consume(matcher)
+        EmptyString() if matcher is EMPTY_STRING else Consume(matcher)  # type: ignore
     )
 
 

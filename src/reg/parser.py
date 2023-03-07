@@ -3,7 +3,7 @@ from abc import ABC, ABCMeta, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
 from sys import maxsize
-from typing import Final, Generic, Hashable, Optional, TypeVar
+from typing import Final, Generic, Hashable, Optional, Sequence, TypeVar, Union, cast
 
 from reg.matcher import Context, Cursor
 from reg.utils import RegexFlag
@@ -541,9 +541,9 @@ class Anchor(MatchingNode):
             case AnchorType.EndOfStringOnlyNotNewline:
                 return position >= len(text)
             case AnchorType.WordBoundary:
-                return text and is_word_boundary(text, position)
+                return len(text) > 0 and is_word_boundary(text, position)
             case AnchorType.NonWordBoundary:
-                return text and not is_word_boundary(text, position)
+                return len(text) > 0 and not is_word_boundary(text, position)
             case AnchorType.EmptyString | AnchorType.GroupEntry | AnchorType.GroupExit | AnchorType.IsMatch:
                 return True
             # By design, group links and epsilon's never match anything
@@ -717,9 +717,12 @@ class Group(RegexNode):
         return expression
 
 
+SubExpression = Group | Anchor | Union["Expression", Match]
+
+
 @dataclass
 class Expression(RegexNode):
-    seq: list[Anchor | Group | Match]
+    seq: Sequence[SubExpression]
     alternate: Optional["Expression"] = None
 
     def to_string(self):
@@ -847,7 +850,7 @@ class RegexParser:
             anchor = Anchor(char2anchor_type[self.consume_and_return()])
             if self.remainder():
                 expr = self.parse_expression()
-                expr.seq.insert(0, anchor)
+                cast(list, expr.seq).insert(0, anchor)
                 return expr
             else:
                 return anchor
@@ -890,11 +893,11 @@ class RegexParser:
             expr = (
                 self.parse_expression()
                 if self.can_parse_sub_expression_item()
-                else EMPTY_STRING
+                else Expression([EMPTY_STRING])
             )
         return Expression(sub_exprs, expr)
 
-    def parse_sub_expression(self):
+    def parse_sub_expression(self) -> list[SubExpression]:
         # Subexpression ::= SubexpressionItem+
         sub_exprs = [self.parse_sub_expression_item()]
         while self.can_parse_sub_expression_item():
@@ -911,16 +914,17 @@ class RegexParser:
 
     def parse_group(self) -> Group | Expression:
         self.consume("(")
-        group_index = self._group_count
+        group_index: Optional[int] = self._group_count
         self._group_count += 1
         if self.remainder().startswith("?:"):
             self.consume("?:")
             group_index = None
             self._group_count -= 1
-        if self.matches(")"):
-            expression = EMPTY_STRING
-        else:
-            expression = self.parse_expression()
+        expression = (
+            Expression(seq=[EMPTY_STRING])
+            if self.matches(")")
+            else self.parse_expression()
+        )
         self.consume(")")
         quantifier = None
         if self.can_parse_quantifier():

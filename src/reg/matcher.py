@@ -3,7 +3,7 @@ from sys import maxsize
 from typing import Callable, Final, NamedTuple, Optional
 
 from more_itertools import first_true, take
-from tqdm import tqdm
+from tqdm import tqdm  # type: ignore
 
 from reg.utils import RegexFlag
 
@@ -12,7 +12,7 @@ class RegexMatch(NamedTuple):
     start: int
     end: int
     text: str
-    captured_groups: list[int]
+    captured_groups: tuple[int, ...]
 
     def group_to_string(self, group_index: int) -> Optional[str]:
         frm, to = (
@@ -34,7 +34,7 @@ class RegexMatch(NamedTuple):
             f"match={self.text[self.start:self.end]!r})"
         )
 
-    def groups(self) -> tuple[str, ...]:
+    def groups(self) -> tuple[Optional[str], ...]:
         return tuple(map(self.group_to_string, range(len(self.captured_groups) >> 1)))
 
     def group(self, index: int = 0) -> Optional[str]:
@@ -97,8 +97,8 @@ class RegexPattern(ABC):
         show_progress = tqdm(total=len(text)) if self._flags & RegexFlag.DEBUG else None
         while start <= len(text):
             cursor = Cursor(start, (maxsize,) * (self._group_count * 2))
-            if (cursor := self.match_suffix(cursor, context)) is not None:
-                position, groups = cursor
+            if (matching_cursor := self.match_suffix(cursor, context)) is not None:
+                position, groups = matching_cursor
                 yield RegexMatch(start, position, text, groups)
                 inc = 1 if position == start else (position - start)
             else:

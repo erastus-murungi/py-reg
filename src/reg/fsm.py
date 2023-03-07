@@ -1,5 +1,6 @@
 import functools
 import json
+import operator
 from collections import defaultdict, deque
 from dataclasses import dataclass
 from functools import cache, reduce
@@ -7,9 +8,9 @@ from itertools import chain, count, product
 from operator import itemgetter
 from string import ascii_uppercase
 from sys import maxsize
-from typing import Any, Iterable, Optional, Union
+from typing import Any, Iterable, Iterator, Optional, Union
 
-import graphviz
+import graphviz  # type: ignore
 from more_itertools import first_true, pairwise
 
 from reg.matcher import Context, Cursor, RegexPattern
@@ -31,6 +32,7 @@ from reg.parser import (
 from reg.utils import Fragment, RegexFlag
 
 State = Union[int, str]
+StatesIterable = Iterable[State]
 
 
 def init_counters():
@@ -73,6 +75,11 @@ class Transition:
         return self.end < other.end
 
 
+StateOrTransition = State | Transition
+FSMSpaceNode = tuple[int, Transition]
+TransitionTable = dict[State, list[Transition]]
+
+
 class NFA(
     defaultdict[State, list[Transition]],
     RegexNodesVisitor[Fragment[State]],
@@ -100,36 +107,44 @@ class NFA(
 
     """
 
-    __slots__ = ("symbols", "states", "accepting_states", "start_state")
+    __slots__ = ("alphabet", "states", "accepting_states", "start_state")
 
     def __init__(
         self,
         pattern: Optional[str] = None,
         flags: RegexFlag = RegexFlag.OPTIMIZE,
-        reduce_epsilons=True,
-        group_count=0,
+        should_reduce_epsilons=True,
     ):
         super(NFA, self).__init__(list)
-        self.alphabet: set[Matcher] = set()
-        self.states: set[State] = set()
         if pattern is None:
-            self.accepting_states = set()
-            self.start_state = -1
-            self._flags = flags
-            self._group_count = group_count
+            self._init_empty()
         else:
-            parser = RegexParser(pattern, flags)
-            RegexPattern.__init__(self, parser.group_count, parser.flags)
-            if RegexFlag.OPTIMIZE & parser.flags:
-                Optimizer.run(parser.root)
-            src, sink = parser.root.accept(self)
-            accept_node = gen_state()
-            self.add_transition(sink, accept_node, MATCH)
-            self.start_state = src
-            self.accepting_states = {accept_node}
-            self.update_symbols_and_states()
-            if reduce_epsilons:
-                self.reduce_epsilons()
+            self._init_with_pattern(pattern, flags, should_reduce_epsilons)
+
+    def _init_empty(self) -> None:
+        self.accepting_states: set[State] = set()
+        self.start_state: State = -1
+        self.states: set[State] = set()
+        self.alphabet: set[Matcher] = set()
+
+    def _init_with_pattern(self, pattern, flags, should_reduce_epsilons):
+        parser = RegexParser(pattern, flags)
+        RegexPattern.__init__(self, parser.group_count, parser.flags)
+        if parser.flags.should_optimize():
+            parser.root.accept(Optimizer())
+
+        (self.start_state, self.accepting_states), (self.states, self.alphabet) = (
+            self.add_explicit_match_node(parser.root),
+            self.compute_states_and_alphabet(),
+        )
+        if should_reduce_epsilons:
+            self.reduce_epsilons()
+
+    def add_explicit_match_node(self, root) -> tuple[State, set[State]]:
+        src, sink = root.accept(self)
+        accept_node = gen_state()
+        self.add_transition(sink, accept_node, MATCH)
+        return src, {accept_node}
 
     def step(
         self, start_state: State, cursor: Cursor, context: Context
@@ -172,7 +187,7 @@ class NFA(
         start: Transition,
         cursor: Cursor,
         context: Context,
-        explored: set[tuple[int, Transition]],
+        explored: set[FSMSpaceNode],
     ) -> list[tuple[Transition, Cursor]]:
         """
         Performs a depth first search to collect valid transitions the transitions reachable through epsilon transitions
@@ -209,17 +224,19 @@ class NFA(
         self, cursor: Cursor, context: Context
     ) -> Optional[Cursor]:
         # we only need to keep track of 3 state variables
-        visited = set()
         queue = deque(
             self.queue_transition(
-                Transition(EPSILON, self.start_state), cursor, context, visited
+                Transition(EPSILON, self.start_state), cursor, context, set()
             )
         )
 
         match = None
 
         while True:
-            frontier, visited = deque(), set()
+            frontier, visited = (
+                deque(),
+                set(),
+            )  # type: (deque[tuple[Transition, Cursor]], set[FSMSpaceNode])
 
             while queue:
                 transition, cursor = queue.popleft()
@@ -241,13 +258,15 @@ class NFA(
         return match
 
     def _match_suffix_backtrack(
-        self, cursor: Cursor, context: Context
+        self, initial_cursor: Cursor, context: Context
     ) -> Optional[Cursor]:
         # we only need to keep track of 3 state variables
-        stack = [(self.start_state, cursor, ())]
+        stack: list[tuple[State, Cursor, tuple[State, ...]]] = [
+            (self.start_state, initial_cursor, ())
+        ]
 
         while stack:
-            state, cursor, path = stack.pop()  # type: (int, Cursor, tuple[int, ...])
+            state, cursor, path = stack.pop()
 
             if state in self.accepting_states:
                 return cursor
@@ -306,18 +325,14 @@ class NFA(
         else:
             return self._match_suffix_backtrack(cursor, context)
 
-    def update_symbols_and_states(self):
-        self.states = set()
+    def compute_states_and_alphabet(self) -> tuple[set[State], set[Matcher]]:
+        states = set()
+        alphabet = set()
         for start in self:
-            for matchable, end in self[start]:
-                self.states.add(end)
-                self.alphabet.add(matchable)
-        self.alphabet -= {EPSILON, GROUP_LINK}
-
-    def update_symbols(self):
-        for transition in chain.from_iterable(self.values()):
-            self.alphabet.add(transition.matcher)
-        self.alphabet -= {EPSILON, GROUP_LINK}
+            for matcher, end in self[start]:
+                states.add(end)
+                alphabet.add(matcher)
+        return states, alphabet - {EPSILON, GROUP_LINK}
 
     def transition(
         self, state: State, symbol: Matcher, _: bool = False
@@ -415,7 +430,7 @@ class NFA(
     def move(self, states: Iterable[State], symbol: Matcher) -> frozenset[State]:
         return frozenset(
             reduce(
-                set.union,
+                operator.or_,
                 (self.transition(state, symbol) for state in states),
                 set(),
             )
@@ -516,24 +531,21 @@ class NFA(
         dot.edge("start", f"{self.start_state}", arrowhead="vee")
         dot.render(view=True, directory="graphs", filename=str(id(self)))
 
-    def _concat_fragments(self, fragments: Iterable[Fragment[[State]]]):
+    def _concat_fragments(self, fragments: list[Fragment[State]]):
         for fragment1, fragment2 in pairwise(fragments):
             self.epsilon(fragment1.end, fragment2.start)
 
-    def _apply_range_quantifier(self, node: Group | Match) -> Fragment[State]:
+    def _apply_range_quantifier(
+        self, node: Group | Match, start: int, end: Optional[int], lazy: bool
+    ) -> Fragment[State]:
         """
         Generate a fragment for a group or match node with a range quantifier
         """
 
-        quantifier = node.quantifier
-        start, end = quantifier.param
-
         if start == 0:
             if end == maxsize:
                 # 'a{0,} = a{0,maxsize}' expands to a*
-                return self.zero_or_more(
-                    self._gen_frag_for_quantifiable(node), quantifier.lazy
-                )
+                return self.zero_or_more(self._gen_frag_for_quantifiable(node), lazy)
             elif end is None:
                 # a{0} = ''
                 return self.base(EMPTY_STRING)
@@ -544,11 +556,7 @@ class NFA(
                 # 'a{3,maxsize}
                 fragments = [
                     self._gen_frag_for_quantifiable(node) for _ in range(start - 1)
-                ] + [
-                    self.one_or_more(
-                        self._gen_frag_for_quantifiable(node), quantifier.lazy
-                    )
-                ]
+                ] + [self.one_or_more(self._gen_frag_for_quantifiable(node), lazy)]
             else:
                 # a{,5} = a{0,5} or a{3,5}
                 fragments = [self._gen_frag_for_quantifiable(node) for _ in range(end)]
@@ -556,7 +564,7 @@ class NFA(
                 for fragment in fragments[start:end]:
                     # empty transitions all lead to a common exit
                     self.add_transition(fragment.start, fragments[-1].end, EMPTY_STRING)
-                    if quantifier.lazy:
+                    if lazy:
                         self.reverse_transitions(fragment.start)
 
         else:
@@ -573,29 +581,10 @@ class NFA(
             return self._add_capturing_markers(node.expression.accept(self), node)
         return node.item.accept(self)
 
-    def _apply_quantifier(
-        self,
-        node: Group | Match,
-    ) -> Fragment:
-        quantifier = node.quantifier
-        if isinstance(quantifier.param, str):
-            fragment = self._gen_frag_for_quantifiable(node)
-            match quantifier.param:
-                case "+":
-                    return self.one_or_more(fragment, quantifier.lazy)
-                case "*":
-                    return self.zero_or_more(fragment, quantifier.lazy)
-                case "?":
-                    return self.zero_or_one(fragment, quantifier.lazy)
-                case _:
-                    raise RuntimeError(f"unrecognized quantifier {quantifier.param}")
-        else:
-            return self._apply_range_quantifier(node)
-
     def _add_capturing_markers(
         self, fragment: Fragment[State], group: Group
     ) -> Fragment[State]:
-        if group.is_capturing():
+        if group.index is not None:
             markers_fragment = gen_state_fragment()
             self.base(
                 Anchor.group_entry(group.index),
@@ -618,21 +607,36 @@ class NFA(
         return self.alternation(fragment, expression.alternate.accept(self))
 
     def visit_quantifiable(self, node: Group | Match) -> Fragment[State]:
-        if node.quantifier:
-            return self._apply_quantifier(node)
-        return self._gen_frag_for_quantifiable(node)
+        quantifier = node.quantifier
+        if quantifier is not None:
+            if isinstance(quantifier.param, str):
+                fragment = self._gen_frag_for_quantifiable(node)
+                match quantifier.param:
+                    case "+":
+                        return self.one_or_more(fragment, quantifier.lazy)
+                    case "*":
+                        return self.zero_or_more(fragment, quantifier.lazy)
+                    case "?":
+                        return self.zero_or_one(fragment, quantifier.lazy)
+                    case _:
+                        raise RuntimeError(
+                            f"unrecognized quantifier {quantifier.param}"
+                        )
+            else:
+                start, end = quantifier.param
+                return self._apply_range_quantifier(node, start, end, quantifier.lazy)
+        else:
+            return self._gen_frag_for_quantifiable(node)
 
-    visit_group = visit_match = visit_quantifiable
+    visit_group = visit_match = visit_quantifiable  # type: ignore
 
-    visit_character = (
+    visit_character = (  # type: ignore
         visit_character_group
-    ) = (
-        visit_any_character
-    ) = visit_anchor = visit_word = lambda self, matcher: self.base(matcher)
+    ) = visit_any_character = visit_anchor = visit_word = base  # type: ignore
 
     def _gen_frontier_transitions(self, start_state: State) -> list[Transition]:
-        seen: set[State | Transition] = set()
-        stack: list[State | Transition] = [start_state]
+        seen: set[StateOrTransition] = set()
+        stack: list[StateOrTransition] = [start_state]
         frontier_transitions: list[Transition] = []
 
         while stack:
@@ -645,7 +649,7 @@ class NFA(
 
             seen.add(item)
 
-            next_in_stack = []
+            next_in_stack: list[StateOrTransition] = []
             for transition in self[item]:
                 if transition.matcher is EPSILON:
                     next_in_stack.append(transition.end)
@@ -695,15 +699,15 @@ class NFA(
                 self[state] = transitions
 
             self._prune_unreachable_transitions()
-            self.update_symbols_and_states()
+            self.compute_states_and_alphabet()
 
             if not changed:
                 break
 
-    def _prune_unreachable_transitions(self):
-        seen = set()
+    def _prune_unreachable_transitions(self) -> None:
+        seen: set[State] = set()
         stack: list[State] = [self.start_state]
-        reachable = set()
+        reachable: set[tuple[State, Transition]] = set()
 
         while stack:
             if (state := stack.pop()) in seen:
@@ -734,26 +738,32 @@ class DFA(NFA):
         flags: RegexFlag = RegexFlag.NOFLAG,
         group_count=0,
     ):
-        super().__init__(flags=flags, group_count=group_count)
+        super().__init__()
         self.update(transitions)
         self.states = set(states)
         self.accepting_states = set(accepting_states)
         self.start_state = start_state
         self.symbols = symbols
+        RegexPattern.__init__(self, group_count, flags)
 
     @staticmethod
     def from_pattern(pattern: str, flags: RegexFlag = RegexFlag.OPTIMIZE):
         nfa = NFA(pattern, flags)
 
-        dfa_table, minimal_dfa_table = {}, defaultdict(list)
-        dfa_accepting, minimal_dfa_accepting = [], []
+        dfa_table, minimal_dfa_table = {}, defaultdict(
+            list
+        )  # type: (dict[State, list[tuple[Matcher, State]]], defaultdict[State, list[Transition]])
+        dfa_accepting, minimal_dfa_accepting = (
+            [],
+            [],
+        )  # type: (list[State], list[State])
 
         def state_generator(
-            accepting_prev,
-            accepting_curr,
-            state_counter,
-            sources,
-        ):
+            accepting_prev: list[State],
+            accepting_curr: list[State],
+            state_counter: Iterator[State],
+            sources: Iterable[State],
+        ) -> State:
             new_state = next(state_counter)
             if any(source in accepting_prev for source in sources):
                 accepting_curr.append(new_state)
@@ -788,7 +798,7 @@ class DFA(NFA):
             for start_state, transitions in nfa.subset_construction().items()
         }
 
-        partition_member2dfa_state = {
+        partition_member2dfa_state: dict[State, State] = {
             partition_member: gen_dfa_state(partition)
             for partition in DFA.hopcroft(dfa_table, dfa_accepting, nfa.alphabet)
             for partition_member in partition
@@ -816,7 +826,9 @@ class DFA(NFA):
         )
 
     @staticmethod
-    def hopcroft(transitions, accepting, alphabet):
+    def hopcroft(
+        transitions: dict, accepting: Iterable[State], alphabet: Iterable[Matcher]
+    ) -> list[tuple[State, ...]]:
         partition: list[set[State]] = [
             set(transitions.keys()) - set(accepting),
             set(accepting),
@@ -847,7 +859,7 @@ class DFA(NFA):
 
     def _match_suffix_dfa(
         self, state: State, cursor: Cursor, context: Context, path: tuple[State, ...]
-    ) -> Optional[int]:
+    ) -> Optional[Cursor]:
         """
         This a fast matcher when you don't have groups or greedy quantifiers
         """
