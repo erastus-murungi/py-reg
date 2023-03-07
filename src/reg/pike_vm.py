@@ -119,10 +119,11 @@ class RegexPikeVM(RegexPattern, RegexNodesVisitor[Fragment[Instruction]]):
     """
 
     def __init__(self, pattern: str, flags: RegexFlag = RegexFlag.OPTIMIZE):
-        super().__init__(RegexParser(pattern, flags))
-        if RegexFlag.OPTIMIZE & self.parser.flags:
-            Optimizer.run(self.parser.root)
-        self.start, last = self.parser.root.accept(self)
+        parser = RegexParser(pattern, flags)
+        super().__init__(parser.group_count, parser.flags)
+        if RegexFlag.OPTIMIZE & parser.flags:
+            Optimizer.run(parser.root)
+        self.start, last = parser.root.accept(self)
         last.next = End()
 
     def linearize(self) -> list[Instruction]:
