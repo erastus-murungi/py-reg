@@ -596,7 +596,7 @@ fn parse_expression(parser: &mut Parser) -> Result<Node, ParserError> {
 fn parse_character_class(parser: &mut Parser) -> Result<Node, ParserError> {
     parser.consume('\\')?;
     let c = parser.consume_unseen()?;
-    return match parser.consume_unseen()? {
+    return match c {
         'w' | 'W' => Ok(Node::CharacterGroup(
             vec![
                 Box::new(Node::CharacterRange('0', '9')),
@@ -988,5 +988,13 @@ mod tests {
 
         let context_with_ignorecase = Context::new_with_flags(chars, RegexFlags::DOTALL);
         assert_eq!(dot.accepts(&cursor, &context_with_ignorecase), true);
+    }
+
+    #[test]
+    fn parse_email_pattern() {
+        let pattern = String::from(r"[\w\.-]+@([\w-]+\.)+[\w-]{2,4}");
+        let mut flags = RegexFlags::OPTIMIZE;
+        let parsing_result = run_parse(&pattern, &mut flags);
+        assert!(parsing_result.is_ok());
     }
 }

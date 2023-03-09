@@ -53,7 +53,7 @@ impl Cursor {
                 );
                 if let Some(frm) = some_frm {
                     if let Some(to) = some_to {
-                        return Some(text[frm..to].to_string());
+                        return Some(text.chars().skip(frm).take(to - frm).collect());
                     }
                 }
                 return None;
@@ -123,17 +123,20 @@ impl<'s> Match<'s> {
         }
     }
 
-    #[allow(dead_code)] // reason = "used in tests")
-    fn as_str(&self) -> &'s str {
+    pub fn as_str(&self) -> String {
         if self.start >= self.text.len() {
-            ""
+            "".to_string()
         } else {
-            &self.text[self.start..self.end]
+            self.text
+                .chars()
+                .skip(self.start)
+                .take(self.end - self.start)
+                .collect::<String>()
         }
     }
 }
 
-pub(crate) trait Matcher<'a>
+pub trait Matcher<'a>
 where
     Self: Sized,
 {
@@ -296,7 +299,7 @@ mod tests {
         let mut reg = RegexNFA::new(pattern);
         reg.compile().unwrap();
         // reg.render();
-        let actual: Vec<&str> = reg.find_iter(text).map(|m| m.as_str()).collect();
+        let actual: Vec<String> = reg.find_iter(text).map(|m| m.as_str()).collect();
         assert_eq!(expected, actual)
     }
 
