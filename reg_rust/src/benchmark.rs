@@ -6,8 +6,7 @@ use reg_rust::matching::Matcher;
 
 fn do_the_work(text: &str, expected: Vec<&str>) {
     let pattern = String::from(r"[\w\.-]+@([\w-]+\.)+[\w-]{2,4}");
-    let mut reg = RegexNFA::new(pattern.as_str());
-    reg.compile().unwrap();
+    let reg = RegexNFA::new(pattern.as_str()).unwrap();
     let actual: Vec<String> = reg.find_iter(text).map(|m| m.as_str()).collect();
     assert_eq!(expected, actual)
 }

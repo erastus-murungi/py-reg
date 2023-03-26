@@ -13,10 +13,10 @@ pub struct Cursor {
 
 impl Cursor {
     pub fn new(position: usize, n_groups: usize) -> Cursor {
-        return Cursor {
+        Cursor {
             position,
             groups: vec![None; n_groups * 2],
-        };
+        }
     }
 
     pub fn update(&self, node: Node) -> Cursor {
@@ -266,7 +266,7 @@ mod tests {
     #[test]
     fn test_simple_kleene_star() {
         let pattern = "[a-z]*";
-        let regex = RegexNFA::new(&pattern);
+        let regex = RegexNFA::new(&pattern).unwrap();
         // regex.render();
         let items = &[
             Some("abc".to_string()),
@@ -281,8 +281,7 @@ mod tests {
     #[test]
     fn test_sim() {
         let pattern = r"[abcd]+(x)+";
-        let mut regex = RegexNFA::new(pattern);
-        regex.compile().unwrap();
+        let regex = RegexNFA::new(pattern).unwrap();
 
         for item in regex.find_iter("xxxabcdxxx") {
             println!("{:#?}", item.groups());
@@ -296,8 +295,7 @@ mod tests {
             .find_iter(text)
             .map(|m| m.as_str())
             .collect();
-        let mut reg = RegexNFA::new(pattern);
-        reg.compile().unwrap();
+        let reg = RegexNFA::new(pattern).unwrap();
         // reg.render();
         let actual: Vec<String> = reg.find_iter(text).map(|m| m.as_str()).collect();
         assert_eq!(expected, actual)

@@ -27,7 +27,7 @@ impl Transition {
         Self { node: matcher, end }
     }
 }
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct RegexNFA {
     state_counter: usize,
     pattern: String,
@@ -55,7 +55,7 @@ macro_rules! epsilon {
 }
 
 impl RegexNFA {
-    pub fn new(pattern: &str) -> RegexNFA {
+    pub fn new(pattern: &str) -> Result<RegexNFA, ReError> {
         RegexNFA {
             state_counter: Default::default(),
             pattern: String::from(pattern),
@@ -67,6 +67,7 @@ impl RegexNFA {
             states: HashSet::new(),
             group_count: Default::default(),
         }
+        .compile()
     }
 
     pub fn get_flags(&self) -> RegexFlags {
@@ -87,17 +88,17 @@ impl RegexNFA {
         (self.gen_state(), self.gen_state())
     }
 
-    pub fn compile(&mut self) -> Result<(), ReError> {
-        match run_parse(&self.pattern, &mut self.flags) {
+    pub fn compile(&mut self) -> Result<RegexNFA, ReError> {
+        return match run_parse(&self.pattern, &mut self.flags) {
             Ok((root, group_count)) => {
                 let (start, accept) = root.accept(self);
                 self.start = start;
                 self.accept = accept;
                 self.group_count = group_count;
-                Ok(())
+                Ok(self.clone())
             }
             Err(parsing_error) => Err(ReError::ParsingFailed(parsing_error)),
-        }
+        };
     }
 
     pub fn add_transition(&mut self, start: State, end: State, matcher: Node) -> () {
@@ -480,8 +481,7 @@ mod tests {
     #[test]
     fn test_visitor_creation() {
         let pattern = String::from("a[0-9]\\w");
-        let mut regex = RegexNFA::new(&pattern);
-        println!("{:#?}", regex.compile());
+        let regex = RegexNFA::new(&pattern).unwrap();
         println!("{:#?}", regex);
     }
 }
