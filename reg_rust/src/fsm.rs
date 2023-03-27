@@ -302,7 +302,7 @@ impl RegexNFA {
             Some(initial_transitions) => {
                 let mut stack: Vec<(&Transition, Cursor)> = initial_transitions
                     .iter()
-                    .map(|nxt| (nxt, cursor.update(start.node.clone())))
+                    .map(|nxt| (nxt, cursor.update(&start.node)))
                     .rev()
                     .collect();
                 let mut transitions: Vec<(Transition, Cursor)> = Vec::new();
@@ -322,9 +322,7 @@ impl RegexNFA {
                                         Some(some_transitions) => stack.extend(
                                             some_transitions
                                                 .iter()
-                                                .map(|nxt| {
-                                                    (nxt, cursor.update(transition.node.clone()))
-                                                })
+                                                .map(|nxt| (nxt, cursor.update(&transition.node)))
                                                 .rev(),
                                         ),
                                         _ => {}
@@ -342,7 +340,6 @@ impl RegexNFA {
         }
     }
 
-    /// Convert the automata to a GraphViz Dot code for the debugging purposes.
     pub fn render(&self) -> Result<(), io::Error> {
         let mut out = String::new();
         let mut seen: HashSet<State> = HashSet::new();

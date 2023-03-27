@@ -1,11 +1,18 @@
 use std::{
     collections::{HashSet, VecDeque},
+    fmt::Debug,
     iter::FusedIterator,
 };
 
-use crate::{fsm::RegexNFA, fsm::Transition, parser::Node, utils::RegexFlags};
+use crate::{
+    fsm::RegexNFA,
+    fsm::Transition,
+    parser::Node,
+    utils::RegexFlags,
+    vm::{Instruction, PikeVM, Thread, VMSearchSpaceNode},
+};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Cursor {
     pub position: usize,
     pub groups: Vec<Option<usize>>,
@@ -19,7 +26,7 @@ impl Cursor {
         }
     }
 
-    pub fn update(&self, node: Node) -> Cursor {
+    pub fn update(&self, node: &Node) -> Cursor {
         match node {
             Node::GroupEntry(index) => {
                 let mut copy = self.groups.clone();
@@ -62,7 +69,7 @@ impl Cursor {
     }
 }
 
-#[derive(Debug, Hash)]
+#[derive(Debug, Hash, Clone)]
 pub struct Context {
     pub text: Vec<char>,
     pub flags: RegexFlags,
@@ -136,36 +143,43 @@ impl<'s> Match<'s> {
     }
 }
 
-pub trait Matcher<'a>
+pub trait Matcher<'s>
 where
-    Self: Sized,
+    Self: Debug,
 {
     fn group_count(&self) -> usize;
     fn get_flags(&self) -> RegexFlags;
-    fn match_suffix(&self, cursor: Cursor, context: &'a Context) -> Option<Cursor>;
-    fn is_match(&self, text: &'a str) -> bool;
-    fn find(&self, text: &'a str) -> Option<String>;
-    fn find_iter(&'a self, text: &'a str) -> Box<dyn Iterator<Item = Match> + 'a>;
+    fn match_suffix(&self, cursor: Cursor, context: Context) -> Option<Cursor>;
+    fn is_match(&'s self, text: &'s str) -> bool {
+        match self.find(text) {
+            Some(_) => true,
+            _ => false,
+        }
+    }
+    fn find(&'s self, text: &'s str) -> Option<String> {
+        self.find_iter(text).next().map(|m| m.group(0)).unwrap()
+    }
+    fn find_iter(&'s self, text: &'s str) -> Box<dyn Iterator<Item = Match> + 's>;
 }
 
 #[derive(Debug)]
-struct RegexNFAMatches<'s, 'a> {
+struct Matches<'s> {
     text: &'s str,
-    nfa: &'a RegexNFA,
+    pattern: Box<dyn Matcher<'s>>,
     start: usize,
     context: Context,
     increment: usize,
 }
 
-impl<'s, 'a> Iterator for RegexNFAMatches<'s, 'a> {
+impl<'s> Iterator for Matches<'s> {
     type Item = Match<'s>;
 
-    fn next(&mut self) -> Option<Match<'s>> {
+    fn next(&mut self) -> Option<Self::Item> {
         while self.start <= self.text.len() {
-            if let Some(cursor) = self.nfa.match_suffix(
-                Cursor::new(self.start, self.nfa.group_count()),
-                &self.context,
-            ) {
+            let cursor = Cursor::new(self.start, self.pattern.group_count());
+            let match_result = self.pattern.match_suffix(cursor, self.context.clone());
+
+            if let Some(cursor) = match_result {
                 self.increment = if cursor.position == self.start {
                     1
                 } else {
@@ -186,9 +200,9 @@ impl<'s, 'a> Iterator for RegexNFAMatches<'s, 'a> {
     }
 }
 
-impl<'s, 'a> FusedIterator for RegexNFAMatches<'s, 'a> {}
+impl<'s> FusedIterator for Matches<'s> {}
 
-impl<'a> Matcher<'a> for RegexNFA {
+impl<'s> Matcher<'s> for RegexNFA {
     fn group_count(&self) -> usize {
         return self.group_count();
     }
@@ -197,12 +211,12 @@ impl<'a> Matcher<'a> for RegexNFA {
         self.get_flags()
     }
 
-    fn match_suffix(&self, cursor: Cursor, context: &'a Context) -> Option<Cursor> {
+    fn match_suffix(&self, cursor: Cursor, context: Context) -> Option<Cursor> {
         let mut visited: HashSet<(usize, &Transition)> = HashSet::new();
         let mut queue = VecDeque::from(self.step(
             &Transition::new(Node::Epsilon, self.start),
             &cursor,
-            context,
+            &context,
             &mut visited,
         ));
 
@@ -212,18 +226,18 @@ impl<'a> Matcher<'a> for RegexNFA {
             visited = HashSet::new();
 
             while let Some((transition, cursor)) = queue.pop_front() {
-                if transition.node.accepts(&cursor, context) {
+                if transition.node.accepts(&cursor, &context) {
                     if self.accept == transition.end {
-                        match_result = Some(cursor.update(transition.node));
+                        match_result = Some(cursor.update(&transition.node));
                         break;
                     }
-                    frontier.extend(self.step(&transition, &cursor, context, &mut visited));
+                    frontier.extend(self.step(&transition, &cursor, &context, &mut visited));
                 } else if let Node::Epsilon = transition.node {
                     if self.accept == transition.end {
-                        match_result = Some(cursor.update(transition.node));
+                        match_result = Some(cursor.update(&transition.node));
                         break;
                     }
-                    frontier.extend(self.step(&transition, &cursor, context, &mut visited));
+                    frontier.extend(self.step(&transition, &cursor, &context, &mut visited));
                 }
             }
 
@@ -235,21 +249,81 @@ impl<'a> Matcher<'a> for RegexNFA {
         match_result
     }
 
-    fn is_match(&self, text: &'a str) -> bool {
-        match self.find(text) {
-            Some(_) => true,
-            _ => false,
-        }
-    }
-
-    fn find(&self, text: &'a str) -> Option<String> {
-        self.find_iter(text).next().map(|m| m.group(0)).unwrap()
-    }
-
-    fn find_iter(&'a self, text: &'a str) -> Box<dyn Iterator<Item = Match> + '_> {
-        Box::new(RegexNFAMatches {
+    fn find_iter(&'s self, text: &'s str) -> Box<dyn Iterator<Item = Match> + '_> {
+        Box::new(Matches {
             text,
-            nfa: self,
+            pattern: Box::new(self.clone()),
+            start: 0,
+            increment: 1,
+            context: Context::new_with_flags(text.chars().collect(), self.get_flags()),
+        })
+    }
+}
+
+impl<'s> Matcher<'s> for PikeVM {
+    fn group_count(&self) -> usize {
+        self.group_count
+    }
+
+    fn get_flags(&self) -> RegexFlags {
+        self.flags
+    }
+
+    fn match_suffix(&self, cursor: Cursor, context: Context) -> Option<Cursor> {
+        let mut queue: VecDeque<Thread> = VecDeque::new();
+        let mut visited: HashSet<VMSearchSpaceNode> = HashSet::new();
+
+        self.queue_thread(&mut queue, (self.root.clone(), cursor), &mut visited);
+        println!("{:#?}", queue);
+        let mut match_result: Option<Cursor> = None;
+
+        loop {
+            let mut frontier: VecDeque<Thread> = VecDeque::new();
+            let mut next_visited: HashSet<VMSearchSpaceNode> = HashSet::new();
+
+            while !queue.is_empty() {
+                let (instruction, cursor) = queue.pop_back().unwrap();
+                match instruction.clone() {
+                    Instruction::Consume(matcher) => {
+                        let next_instruction = self.next.get(&(instruction.clone())).unwrap();
+                        if matcher.accepts(&cursor, &context) {
+                            let next_cursor = cursor.update(&matcher);
+                            if next_cursor.position == cursor.position {
+                                self.queue_thread(
+                                    &mut queue,
+                                    (next_instruction.clone(), next_cursor),
+                                    &mut visited,
+                                )
+                            } else {
+                                self.queue_thread(
+                                    &mut frontier,
+                                    (next_instruction.clone(), next_cursor),
+                                    &mut next_visited,
+                                )
+                            }
+                        }
+                    }
+                    Instruction::End => {
+                        match_result = Some(cursor);
+                        break;
+                    }
+                    _ => panic!("expected instructions of type: End, Consume"),
+                }
+            }
+            if frontier.is_empty() {
+                break;
+            }
+
+            std::mem::swap(&mut frontier, &mut queue);
+            std::mem::swap(&mut next_visited, &mut visited);
+        }
+        match_result
+    }
+
+    fn find_iter(&'s self, text: &'s str) -> Box<dyn Iterator<Item = Match> + '_> {
+        Box::new(Matches {
+            text,
+            pattern: Box::new(self.clone()),
             start: 0,
             increment: 1,
             context: Context::new_with_flags(text.chars().collect(), self.get_flags()),
@@ -260,13 +334,27 @@ impl<'a> Matcher<'a> for RegexNFA {
 #[allow(unused_imports)]
 #[cfg(test)]
 mod tests {
-    use crate::{fsm::RegexNFA, matching::Matcher};
+    use crate::{fsm::RegexNFA, matching::Matcher, vm::PikeVM};
     use regex;
 
     #[test]
     fn test_simple_kleene_star() {
         let pattern = "[a-z]*";
         let regex = RegexNFA::new(&pattern).unwrap();
+        let items = &[
+            Some("abc".to_string()),
+            Some("".to_string()),
+            Some("".to_string()),
+        ];
+        for (index, s) in regex.find_iter("abcE").map(|m| m.group(0)).enumerate() {
+            assert_eq!(s, items[index]);
+        }
+    }
+
+    #[test]
+    fn test_simple_kleene_star_pike_vm() {
+        let pattern = "[a-z]*";
+        let regex = PikeVM::new(&pattern).unwrap();
         // regex.render();
         let items = &[
             Some("abc".to_string()),
